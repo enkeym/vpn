@@ -1,3 +1,11 @@
+import { WgConfig } from 'wireguard-tools';
+
+export async function parseWgConfig(filePath: string): Promise<WgConfig> {
+  const config = new WgConfig({ filePath });
+  await config.parseFile();
+  return config;
+}
+
 export function getNextFreeIp(usedIps: Set<string>): string {
   const BASE_IP_LONG = (10 << 24) | (8 << 16);
 
