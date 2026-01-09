@@ -11,9 +11,16 @@ import { existsSync } from 'fs';
 import { getNextFreeIp, parseWgConfig } from './wg.utils';
 import { execSync } from 'child_process';
 
-export interface ICredentialsProps {
+interface ICredentialsProps {
   publicKey: string;
   privateKey: string;
+  presharedKey: string;
+  ip: string;
+}
+
+export interface IDbPeer {
+  name: string;
+  publicKey: string;
   presharedKey: string;
   ip: string;
 }
@@ -22,20 +29,18 @@ export interface ICredentialsProps {
 export class WgService implements OnModuleInit {
   private readonly logger = new Logger(WgService.name);
 
-  // Константы
   private readonly filePath = path.join(process.cwd(), '/configs/wg0.conf');
-  private readonly interfaceAddress = '10.8.0.1/16'; // Исправлено на .1 (стандарт)
-  private readonly port = Number(process.env.WG_PORT || 51820);
-  private readonly host = process.env.WG_HOST;
+  private readonly interfaceAddress = '10.8.0.2/16';
   private readonly allowedIps = process.env.WG_ALLOWED_IPS || '0.0.0.0/0';
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
+
+  public readonly port = Number(process.env.WG_PORT || 51820);
+  public readonly host = process.env.WG_HOST;
 
   private _serverPublicKeyCache: string | null = null;
 
   async onModuleInit() {
-    if (!this.host) {
-      throw new Error(`WG_HOST в .env не задан`);
-    }
+    if (!this.host) throw new Error(`WG_HOST в .env не задан`);
 
     await this.generateServerConfig();
     await this.getServerPublicKey();
@@ -71,9 +76,10 @@ export class WgService implements OnModuleInit {
         shell: '/bin/bash',
       });
       this.logger.log(`Интерфейс wg0 синхронизирован`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      this.logger.error(`Ошибка синхронизации WireGuard: ${message}`);
+    } catch (error) {
+      this.logger.error(
+        `Ошибка синхронизации WireGuard: ${error instanceof Error ? error.message : error}`,
+      );
     }
   }
 
@@ -99,17 +105,16 @@ export class WgService implements OnModuleInit {
     return publicKey;
   }
 
-  async generateClientCredentials(): Promise<ICredentialsProps> {
+  async generateClientCredentials(
+    usedIpsFromDb: Set<string>,
+  ): Promise<ICredentialsProps> {
     const server = await this.getConfig();
+    const serverIps =
+      server.wgInterface.address?.map((address) => address.split('/')[0]) || [];
 
-    const usedIps = new Set(
-      [
-        ...(server.wgInterface.address ?? []),
-        ...(server.peers?.flatMap((p) => p.allowedIps ?? []) ?? []),
-      ].map((cidr) => cidr.split('/')[0]),
-    );
+    serverIps.forEach((ip) => usedIpsFromDb.add(ip));
 
-    const clientIp = getNextFreeIp(usedIps);
+    const clientIp = getNextFreeIp(usedIpsFromDb);
     const clientWg = new WgConfig({});
     await clientWg.generateKeys({ preSharedKey: true });
 
@@ -161,15 +166,54 @@ export class WgService implements OnModuleInit {
 
   async removePeer(publicKey: string) {
     const server = await this.getConfig();
-    if (!server.peers) return;
 
-    const initialLength = server.peers.length;
-    server.peers = server.peers.filter((p) => p.publicKey !== publicKey);
+    if (server.peers?.some((peer) => peer.publicKey === publicKey)) {
+      server.peers = server.peers.filter(
+        (peer) => peer.publicKey !== publicKey,
+      );
 
-    if (server.peers.length !== initialLength) {
       await server.writeToFile();
       this.syncSystem();
       this.logger.log(`Пир удален: ${publicKey}`);
     }
+  }
+
+  async restoreConfigs(dbPeers: IDbPeer[]) {
+    const server = await this.getConfig();
+    const serverPeers = server.peers || [];
+    const fileKeys = new Set(serverPeers.map((p) => p.publicKey));
+
+    const isSyncRequired =
+      serverPeers.length !== dbPeers.length ||
+      dbPeers.some((peer) => !fileKeys.has(peer.publicKey));
+
+    if (isSyncRequired) {
+      this.logger.warn(
+        `Обнаружен рассинхрон конфигурации (Файл: ${serverPeers.length}, БД: ${dbPeers.length}). Запуск восстановления...`,
+      );
+      await this.rebuildServerConfig(dbPeers);
+    } else {
+      this.logger.log('Конфигурация WireGuard синхронизирована с БД.');
+    }
+  }
+
+  private async rebuildServerConfig(peers: IDbPeer[]) {
+    const server = await this.getConfig();
+
+    server.peers = [];
+
+    for (const peer of peers) {
+      server.addPeer({
+        publicKey: peer.publicKey,
+        preSharedKey: peer.presharedKey || undefined,
+        allowedIps: [`${peer.ip}/32`],
+      });
+    }
+
+    await server.writeToFile();
+    this.syncSystem();
+    this.logger.log(
+      `Конфигурация восстановлена. Активных пиров: ${peers.length}`,
+    );
   }
 }

@@ -19,7 +19,7 @@ export const peers = sqliteTable('peers', {
   createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
     () => new Date(),
   ),
-  updatedAt: integer('updatedAt', { mode: 'timestamp' }).$defaultFn(
-    () => new Date(),
-  ),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' })
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
 });
