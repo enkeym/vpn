@@ -7,24 +7,32 @@ export async function parseWgConfig(filePath: string): Promise<WgConfig> {
 }
 
 export function getNextFreeIp(usedIps: Set<string>): string {
-  const BASE_IP_LONG = (10 << 24) | (8 << 16);
+  const usedOffsets = new Set<number>();
 
-  for (let i = 1; i < 65535; i++) {
-    if (i % 256 === 0 || i % 256 === 255) continue;
+  let prefix = '10.8';
 
-    const currentLong = BASE_IP_LONG + i;
+  if (usedIps.size > 0) {
+    for (const ip of usedIps) {
+      const parts = ip.split('.');
 
-    const candidate = [
-      (currentLong >>> 24) & 255,
-      (currentLong >>> 16) & 255,
-      (currentLong >>> 8) & 255,
-      currentLong & 255,
-    ].join('.');
+      if (prefix === '10.8' && parts.length >= 2) {
+        prefix = `${parts[0]}.${parts[1]}`;
+      }
 
-    if (!usedIps.has(candidate)) {
-      return candidate;
+      const p = parts.map(Number);
+      const offset = (p[2] << 8) | p[3];
+      usedOffsets.add(offset);
     }
   }
 
-  throw new Error('Свободных IP-адресов больше нет');
+  for (let i = 2; i < 65535; i++) {
+    if (!usedOffsets.has(i)) {
+      const octet3 = (i >> 8) & 0xff;
+      const octet4 = i & 0xff;
+
+      return `${prefix}.${octet3}.${octet4}`;
+    }
+  }
+
+  throw new Error('Свободных IP-адресов больше нет (подсеть /16 заполнена)');
 }

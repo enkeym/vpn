@@ -13,6 +13,7 @@ import { desc, eq } from 'drizzle-orm';
 import { WgService } from 'src/wg/wg.service';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer } from './dto/create-peer.dto';
+import { Mutex } from 'async-mutex';
 
 type TPeer = typeof schema.peers.$inferInsert;
 type TPeerSelect = typeof schema.peers.$inferSelect;
@@ -20,6 +21,7 @@ type TPeerSelect = typeof schema.peers.$inferSelect;
 @Injectable()
 export class PeersService {
   private readonly logger = new Logger(PeersService.name);
+  private readonly createPeerMutex = new Mutex();
 
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
@@ -48,56 +50,61 @@ export class PeersService {
   }
 
   async createPeer(dto: ICreatePeer) {
-    const peerName = `${dto.telegramId.slice(0, 3)}${randomBytes(3).toString('hex')}`;
+    return await this.createPeerMutex.runExclusive(async () => {
+      const peerName = `${dto.telegramId.slice(0, 3)}${randomBytes(3).toString('hex')}`;
 
-    const existing = await this.db.query.peers.findFirst({
-      where: eq(schema.peers.name, peerName),
+      const existing = await this.db.query.peers.findFirst({
+        where: eq(schema.peers.name, peerName),
+      });
+
+      if (existing) {
+        throw new BadRequestException(
+          `Конфиг с именем ${peerName} уже существует`,
+        );
+      }
+
+      const usedPeers = await this.db.query.peers.findMany({
+        columns: { ip: true },
+      });
+      const usedIps = new Set(usedPeers.map((peer) => peer.ip));
+
+      const credentials =
+        await this.wgService.generateClientCredentials(usedIps);
+
+      const peerData: TPeer = {
+        telegramId: dto.telegramId,
+        username: dto.username || null,
+        name: peerName,
+        publicKey: credentials.publicKey,
+        privateKey: credentials.privateKey,
+        presharedKey: credentials.presharedKey,
+        ip: credentials.ip,
+        endpoint: `${this.wgService.host}:${this.wgService.port}`,
+        paused: false,
+      };
+
+      const [newPeer] = await this.db
+        .insert(schema.peers)
+        .values(peerData)
+        .returning();
+
+      try {
+        const config = await this.wgService.createClientConfig(
+          newPeer.name,
+          credentials,
+        );
+
+        return { peer: newPeer, config };
+      } catch (error) {
+        this.logger.error(
+          `Ошибка создания конфига: ${error instanceof Error ? error.message : error}`,
+        );
+        await this.db
+          .delete(schema.peers)
+          .where(eq(schema.peers.id, newPeer.id));
+        throw error;
+      }
     });
-
-    if (existing) {
-      throw new BadRequestException(
-        `Конфиг с именем ${peerName} уже существует`,
-      );
-    }
-
-    const usedPeers = await this.db.query.peers.findMany({
-      columns: { ip: true },
-    });
-    const usedIps = new Set(usedPeers.map((peer) => peer.ip));
-
-    const credentials = await this.wgService.generateClientCredentials(usedIps);
-
-    const peerData: TPeer = {
-      telegramId: dto.telegramId,
-      username: dto.username || null,
-      name: peerName,
-      publicKey: credentials.publicKey,
-      privateKey: credentials.privateKey,
-      presharedKey: credentials.presharedKey,
-      ip: credentials.ip,
-      endpoint: `${this.wgService.host}:${this.wgService.port}`,
-      paused: false,
-    };
-
-    const [newPeer] = await this.db
-      .insert(schema.peers)
-      .values(peerData)
-      .returning();
-
-    try {
-      const config = await this.wgService.createClientConfig(
-        newPeer.name,
-        credentials,
-      );
-
-      return { peer: newPeer, config };
-    } catch (error) {
-      this.logger.error(
-        `Ошибка создания конфига: ${error instanceof Error ? error.message : error}`,
-      );
-      await this.db.delete(schema.peers).where(eq(schema.peers.id, newPeer.id));
-      throw error;
-    }
   }
 
   async findPeer(peerName: string): Promise<TPeerSelect> {
@@ -121,18 +128,30 @@ export class PeersService {
       .set({ paused: shouldPause })
       .where(eq(schema.peers.name, peerName));
 
-    if (shouldPause) {
-      await this.wgService.removePeer(peer.publicKey);
-    } else {
-      if (!peer.presharedKey)
-        throw new InternalServerErrorException('Нет presharedKey');
+    try {
+      if (shouldPause) {
+        await this.wgService.removePeer(peer.publicKey);
+      } else {
+        if (!peer.presharedKey)
+          throw new InternalServerErrorException('Нет presharedKey');
 
-      await this.wgService.createClientConfig(peer.name, {
-        publicKey: peer.publicKey,
-        privateKey: peer.privateKey,
-        presharedKey: peer.presharedKey,
-        ip: peer.ip,
-      });
+        await this.wgService.createClientConfig(peer.name, {
+          publicKey: peer.publicKey,
+          privateKey: peer.privateKey,
+          presharedKey: peer.presharedKey,
+          ip: peer.ip,
+        });
+      }
+    } catch (error) {
+      this.logger.error(
+        `Ошибка обновления WG Для ${peerName}, отмена изменений`,
+      );
+      await this.db
+        .update(schema.peers)
+        .set({ paused: !shouldPause })
+        .where(eq(schema.peers.name, peerName));
+
+      throw error;
     }
   }
 
@@ -142,7 +161,11 @@ export class PeersService {
     await this.db.delete(schema.peers).where(eq(schema.peers.name, peerName));
 
     if (!peer.paused) {
-      await this.wgService.removePeer(peer.publicKey);
+      try {
+        await this.wgService.removePeer(peer.publicKey);
+      } catch (error) {
+        this.logger.error(`Не удалось удалить пир из WG: ${error}`);
+      }
     }
 
     return { message: `Конфиг ${peerName} успешно удален` };
