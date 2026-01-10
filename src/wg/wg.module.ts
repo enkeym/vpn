@@ -6,5 +6,6 @@ import { WgController } from './wg.controller';
   imports: [],
   controllers: [WgController],
   providers: [WgService],
+  exports: [WgService],
 })
 export class WgModule {}

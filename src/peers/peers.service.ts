@@ -10,16 +10,12 @@ import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { desc, eq } from 'drizzle-orm';
-import type { WgService } from 'src/wg/wg.service';
+import { WgService } from 'src/wg/wg.service';
 import { randomBytes } from 'node:crypto';
+import type { ICreatePeer } from './dto/create-peer.dto';
 
 type TPeer = typeof schema.peers.$inferInsert;
 type TPeerSelect = typeof schema.peers.$inferSelect;
-
-interface ICreatePeer {
-  telegramId: string;
-  username?: string;
-}
 
 @Injectable()
 export class PeersService {
@@ -52,9 +48,11 @@ export class PeersService {
   }
 
   async createPeer(dto: ICreatePeer) {
-    const peerName = `${dto.telegramId.slice(0, 5)}${randomBytes(5).toString('hex')}`;
+    const peerName = `${dto.telegramId.slice(0, 3)}${randomBytes(3).toString('hex')}`;
 
-    const existing = await this.findPeer(peerName);
+    const existing = await this.db.query.peers.findFirst({
+      where: eq(schema.peers.name, peerName),
+    });
 
     if (existing) {
       throw new BadRequestException(

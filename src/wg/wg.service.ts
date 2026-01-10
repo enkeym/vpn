@@ -30,7 +30,7 @@ export class WgService implements OnModuleInit {
   private readonly logger = new Logger(WgService.name);
 
   private readonly filePath = path.join(process.cwd(), '/configs/wg0.conf');
-  private readonly interfaceAddress = '10.8.0.2/16';
+  private readonly interfaceAddress = '10.8.0.1/16';
   private readonly allowedIps = process.env.WG_ALLOWED_IPS || '0.0.0.0/0';
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
 
@@ -44,6 +44,9 @@ export class WgService implements OnModuleInit {
 
     await this.generateServerConfig();
     await this.getServerPublicKey();
+
+    this.startInterfaceUp();
+    this.syncSystem();
   }
 
   private async generateServerConfig() {
@@ -70,19 +73,6 @@ export class WgService implements OnModuleInit {
     return parseWgConfig(this.filePath);
   }
 
-  private syncSystem() {
-    try {
-      execSync(`wg syncconf wg0 <(wg-quick strip ${this.filePath})`, {
-        shell: '/bin/bash',
-      });
-      this.logger.log(`Интерфейс wg0 синхронизирован`);
-    } catch (error) {
-      this.logger.error(
-        `Ошибка синхронизации WireGuard: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-  }
-
   private async getServerPublicKey(): Promise<string> {
     if (this._serverPublicKeyCache) {
       return this._serverPublicKeyCache;
@@ -103,6 +93,46 @@ export class WgService implements OnModuleInit {
 
     this._serverPublicKeyCache = publicKey;
     return publicKey;
+  }
+
+  private isInterfaceUp() {
+    try {
+      execSync('ip link show wg0', { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private syncSystem() {
+    try {
+      execSync(
+        `sudo bash -c 'wg syncconf wg0 <(wg-quick strip ${this.filePath})'`,
+        { stdio: 'pipe' },
+      );
+      this.logger.log('Интерфейс wg0 синхронизирован');
+    } catch (error) {
+      this.logger.error(
+        `Ошибка синхронизации WireGuard: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  private startInterfaceUp() {
+    if (this.isInterfaceUp()) {
+      this.logger.log('Интерфейс wg0 уже активен');
+      return;
+    }
+
+    try {
+      execSync(`sudo wg-quick up ${this.filePath}`, { stdio: 'pipe' });
+      this.logger.log('Интерфейс wg0 успешно поднят');
+    } catch (error) {
+      execSync(`sudo wg-quick down ${this.filePath}`, { stdio: 'pipe' });
+      throw new Error(
+        `Не удалось поднять интерфейс: ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   async generateClientCredentials(
