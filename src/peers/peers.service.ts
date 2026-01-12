@@ -51,7 +51,12 @@ export class PeersService {
 
   async createPeer(dto: ICreatePeer) {
     return await this.createPeerMutex.runExclusive(async () => {
-      const peerName = `${dto.telegramId.slice(0, 3)}${randomBytes(3).toString('hex')}`;
+      if (!dto.telegramId || String(dto.telegramId).trim() === '') {
+        throw new BadRequestException('telegramId обязателен');
+      }
+
+      const telegramIdStr = String(dto.telegramId);
+      const peerName = `${telegramIdStr.slice(0, 3)}${randomBytes(3).toString('hex')}`;
 
       const existing = await this.db.query.peers.findFirst({
         where: eq(schema.peers.name, peerName),
