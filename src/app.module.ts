@@ -5,6 +5,7 @@ import { WgModule } from './wg/wg.module';
 import { ConfigModule } from '@nestjs/config';
 import { PeersModule } from './peers/peers.module';
 import { DatabaseModule } from './database/database.module';
+import { BotModule } from './bot/bot.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { DatabaseModule } from './database/database.module';
     DatabaseModule,
     WgModule,
     PeersModule,
+    BotModule,
   ],
   controllers: [AppController],
   providers: [AppService],

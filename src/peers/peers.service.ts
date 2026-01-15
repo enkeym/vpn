@@ -176,6 +176,13 @@ export class PeersService {
     return { message: `Конфиг ${peerName} успешно удален` };
   }
 
+  async getPeersByTelegramId(telegramId: string) {
+    return await this.db.query.peers.findMany({
+      where: eq(schema.peers.telegramId, telegramId),
+      orderBy: [desc(schema.peers.createdAt)],
+    });
+  }
+
   async allPeers() {
     return await this.db.query.peers.findMany({
       orderBy: [desc(schema.peers.createdAt)],
