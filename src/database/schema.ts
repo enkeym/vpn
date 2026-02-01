@@ -9,6 +9,7 @@ export const peers = sqliteTable('peers', {
     .$defaultFn(() => randomUUID()),
   telegramId: text('telegramId').notNull(),
   username: text('username'),
+  configMessageId: integer('configMessageId'),
   name: text('name').notNull().unique(),
   publicKey: text('publicKey').notNull(),
   privateKey: text('privateKey').notNull(),

@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bot, GrammyError, HttpError } from 'grammy';
-import { PeersService } from 'src/peers/peers.service';
+import { MainHandler } from './handlers/main.handler';
+import { PeerCreateHandler } from './handlers/peer-create.handler';
+import { PeerManageHandler } from './handlers/peer-manage.handler';
+import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -16,7 +19,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly peersService: PeersService,
+    private readonly mainHandler: MainHandler,
+    private readonly peerCreateHandler: PeerCreateHandler,
+    private readonly peerDeleteHandler: PeerDeleteHandler,
+    private readonly peerManageHandler: PeerManageHandler,
   ) {}
 
   onModuleInit() {
@@ -35,10 +41,20 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       .map((id) => id.trim())
       .filter((id) => id.length > 0);
 
-    // Создание бота
+    // Подключение функционала
     this.bot = new Bot(token);
+    this.registerMiddleware();
+    this.registerCommands();
+    this.startBot();
+  }
 
-    // Обработка ошибок
+  async onModuleDestroy() {
+    if (this.bot) {
+      await this.bot.stop();
+    }
+  }
+
+  private registerMiddleware() {
     this.bot.catch((err) => {
       const ctx = err.ctx;
       this.logger.error(`Ошибка во время выполнения ${ctx.update.update_id}`);
@@ -52,38 +68,70 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Проверка доступа
     this.bot.use(async (ctx, next) => {
       if (!ctx.from) return;
 
       const userId = String(ctx.from.id);
-
       if (this.allowedIds.length > 0 && !this.allowedIds.includes(userId)) {
         this.logger.warn(
           `Попытка несанкционированного доступа от ID: ${userId} (${ctx.from.username})`,
         );
-        await ctx.reply(
-          '*Доступ запрещен.* Проверьте настройки листа доступа.',
-          { parse_mode: 'Markdown' },
-        );
         return;
       }
-
       await next();
     });
+  }
 
-    // this.registerCommands();
+  private registerCommands() {
+    // Команды
+    this.bot.command('start', async (ctx) =>
+      this.mainHandler.showMainMenu(ctx),
+    );
 
+    // Меню и навигация
+    this.bot.callbackQuery('main_menu', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.showMainMenu(ctx);
+    });
+
+    // Создание конфига
+    this.bot.callbackQuery('create_config', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerCreateHandler.handleCreateConfig(ctx);
+    });
+
+    // Список конфигов
+    this.bot.callbackQuery('list_configs', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.showConfigsList(ctx);
+    });
+
+    // Действия с конкретным пиром
+    this.bot.callbackQuery(/^manage_peer:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerManageHandler.showPeerDetails(ctx, peerName);
+    });
+
+    // Пауза/Старт
+    this.bot.callbackQuery(/^toggle_peer:(.+)$/, async (ctx) => {
+      const peerName = ctx.match[1];
+      await this.peerManageHandler.togglePeer(ctx, peerName);
+    });
+
+    // Удаление пира
+    this.bot.callbackQuery(/^delete_peer:(.+)$/, async (ctx) => {
+      const peerName = ctx.match[1];
+      await this.peerDeleteHandler.deletePeer(ctx, peerName);
+    });
+  }
+
+  // Запуск бота
+  private startBot() {
     void this.bot.start({
       onStart: (botInfo) => {
         this.logger.warn(`Бот @${botInfo.username} успешно запущен!`);
       },
     });
-  }
-
-  async onModuleDestroy() {
-    if (this.bot) {
-      await this.bot.stop();
-    }
   }
 }

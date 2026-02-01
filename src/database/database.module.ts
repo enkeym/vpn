@@ -2,7 +2,6 @@ import { Global, Logger, Module } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as path from 'path';
-
 import * as schema from './schema';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'fs';
@@ -17,7 +16,7 @@ export const DRIZZLE = Symbol('DRIZZLE');
       provide: DRIZZLE,
       useFactory: () => {
         const logger = new Logger('DatabaseModule');
-        const dbPath = path.join(process.cwd(), 'configs', 'vpn.db');
+        const dbPath = path.join(process.cwd(), 'src/database', 'vpn.db');
         const dbDir = path.dirname(dbPath);
 
         if (!existsSync(dbDir)) {

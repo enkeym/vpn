@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import type { ICreatePeer } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
 
-type TPeer = typeof schema.peers.$inferInsert;
+export type TPeer = typeof schema.peers.$inferInsert;
 type TPeerSelect = typeof schema.peers.$inferSelect;
 
 @Injectable()
@@ -181,6 +181,13 @@ export class PeersService {
       where: eq(schema.peers.telegramId, telegramId),
       orderBy: [desc(schema.peers.createdAt)],
     });
+  }
+
+  async setConfigMessageId(peerName: string, messageId: number) {
+    await this.db
+      .update(schema.peers)
+      .set({ configMessageId: messageId })
+      .where(eq(schema.peers.name, peerName));
   }
 
   async allPeers() {
