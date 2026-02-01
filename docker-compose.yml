@@ -1,7 +1,7 @@
 services:
   vpn-bot:
     build: .
-    container_name: vpn-bot
+    container_name: vpn-tgbot
     restart: always
     cap_add:
       - NET_ADMIN
