@@ -5,7 +5,6 @@ import * as path from 'path';
 import * as schema from './schema';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'fs';
-import { execSync } from 'child_process';
 
 export const DRIZZLE = Symbol('DRIZZLE');
 
@@ -23,12 +22,12 @@ export const DRIZZLE = Symbol('DRIZZLE');
           logger.log(`Папка не найдена. Создаю: ${dbDir}`);
           mkdirSync(dbDir, { recursive: true });
 
-          try {
-            logger.log('Запуск генерации миграций...');
-            execSync('pnpm run generate', { stdio: 'inherit' });
-          } catch (error) {
-            logger.error('Ошибка при генерации миграций: ', error);
-          }
+          // try {
+          //   logger.log('Запуск генерации миграций...');
+          //   execSync('pnpm run generate', { stdio: 'inherit' });
+          // } catch (error) {
+          //   logger.error('Ошибка при генерации миграций: ', error);
+          // }
         }
 
         const sqlite = new Database(dbPath);
