@@ -21,9 +21,7 @@ export const BotUi = {
 
     peers.forEach((peer) => {
       const status = peer.paused ? '🔴' : '🟢';
-      keyboard
-        .text(`${status} ${peer.name} (${peer.id})`, `manage_peer:${peer.name}`)
-        .row();
+      keyboard.text(`${status} ${peer.name}`, `manage_peer:${peer.name}`).row();
     });
     keyboard.text('Назад в меню', 'main_menu');
     return keyboard;

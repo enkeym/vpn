@@ -66,6 +66,14 @@ export class WgService implements OnModuleInit {
       wgInterface: {
         address: [this.interfaceAddress],
         listenPort: this.port,
+        postUp: [
+          'iptables -A FORWARD -i %i -j ACCEPT',
+          "iptables -t nat -A POSTROUTING -o $(ip route get 1 | awk '{print $5;exit}') -j MASQUERADE",
+        ],
+        postDown: [
+          'iptables -D FORWARD -i %i -j ACCEPT',
+          "iptables -t nat -D POSTROUTING -o $(ip route get 1 | awk '{print $5;exit}') -j MASQUERADE",
+        ],
       },
     });
 
