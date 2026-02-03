@@ -94,10 +94,19 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.mainHandler.showMainMenu(ctx);
     });
 
-    // Создание конфига
-    this.bot.callbackQuery('create_config', async (ctx) => {
+    // Показать меню создания конфига
+    this.bot.callbackQuery('show_create_options', async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.peerCreateHandler.handleCreateConfig(ctx);
+      await this.peerCreateHandler.showCreateOptions(ctx);
+    });
+
+    // Создание конфига с выбором длительности
+    this.bot.callbackQuery(/^create_config:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const duration = ctx.match[1];
+      const durationDays =
+        duration === 'unlimited' ? undefined : (Number(duration) as 30 | 60 | 90);
+      await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
     });
 
     // Список конфигов
@@ -123,6 +132,14 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot.callbackQuery(/^delete_peer:(.+)$/, async (ctx) => {
       const peerName = ctx.match[1];
       await this.peerDeleteHandler.deletePeer(ctx, peerName);
+    });
+
+    // Продление конфига (пока просто уведомление)
+    this.bot.callbackQuery(/^extend_peer:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery({
+        text: '🚧 Функция продления скоро будет доступна',
+        show_alert: true,
+      });
     });
   }
 

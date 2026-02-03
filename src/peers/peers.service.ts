@@ -9,14 +9,19 @@ import {
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, lte } from 'drizzle-orm';
 import { WgService } from 'src/wg/wg.service';
 import { randomBytes } from 'node:crypto';
-import type { ICreatePeer } from './dto/create-peer.dto';
+import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
 
 export type TPeer = typeof schema.peers.$inferInsert;
 type TPeerSelect = typeof schema.peers.$inferSelect;
+
+function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
+  const now = new Date();
+  return new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+}
 
 @Injectable()
 export class PeersService {
@@ -76,6 +81,11 @@ export class PeersService {
       const credentials =
         await this.wgService.generateClientCredentials(usedIps);
 
+      // Если durationDays не указан - конфиг бессрочный (expiresAt = null)
+      const expiresAt = dto.durationDays
+        ? calculateExpiresAt(dto.durationDays)
+        : null;
+
       const peerData: TPeer = {
         telegramId: dto.telegramId,
         username: dto.username || null,
@@ -86,6 +96,7 @@ export class PeersService {
         ip: credentials.ip,
         endpoint: `${this.wgService.host}:${this.wgService.port}`,
         paused: false,
+        expiresAt,
       };
 
       const [newPeer] = await this.db
@@ -194,5 +205,47 @@ export class PeersService {
     return await this.db.query.peers.findMany({
       orderBy: [desc(schema.peers.createdAt)],
     });
+  }
+
+  async deactivateExpiredPeers(): Promise<number> {
+    const now = new Date();
+
+    const expiredPeers = await this.db.query.peers.findMany({
+      where: and(
+        eq(schema.peers.paused, false),
+        isNotNull(schema.peers.expiresAt),
+        lte(schema.peers.expiresAt, now),
+      ),
+    });
+
+    if (expiredPeers.length === 0) {
+      return 0;
+    }
+
+    for (const peer of expiredPeers) {
+      try {
+        await this.db
+          .update(schema.peers)
+          .set({ paused: true })
+          .where(eq(schema.peers.id, peer.id));
+
+        await this.wgService.removePeer(peer.publicKey);
+
+        this.logger.log(
+          `Конфиг ${peer.name} деактивирован по истечению срока`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Ошибка деактивации конфига ${peer.name}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+
+    return expiredPeers.length;
+  }
+
+  isExpired(peer: TPeerSelect): boolean {
+    if (!peer.expiresAt) return false;
+    return new Date() > peer.expiresAt;
   }
 }

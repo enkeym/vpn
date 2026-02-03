@@ -3,6 +3,7 @@ import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from './main.handler';
 import { Context, InputFile } from 'grammy';
 import { BotUi } from '../ui/bot.ui';
+import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 
 @Injectable()
 export class PeerCreateHandler {
@@ -13,7 +14,17 @@ export class PeerCreateHandler {
     private readonly mainHandler: MainHandler,
   ) {}
 
-  async handleCreateConfig(ctx: Context) {
+  async showCreateOptions(ctx: Context) {
+    await ctx.editMessageText(BotUi.selectDurationTitle, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.createConfigKeyboard(),
+    });
+  }
+
+  async handleCreateConfig(
+    ctx: Context,
+    durationDays?: SubscriptionDuration,
+  ) {
     if (!ctx.from) return;
 
     try {
@@ -24,12 +35,13 @@ export class PeerCreateHandler {
       const { config, peer } = await this.peersService.createPeer({
         telegramId: String(ctx.from.id),
         username: ctx.from.username,
+        durationDays,
       });
 
       const message = await ctx.replyWithDocument(
         new InputFile(Buffer.from(config), `${peer.name}.conf`),
         {
-          caption: BotUi.configCreated(peer.name, peer.ip),
+          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
           parse_mode: 'Markdown',
         },
       );
