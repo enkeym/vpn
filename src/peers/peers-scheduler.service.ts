@@ -13,8 +13,7 @@ export class PeersSchedulerService {
     this.logger.log('Запуск проверки истекших конфигов...');
 
     try {
-      const deactivatedCount =
-        await this.peersService.deactivateExpiredPeers();
+      const deactivatedCount = await this.peersService.deactivateExpiredPeers();
 
       if (deactivatedCount > 0) {
         this.logger.log(`Деактивировано конфигов: ${deactivatedCount}`);

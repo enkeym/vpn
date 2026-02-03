@@ -231,9 +231,7 @@ export class PeersService {
 
         await this.wgService.removePeer(peer.publicKey);
 
-        this.logger.log(
-          `Конфиг ${peer.name} деактивирован по истечению срока`,
-        );
+        this.logger.log(`Конфиг ${peer.name} деактивирован по истечению срока`);
       } catch (error) {
         this.logger.error(
           `Ошибка деактивации конфига ${peer.name}: ${error instanceof Error ? error.message : error}`,
@@ -247,5 +245,26 @@ export class PeersService {
   isExpired(peer: TPeerSelect): boolean {
     if (!peer.expiresAt) return false;
     return new Date() > peer.expiresAt;
+  }
+
+  async updatePeerExpiration(
+    peerName: string,
+    expiresAt: Date | null,
+  ): Promise<void> {
+    const peer = await this.findPeer(peerName);
+
+    await this.db
+      .update(schema.peers)
+      .set({ expiresAt })
+      .where(eq(schema.peers.name, peerName));
+
+    // Если конфиг был на паузе из-за истечения срока, и мы продлили - включаем его
+    if (peer.paused && expiresAt && expiresAt > new Date()) {
+      await this.updatedPeer(peerName); // Это переключит статус
+    }
+
+    this.logger.log(
+      `Обновлен срок действия конфига ${peerName}: ${expiresAt ? expiresAt.toISOString() : 'бессрочно'}`,
+    );
   }
 }

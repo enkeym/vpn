@@ -21,10 +21,7 @@ export class PeerCreateHandler {
     });
   }
 
-  async handleCreateConfig(
-    ctx: Context,
-    durationDays?: SubscriptionDuration,
-  ) {
+  async handleCreateConfig(ctx: Context, durationDays?: SubscriptionDuration) {
     if (!ctx.from) return;
 
     try {

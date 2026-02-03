@@ -5,17 +5,21 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot, GrammyError, HttpError } from 'grammy';
+import { Bot, Context, GrammyError, HttpError } from 'grammy';
+import { FamilyService } from 'src/family/family.service';
+import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from './handlers/main.handler';
 import { PeerCreateHandler } from './handlers/peer-create.handler';
 import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
+import { FamilyHandler } from './handlers/family.handler';
+import { BotUi } from './ui/bot.ui';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
   private bot: Bot;
   private readonly logger = new Logger(BotService.name);
-  private allowedIds: string[] = [];
+  private adminIds: string[] = [];
 
   constructor(
     private readonly configService: ConfigService,
@@ -23,6 +27,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly peerCreateHandler: PeerCreateHandler,
     private readonly peerDeleteHandler: PeerDeleteHandler,
     private readonly peerManageHandler: PeerManageHandler,
+    private readonly familyHandler: FamilyHandler,
+    private readonly familyService: FamilyService,
+    private readonly peersService: PeersService,
   ) {}
 
   onModuleInit() {
@@ -36,7 +43,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       'TELEGRAM_ALLOWED_IDS',
       '',
     );
-    this.allowedIds = whiteList
+    this.adminIds = whiteList
       .split(',')
       .map((id) => id.trim())
       .filter((id) => id.length > 0);
@@ -45,7 +52,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot = new Bot(token);
     this.registerMiddleware();
     this.registerCommands();
+    this.registerFamilyCommands();
     this.startBot();
+  }
+
+  private isAdmin(userId: string): boolean {
+    return this.adminIds.includes(userId);
   }
 
   async onModuleDestroy() {
@@ -68,16 +80,51 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
+    // Middleware проверки доступа: админы и члены группы "Семья"
     this.bot.use(async (ctx, next) => {
       if (!ctx.from) return;
 
       const userId = String(ctx.from.id);
-      if (this.allowedIds.length > 0 && !this.allowedIds.includes(userId)) {
-        this.logger.warn(
-          `Попытка несанкционированного доступа от ID: ${userId} (${ctx.from.username})`,
-        );
+      const username = ctx.from.username;
+
+      // Проверяем, является ли админом
+      if (this.isAdmin(userId)) {
+        await next();
         return;
       }
+
+      // Проверяем, является ли членом группы "Семья"
+      const isFamilyMember = await this.familyService.isMember(
+        userId,
+        username,
+      );
+      if (isFamilyMember) {
+        // Привязываем telegramId если был добавлен по username
+        if (username) {
+          await this.familyService.bindTelegramId(username, userId);
+        }
+        await next();
+        return;
+      }
+
+      // Доступ запрещен
+      this.logger.warn(
+        `Попытка несанкционированного доступа от ID: ${userId} (${username})`,
+      );
+    });
+
+    // Обработка текстовых сообщений для ввода данных члена группы
+    this.bot.on('message:text', async (ctx, next) => {
+      if (!ctx.from) return;
+
+      const userId = String(ctx.from.id);
+
+      // Если админ ожидает ввода для добавления в группу
+      if (this.isAdmin(userId) && this.familyHandler.isAwaitingInput(userId)) {
+        await this.familyHandler.handleAddMemberInput(ctx);
+        return;
+      }
+
       await next();
     });
   }
@@ -105,7 +152,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await ctx.answerCallbackQuery();
       const duration = ctx.match[1];
       const durationDays =
-        duration === 'unlimited' ? undefined : (Number(duration) as 30 | 60 | 90);
+        duration === 'unlimited'
+          ? undefined
+          : (Number(duration) as 30 | 60 | 90);
       await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
     });
 
@@ -140,6 +189,163 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         text: '🚧 Функция продления скоро будет доступна',
         show_alert: true,
       });
+    });
+  }
+
+  private registerFamilyCommands() {
+    // Меню группы "Семья" (только для админов)
+    this.bot.callbackQuery('family_menu', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.familyHandler.showFamilyMenu(ctx);
+    });
+
+    // Добавить в группу
+    this.bot.callbackQuery('family_add', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.familyHandler.showAddMemberPrompt(ctx);
+    });
+
+    // Отмена добавления
+    this.bot.callbackQuery('family_cancel_add', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.familyHandler.cancelAddMember(ctx);
+    });
+
+    // Просмотр члена группы
+    this.bot.callbackQuery(/^family_member:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const memberId = ctx.match[1];
+      await this.familyHandler.showMemberDetails(ctx, memberId);
+    });
+
+    // Список конфигов члена группы
+    this.bot.callbackQuery(/^family_member_configs:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const memberId = ctx.match[1];
+      await this.familyHandler.showMemberConfigs(ctx, memberId);
+    });
+
+    // Просмотр конфига члена группы
+    this.bot.callbackQuery(/^family_peer:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+      await this.familyHandler.showMemberPeerDetails(ctx, peerName, memberId);
+    });
+
+    // Переключение статуса конфига члена группы
+    this.bot.callbackQuery(/^family_toggle_peer:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+      await this.familyHandler.toggleMemberPeer(ctx, peerName, memberId);
+    });
+
+    // Удаление конфига члена группы
+    this.bot.callbackQuery(/^family_delete_peer:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+      await this.familyHandler.deleteMemberPeer(ctx, peerName, memberId);
+    });
+
+    // Изменение срока действия конфига
+    this.bot.callbackQuery(
+      /^family_change_duration:(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        await ctx.answerCallbackQuery();
+        const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+        await this.familyHandler.showChangeDuration(ctx, peerName, memberId);
+      },
+    );
+
+    // Установка нового срока действия
+    this.bot.callbackQuery(
+      /^family_set_duration:(.+):(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        const [peerName, memberId, duration] = [
+          ctx.match[1],
+          ctx.match[2],
+          ctx.match[3],
+        ];
+        await this.familyHandler.changePeerDuration(
+          ctx,
+          peerName,
+          memberId,
+          duration,
+        );
+      },
+    );
+
+    // Удаление члена из группы
+    this.bot.callbackQuery(/^family_remove:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const memberId = ctx.match[1];
+      await this.familyHandler.removeMember(ctx, memberId);
     });
   }
 
