@@ -53,10 +53,20 @@ export class FamilyService {
     this.logger.log(`Удален член группы: ${memberId}`);
   }
 
+  /**
+   * Поиск члена группы по ID (поддерживает как полный UUID, так и сокращённый)
+   */
   async findMemberById(memberId: string): Promise<TFamilyMember> {
-    const member = await this.db.query.familyMembers.findFirst({
+    // Сначала пробуем найти по полному ID
+    let member = await this.db.query.familyMembers.findFirst({
       where: eq(schema.familyMembers.id, memberId),
     });
+
+    // Если не нашли и ID короткий, ищем по prefix
+    if (!member && memberId.length < 36) {
+      const members = await this.db.query.familyMembers.findMany();
+      member = members.find((m) => m.id.startsWith(memberId));
+    }
 
     if (!member) {
       throw new NotFoundException(`Член группы не найден`);
@@ -100,11 +110,20 @@ export class FamilyService {
 
   /**
    * Проверить, что член группы принадлежит админу
+   * Поддерживает как полный ID, так и сокращённый (первые 8 символов)
    */
   async isMemberOwnedByAdmin(memberId: string, adminId: string): Promise<boolean> {
-    const member = await this.db.query.familyMembers.findFirst({
+    // Сначала пробуем найти по полному ID
+    let member = await this.db.query.familyMembers.findFirst({
       where: eq(schema.familyMembers.id, memberId),
     });
+
+    // Если не нашли, ищем по partial ID
+    if (!member && memberId.length < 36) {
+      const members = await this.db.query.familyMembers.findMany();
+      member = members.find((m) => m.id.startsWith(memberId));
+    }
+
     return member?.addedBy === adminId;
   }
 

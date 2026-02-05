@@ -286,8 +286,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.cancelAddMember(ctx);
     });
 
-    // Просмотр члена группы
-    this.bot.callbackQuery(/^family_member:(.+)$/, async (ctx) => {
+    // Просмотр члена группы (f_m = family_member)
+    this.bot.callbackQuery(/^f_m:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -300,8 +300,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.showMemberDetails(ctx, memberId);
     });
 
-    // Список конфигов члена группы
-    this.bot.callbackQuery(/^family_member_configs:(.+)$/, async (ctx) => {
+    // Список конфигов члена группы (f_mc = family_member_configs)
+    this.bot.callbackQuery(/^f_mc:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -314,8 +314,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.showMemberConfigs(ctx, memberId);
     });
 
-    // Просмотр конфига члена группы
-    this.bot.callbackQuery(/^family_peer:(.+):(.+)$/, async (ctx) => {
+    // Просмотр конфига члена группы (f_p = family_peer)
+    this.bot.callbackQuery(/^f_p:(.+):(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -328,8 +328,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.showMemberPeerDetails(ctx, peerName, memberId);
     });
 
-    // Переключение статуса конфига члена группы
-    this.bot.callbackQuery(/^family_toggle_peer:(.+):(.+)$/, async (ctx) => {
+    // Переключение статуса конфига (f_tp = family_toggle_peer)
+    this.bot.callbackQuery(/^f_tp:(.+):(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -341,8 +341,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.toggleMemberPeer(ctx, peerName, memberId);
     });
 
-    // Удаление конфига члена группы
-    this.bot.callbackQuery(/^family_delete_peer:(.+):(.+)$/, async (ctx) => {
+    // Удаление конфига члена группы (f_dp = family_delete_peer)
+    this.bot.callbackQuery(/^f_dp:(.+):(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -354,50 +354,44 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.deleteMemberPeer(ctx, peerName, memberId);
     });
 
-    // Изменение срока действия конфига
-    this.bot.callbackQuery(
-      /^family_change_duration:(.+):(.+)$/,
-      async (ctx) => {
-        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-          await ctx.answerCallbackQuery({
-            text: 'Нет доступа',
-            show_alert: true,
-          });
-          return;
-        }
-        await ctx.answerCallbackQuery();
-        const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
-        await this.familyHandler.showChangeDuration(ctx, peerName, memberId);
-      },
-    );
+    // Изменение срока действия (f_cd = family_change_duration)
+    this.bot.callbackQuery(/^f_cd:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+      await this.familyHandler.showChangeDuration(ctx, peerName, memberId);
+    });
 
-    // Установка нового срока действия
-    this.bot.callbackQuery(
-      /^family_set_duration:(.+):(.+):(.+)$/,
-      async (ctx) => {
-        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-          await ctx.answerCallbackQuery({
-            text: 'Нет доступа',
-            show_alert: true,
-          });
-          return;
-        }
-        const [peerName, memberId, duration] = [
-          ctx.match[1],
-          ctx.match[2],
-          ctx.match[3],
-        ];
-        await this.familyHandler.changePeerDuration(
-          ctx,
-          peerName,
-          memberId,
-          duration,
-        );
-      },
-    );
+    // Установка срока (f_sd = family_set_duration, u = unlimited)
+    this.bot.callbackQuery(/^f_sd:(.+):(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [peerName, memberId, duration] = [
+        ctx.match[1],
+        ctx.match[2],
+        ctx.match[3] === 'u' ? 'unlimited' : ctx.match[3],
+      ];
+      await this.familyHandler.changePeerDuration(
+        ctx,
+        peerName,
+        memberId,
+        duration,
+      );
+    });
 
-    // Удаление члена из группы
-    this.bot.callbackQuery(/^family_remove:(.+)$/, async (ctx) => {
+    // Удаление члена из группы (f_rm = family_remove)
+    this.bot.callbackQuery(/^f_rm:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -409,8 +403,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.removeMember(ctx, memberId);
     });
 
-    // Редактирование имени участника
-    this.bot.callbackQuery(/^family_edit_name:(.+)$/, async (ctx) => {
+    // Редактирование имени (f_en = family_edit_name)
+    this.bot.callbackQuery(/^f_en:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -423,8 +417,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.showEditNamePrompt(ctx, memberId);
     });
 
-    // Отмена редактирования имени
-    this.bot.callbackQuery(/^family_cancel_edit_name:(.+)$/, async (ctx) => {
+    // Отмена редактирования имени (f_cen = family_cancel_edit_name)
+    this.bot.callbackQuery(/^f_cen:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
         await ctx.answerCallbackQuery({
           text: 'Нет доступа',
@@ -437,43 +431,67 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.familyHandler.cancelEditName(ctx, memberId);
     });
 
-    // Редактирование описания конфига
-    this.bot.callbackQuery(
-      /^family_edit_description:(.+):(.+)$/,
-      async (ctx) => {
-        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-          await ctx.answerCallbackQuery({
-            text: 'Нет доступа',
-            show_alert: true,
-          });
-          return;
-        }
-        await ctx.answerCallbackQuery();
-        const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
-        await this.familyHandler.showEditDescriptionPrompt(
-          ctx,
-          peerName,
-          memberId,
-        );
-      },
-    );
+    // Редактирование описания (f_ed = family_edit_description)
+    this.bot.callbackQuery(/^f_ed:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+      await this.familyHandler.showEditDescriptionPrompt(
+        ctx,
+        peerName,
+        memberId,
+      );
+    });
 
-    // Отмена редактирования описания
-    this.bot.callbackQuery(
-      /^family_cancel_edit_description:(.+):(.+)$/,
-      async (ctx) => {
-        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-          await ctx.answerCallbackQuery({
-            text: 'Нет доступа',
-            show_alert: true,
-          });
-          return;
-        }
-        await ctx.answerCallbackQuery();
-        const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
-        await this.familyHandler.cancelEditDescription(ctx, peerName, memberId);
-      },
-    );
+    // Отмена редактирования описания (f_ced = family_cancel_edit_description)
+    this.bot.callbackQuery(/^f_ced:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+      await this.familyHandler.cancelEditDescription(ctx, peerName, memberId);
+    });
+
+    // Меню создания конфига (f_cc = family_create_config)
+    this.bot.callbackQuery(/^f_cc:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const memberId = ctx.match[1];
+      await this.familyHandler.showCreateConfigOptions(ctx, memberId);
+    });
+
+    // Создать конфиг (f_dc = family_do_create, u = unlimited)
+    this.bot.callbackQuery(/^f_dc:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [memberId, duration] = [
+        ctx.match[1],
+        ctx.match[2] === 'u' ? 'unlimited' : ctx.match[2],
+      ];
+      await this.familyHandler.createMemberConfig(ctx, memberId, duration);
+    });
   }
 
   private registerAdminCommands() {

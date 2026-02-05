@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'grammy';
+import { Context, InputFile } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
+import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 
 // Состояние ожидания ввода для добавления члена группы
 // userId -> { promptMessageId: number, chatId: number }
@@ -226,7 +227,7 @@ export class FamilyHandler {
 
       await ctx.editMessageText(BotUi.memberConfigsListTitle(displayName), {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.memberConfigsListKeyboard(peers, memberId),
+        reply_markup: BotUi.memberConfigsListKeyboard(peers, member.id),
       });
     } catch {
       await ctx.answerCallbackQuery({
@@ -262,19 +263,41 @@ export class FamilyHandler {
   ) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
 
+    let peer;
+    let member;
     try {
-      const peer = await this.peersService.findPeer(peerName);
-
-      await ctx.editMessageText(BotUi.memberPeerDetailsText(peer), {
-        reply_markup: BotUi.memberPeerDetailsKeyboard(peer, memberId),
-        parse_mode: 'Markdown',
-      });
-    } catch {
+      peer = await this.peersService.findPeer(peerName);
+      member = await this.familyService.findMemberById(memberId);
+    } catch (error) {
+      this.logger.error(`Конфиг/член не найден: ${peerName}, ошибка: ${error}`);
       await ctx.answerCallbackQuery({
         text: 'Конфиг не найден',
         show_alert: true,
       });
       await this.showMemberDetails(ctx, memberId);
+      return;
+    }
+
+    try {
+      await ctx.editMessageText(BotUi.memberPeerDetailsText(peer), {
+        reply_markup: BotUi.memberPeerDetailsKeyboard(peer, member.id),
+        parse_mode: 'Markdown',
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка editMessageText для ${peerName}: ${error}`);
+      // Попробуем отправить новое сообщение вместо редактирования
+      try {
+        await ctx.reply(BotUi.memberPeerDetailsText(peer), {
+          reply_markup: BotUi.memberPeerDetailsKeyboard(peer, member.id),
+          parse_mode: 'Markdown',
+        });
+      } catch (replyError) {
+        this.logger.error(`Ошибка reply для ${peerName}: ${replyError}`);
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка отображения конфига',
+          show_alert: true,
+        });
+      }
     }
   }
 
@@ -359,10 +382,18 @@ export class FamilyHandler {
   async showChangeDuration(ctx: Context, peerName: string, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
 
-    await ctx.editMessageText(BotUi.changeDurationTitle, {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.changeDurationKeyboard(peerName, memberId),
-    });
+    try {
+      const member = await this.familyService.findMemberById(memberId);
+      await ctx.editMessageText(BotUi.changeDurationTitle, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.changeDurationKeyboard(peerName, member.id),
+      });
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Член группы не найден',
+        show_alert: true,
+      });
+    }
   }
 
   async changePeerDuration(
@@ -405,13 +436,13 @@ export class FamilyHandler {
       const member = await this.familyService.findMemberById(memberId);
       const result = await ctx.editMessageText(BotUi.editNamePrompt(member), {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelEditNameKeyboard(memberId),
+        reply_markup: BotUi.cancelEditNameKeyboard(member.id),
       });
 
       // Сохраняем ID prompt-сообщения для последующего удаления
       if (result && typeof result === 'object' && 'message_id' in result) {
         this.setAwaitingNameEdit(String(ctx.from!.id), {
-          memberId,
+          memberId: member.id,
           promptMessageId: result.message_id,
           chatId: ctx.chat.id,
         });
@@ -498,11 +529,12 @@ export class FamilyHandler {
 
     try {
       const peer = await this.peersService.findPeer(peerName);
+      const member = await this.familyService.findMemberById(memberId);
       const result = await ctx.editMessageText(
         BotUi.editDescriptionPrompt(peer),
         {
           parse_mode: 'Markdown',
-          reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, memberId),
+          reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, member.id),
         },
       );
 
@@ -510,7 +542,7 @@ export class FamilyHandler {
       if (result && typeof result === 'object' && 'message_id' in result) {
         this.setAwaitingDescriptionEdit(String(ctx.from!.id), {
           peerName,
-          memberId,
+          memberId: member.id,
           promptMessageId: result.message_id,
           chatId: ctx.chat.id,
         });
@@ -600,6 +632,108 @@ export class FamilyHandler {
       await ctx.api.deleteMessage(chatId, messageId);
     } catch {
       // Игнорируем ошибку удаления (сообщение уже удалено или нет прав)
+    }
+  }
+
+  // === Создание конфига для члена группы ===
+
+  async showCreateConfigOptions(ctx: Context, memberId: string) {
+    if (!(await this.checkOwnership(ctx, memberId))) return;
+
+    try {
+      const member = await this.familyService.findMemberById(memberId);
+      const displayName = this.familyService.getDisplayName(member);
+
+      await ctx.editMessageText(BotUi.memberCreateConfigTitle(displayName), {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.memberCreateConfigKeyboard(member.id),
+      });
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Член группы не найден',
+        show_alert: true,
+      });
+    }
+  }
+
+  async createMemberConfig(
+    ctx: Context,
+    memberId: string,
+    duration: string,
+  ) {
+    if (!(await this.checkOwnership(ctx, memberId))) return;
+
+    let member;
+    try {
+      member = await this.familyService.findMemberById(memberId);
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Член группы не найден',
+        show_alert: true,
+      });
+      return;
+    }
+
+    try {
+      const displayName = this.familyService.getDisplayName(member);
+
+      // Показываем сообщение о создании
+      await ctx.editMessageText('⏳ *Создаю конфигурацию...*', {
+        parse_mode: 'Markdown',
+      });
+
+      // Определяем срок действия
+      const durationDays: SubscriptionDuration | undefined =
+        duration === 'unlimited'
+          ? undefined
+          : (Number(duration) as SubscriptionDuration);
+
+      // Создаем конфиг для члена группы
+      const { config, peer } = await this.peersService.createPeer({
+        telegramId: member.telegramId,
+        durationDays,
+      });
+
+      // Отправляем конфиг клиенту
+      try {
+        const message = await ctx.api.sendDocument(
+          member.telegramId,
+          new InputFile(Buffer.from(config), `${peer.name}.conf`),
+          {
+            caption: BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+            parse_mode: 'Markdown',
+          },
+        );
+        await this.peersService.setConfigMessageId(peer.name, message.message_id);
+      } catch (error) {
+        this.logger.warn(
+          `Не удалось отправить конфиг клиенту ${member.telegramId}: ${error}`,
+        );
+      }
+
+      // Уведомляем админа
+      const escapedName = displayName.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+      await ctx.editMessageText(
+        `✅ *Конфиг создан для ${escapedName}*\n\n` +
+          `🏷 Имя: \`${peer.name}\`\n` +
+          `🌐 IP: \`${peer.ip}\`\n` +
+          (peer.expiresAt
+            ? `📅 Действует до: ${peer.expiresAt.toLocaleDateString('ru-RU')}`
+            : '⏳ Срок: ♾️ Бессрочно'),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToMemberDetailsKeyboard(member.id),
+        },
+      );
+
+      await ctx.answerCallbackQuery({ text: 'Конфиг создан' });
+    } catch (error) {
+      this.logger.error(`Ошибка создания конфига: ${error}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await ctx.editMessageText(`❌ *Ошибка:* ${errorMsg}`, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMemberDetailsKeyboard(member.id),
+      });
     }
   }
 }

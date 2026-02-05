@@ -2,6 +2,11 @@ import { InlineKeyboard } from 'grammy';
 import { TFamilyMember } from 'src/family/family.service';
 import { TPeer } from 'src/peers/peers.service';
 
+// Экранирование специальных символов Markdown
+function escapeMarkdown(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
+
 function isExpired(peer: TPeer): boolean {
   if (!peer.expiresAt) return false;
   return new Date() > peer.expiresAt;
@@ -76,8 +81,9 @@ function getPeerStatusIcon(peer: TPeer): string {
   return '🟢';
 }
 
-function getMemberDisplayName(member: TFamilyMember): string {
-  return member.displayName || member.telegramId;
+function getMemberDisplayName(member: TFamilyMember, escape = false): string {
+  const name = member.displayName || member.telegramId;
+  return escape ? escapeMarkdown(name) : name;
 }
 
 export const BotUi = {
@@ -201,7 +207,7 @@ export const BotUi = {
 
     // Описание видят только админы
     if (isAdmin && peer.description) {
-      text += `\n\n📝 *Описание:*\n${peer.description}`;
+      text += `\n\n📝 *Описание:*\n${escapeMarkdown(peer.description)}`;
     }
 
     return text;
@@ -220,7 +226,8 @@ export const BotUi = {
 
     members.forEach((member) => {
       const displayName = getMemberDisplayName(member);
-      keyboard.text(`👤 ${displayName}`, `family_member:${member.id}`).row();
+      const mId = member.id.slice(0, 8);
+      keyboard.text(`👤 ${displayName}`, `f_m:${mId}`).row();
     });
 
     keyboard.text('« Назад в меню', 'main_menu');
@@ -254,7 +261,7 @@ export const BotUi = {
   memberDetailsText: (member: TFamilyMember, configsCount: number) => {
     const lines: string[] = [`👤 *Информация о члене группы*\n`];
 
-    const displayName = getMemberDisplayName(member);
+    const displayName = getMemberDisplayName(member, true);
     lines.push(`📛 Имя: ${displayName}`);
     lines.push(`🆔 Telegram ID: \`${member.telegramId}\``);
 
@@ -272,16 +279,20 @@ export const BotUi = {
 
   memberDetailsKeyboard: (member: TFamilyMember, peers: TPeer[]) => {
     const keyboard = new InlineKeyboard();
+    const mId = member.id.slice(0, 8);
+
+    // Кнопка создания конфига
+    keyboard.text('➕ Создать конфиг', `f_cc:${mId}`).row();
 
     // Кнопка редактирования имени
-    keyboard.text('✏️ Изменить имя', `family_edit_name:${member.id}`).row();
+    keyboard.text('✏️ Изменить имя', `f_en:${mId}`).row();
 
     if (peers.length > 0) {
-      keyboard.text('📂 Конфиги', `family_member_configs:${member.id}`).row();
+      keyboard.text('📂 Конфиги', `f_mc:${mId}`).row();
     }
 
     keyboard
-      .text('🗑 Удалить из группы', `family_remove:${member.id}`)
+      .text('🗑 Удалить из группы', `f_rm:${mId}`)
       .row()
       .text('« К группе', 'family_menu');
 
@@ -289,19 +300,18 @@ export const BotUi = {
   },
 
   memberConfigsListTitle: (displayName: string) =>
-    `📂 *Конфиги ${displayName}:*`,
+    `📂 *Конфиги ${escapeMarkdown(displayName)}:*`,
 
   memberConfigsListKeyboard: (peers: TPeer[], memberId: string) => {
     const keyboard = new InlineKeyboard();
+    const mId = memberId.slice(0, 8);
 
     peers.forEach((peer) => {
       const status = getPeerStatusIcon(peer);
-      keyboard
-        .text(`${status} ${peer.name}`, `family_peer:${peer.name}:${memberId}`)
-        .row();
+      keyboard.text(`${status} ${peer.name}`, `f_p:${peer.name}:${mId}`).row();
     });
 
-    keyboard.text('« Назад', `family_member:${memberId}`);
+    keyboard.text('« Назад', `f_m:${mId}`);
     return keyboard;
   },
 
@@ -327,7 +337,7 @@ export const BotUi = {
       subscriptionDetails;
 
     if (peer.description) {
-      text += `\n\n📝 *Описание:*\n${peer.description}`;
+      text += `\n\n📝 *Описание:*\n${escapeMarkdown(peer.description)}`;
     }
 
     return text;
@@ -336,53 +346,80 @@ export const BotUi = {
   memberPeerDetailsKeyboard: (peer: TPeer, memberId: string) => {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
+    // Сокращаем memberId для callback_data (первые 8 символов UUID достаточно уникальны)
+    const mId = memberId.slice(0, 8);
 
     // Кнопка включить/пауза
     if (!expired) {
       const toggleBtnText = peer.paused ? '▶️ Включить' : '⏸ Пауза';
-      keyboard.text(
-        toggleBtnText,
-        `family_toggle_peer:${peer.name}:${memberId}`,
-      );
+      keyboard.text(toggleBtnText, `f_tp:${peer.name}:${mId}`);
     }
 
     const descriptionBtnText = peer.description
       ? '📝 Изменить описание'
       : '📝 Добавить описание';
     keyboard
-      .text(descriptionBtnText, `family_edit_description:${peer.name}:${memberId}`)
+      .text(descriptionBtnText, `f_ed:${peer.name}:${mId}`)
       .row()
-      .text(
-        '📅 Изменить срок',
-        `family_change_duration:${peer.name}:${memberId}`,
-      )
+      .text('📅 Изменить срок', `f_cd:${peer.name}:${mId}`)
       .row()
-      .text('🗑 Удалить', `family_delete_peer:${peer.name}:${memberId}`)
+      .text('🗑 Удалить', `f_dp:${peer.name}:${mId}`)
       .row()
-      .text('« К конфигам', `family_member_configs:${memberId}`);
+      .text('« К конфигам', `f_mc:${mId}`);
 
     return keyboard;
   },
 
   changeDurationTitle: '📅 *Выберите новый срок действия:*',
 
-  changeDurationKeyboard: (peerName: string, memberId: string) =>
-    new InlineKeyboard()
-      .text(
-        '♾️ Бессрочный',
-        `family_set_duration:${peerName}:${memberId}:unlimited`,
-      )
+  // === Создание конфига для члена группы ===
+
+  memberCreateConfigTitle: (displayName: string) =>
+    `➕ *Создание конфига для ${escapeMarkdown(displayName)}*\n\nВыберите срок действия:`,
+
+  memberCreateConfigKeyboard: (memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard()
+      .text('♾️ Бессрочный', `f_dc:${mId}:u`)
       .row()
-      .text('30 дней', `family_set_duration:${peerName}:${memberId}:30`)
-      .text('60 дней', `family_set_duration:${peerName}:${memberId}:60`)
-      .text('90 дней', `family_set_duration:${peerName}:${memberId}:90`)
+      .text('30 дней', `f_dc:${mId}:30`)
+      .text('60 дней', `f_dc:${mId}:60`)
+      .text('90 дней', `f_dc:${mId}:90`)
       .row()
-      .text('« Назад', `family_peer:${peerName}:${memberId}`),
+      .text('« Назад', `f_m:${mId}`);
+  },
+
+  memberConfigCreated: (name: string, ip: string, expiresAt?: Date | null) => {
+    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\nIP: \`${ip}\``;
+    if (expiresAt) {
+      msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
+    } else {
+      msg += '\n⏳ Срок: ♾️ Бессрочно';
+    }
+    return msg;
+  },
+
+  backToMemberDetailsKeyboard: (memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard().text('« К участнику', `f_m:${mId}`);
+  },
+
+  changeDurationKeyboard: (peerName: string, memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard()
+      .text('♾️ Бессрочный', `f_sd:${peerName}:${mId}:u`)
+      .row()
+      .text('30 дней', `f_sd:${peerName}:${mId}:30`)
+      .text('60 дней', `f_sd:${peerName}:${mId}:60`)
+      .text('90 дней', `f_sd:${peerName}:${mId}:90`)
+      .row()
+      .text('« Назад', `f_p:${peerName}:${mId}`);
+  },
 
   // === Редактирование имени участника ===
 
   editNamePrompt: (member: TFamilyMember) => {
-    const currentName = getMemberDisplayName(member);
+    const currentName = getMemberDisplayName(member, true);
     return (
       `✏️ *Изменение имени участника*\n\n` +
       `Текущее имя: ${currentName}\n\n` +
@@ -395,28 +432,32 @@ export const BotUi = {
     'Имя должно быть от 1 до 50 символов.',
 
   nameUpdated: (newName: string) =>
-    `✅ *Имя обновлено*\n\nНовое имя: ${newName}`,
+    `✅ *Имя обновлено*\n\nНовое имя: ${escapeMarkdown(newName)}`,
 
   editNameError: (msg: string) => `❌ *Ошибка:* ${msg}`,
 
-  cancelEditNameKeyboard: (memberId: string) =>
-    new InlineKeyboard().text('❌ Отмена', `family_cancel_edit_name:${memberId}`),
+  cancelEditNameKeyboard: (memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard().text('❌ Отмена', `f_cen:${mId}`);
+  },
 
-  backToMemberKeyboard: (memberId: string) =>
-    new InlineKeyboard().text('« К участнику', `family_member:${memberId}`),
+  backToMemberKeyboard: (memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard().text('« К участнику', `f_m:${mId}`);
+  },
 
   // === Редактирование описания конфига ===
 
   editDescriptionPrompt: (peer: TPeer) => {
     const currentDesc = peer.description
-      ? `Текущее описание:\n_${peer.description}_`
+      ? `Текущее описание:\n${escapeMarkdown(peer.description)}`
       : 'Описание не задано';
     return (
       `📝 *Изменение описания конфига*\n\n` +
       `🏷 Конфиг: \`${peer.name}\`\n\n` +
       `${currentDesc}\n\n` +
       `Отправьте новое описание (до 200 символов):\n` +
-      `_Отправьте "-" чтобы удалить описание_`
+      `Отправьте "-" чтобы удалить описание`
     );
   },
 
@@ -426,22 +467,20 @@ export const BotUi = {
 
   descriptionUpdated: (description: string | null) =>
     description
-      ? `✅ *Описание обновлено*\n\n${description}`
+      ? `✅ *Описание обновлено*\n\n${escapeMarkdown(description)}`
       : '✅ *Описание удалено*',
 
   editDescriptionError: (msg: string) => `❌ *Ошибка:* ${msg}`,
 
-  cancelEditDescriptionKeyboard: (peerName: string, memberId: string) =>
-    new InlineKeyboard().text(
-      '❌ Отмена',
-      `family_cancel_edit_description:${peerName}:${memberId}`,
-    ),
+  cancelEditDescriptionKeyboard: (peerName: string, memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard().text('❌ Отмена', `f_ced:${peerName}:${mId}`);
+  },
 
-  backToPeerKeyboard: (peerName: string, memberId: string) =>
-    new InlineKeyboard().text(
-      '« К конфигу',
-      `family_peer:${peerName}:${memberId}`,
-    ),
+  backToPeerKeyboard: (peerName: string, memberId: string) => {
+    const mId = memberId.slice(0, 8);
+    return new InlineKeyboard().text('« К конфигу', `f_p:${peerName}:${mId}`);
+  },
 
   // === Редактирование описания для своих конфигов ===
 
@@ -555,7 +594,7 @@ export const BotUi = {
       subscriptionDetails;
 
     if (peer.description) {
-      text += `\n\n📝 *Описание:*\n${peer.description}`;
+      text += `\n\n📝 *Описание:*\n${escapeMarkdown(peer.description)}`;
     }
 
     return text;
