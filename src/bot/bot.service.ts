@@ -13,6 +13,7 @@ import { PeerCreateHandler } from './handlers/peer-create.handler';
 import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
+import { AdminHandler } from './handlers/admin.handler';
 import { BotUi } from './ui/bot.ui';
 
 @Injectable()
@@ -28,6 +29,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly peerDeleteHandler: PeerDeleteHandler,
     private readonly peerManageHandler: PeerManageHandler,
     private readonly familyHandler: FamilyHandler,
+    private readonly adminHandler: AdminHandler,
     private readonly familyService: FamilyService,
     private readonly peersService: PeersService,
   ) {}
@@ -53,6 +55,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.registerMiddleware();
     this.registerCommands();
     this.registerFamilyCommands();
+    this.registerAdminCommands();
     this.startBot();
   }
 
@@ -139,6 +142,24 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         this.peerManageHandler.isAwaitingDescriptionEdit(userId)
       ) {
         await this.peerManageHandler.handleEditDescriptionInput(ctx);
+        return;
+      }
+
+      // Если админ ожидает ввода для поиска клиента
+      if (
+        this.isAdmin(userId) &&
+        this.adminHandler.isAwaitingClientSearch(userId)
+      ) {
+        await this.adminHandler.handleSearchInput(ctx);
+        return;
+      }
+
+      // Если админ ожидает ввода описания конфига клиента
+      if (
+        this.isAdmin(userId) &&
+        this.adminHandler.isAwaitingClientDescriptionEdit(userId)
+      ) {
+        await this.adminHandler.handleEditDescriptionInput(ctx);
         return;
       }
 
@@ -451,6 +472,162 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         await ctx.answerCallbackQuery();
         const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
         await this.familyHandler.cancelEditDescription(ctx, peerName, memberId);
+      },
+    );
+  }
+
+  private registerAdminCommands() {
+    // Поиск клиента
+    this.bot.callbackQuery('admin_search', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showSearchPrompt(ctx);
+    });
+
+    // Отмена поиска
+    this.bot.callbackQuery('admin_cancel_search', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.cancelSearch(ctx);
+    });
+
+    // Просмотр клиента
+    this.bot.callbackQuery(/^admin_client:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const telegramId = ctx.match[1];
+      await this.adminHandler.showClientDetails(ctx, telegramId);
+    });
+
+    // Список конфигов клиента
+    this.bot.callbackQuery(/^admin_client_configs:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const telegramId = ctx.match[1];
+      await this.adminHandler.showClientConfigs(ctx, telegramId);
+    });
+
+    // Просмотр конфига клиента
+    this.bot.callbackQuery(/^admin_peer:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+      await this.adminHandler.showClientPeerDetails(ctx, peerName, telegramId);
+    });
+
+    // Переключение статуса конфига клиента
+    this.bot.callbackQuery(/^admin_toggle_peer:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+      await this.adminHandler.toggleClientPeer(ctx, peerName, telegramId);
+    });
+
+    // Удаление конфига клиента
+    this.bot.callbackQuery(/^admin_delete_peer:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+      await this.adminHandler.deleteClientPeer(ctx, peerName, telegramId);
+    });
+
+    // Изменение срока действия конфига
+    this.bot.callbackQuery(/^admin_change_duration:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+      await this.adminHandler.showChangeDuration(ctx, peerName, telegramId);
+    });
+
+    // Установка нового срока действия
+    this.bot.callbackQuery(/^admin_set_duration:(.+):(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [peerName, telegramId, duration] = [
+        ctx.match[1],
+        ctx.match[2],
+        ctx.match[3],
+      ];
+      await this.adminHandler.changePeerDuration(
+        ctx,
+        peerName,
+        telegramId,
+        duration,
+      );
+    });
+
+    // Редактирование описания конфига клиента
+    this.bot.callbackQuery(/^admin_edit_description:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+      await this.adminHandler.showEditDescriptionPrompt(ctx, peerName, telegramId);
+    });
+
+    // Отмена редактирования описания
+    this.bot.callbackQuery(
+      /^admin_cancel_edit_description:(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        await ctx.answerCallbackQuery();
+        const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+        await this.adminHandler.cancelEditDescription(ctx, peerName, telegramId);
       },
     );
   }

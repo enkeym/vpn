@@ -88,14 +88,16 @@ export const BotUi = {
       .row()
       .text('📂 Мои конфиги', 'list_configs'),
 
-  // Главное меню для админов (с кнопкой управления группой)
+  // Главное меню для админов (с кнопкой управления группой и поиском)
   adminMenuKeyboard: () =>
     new InlineKeyboard()
       .text('📄 Создать конфиг', 'show_create_options')
       .row()
       .text('📂 Мои конфиги', 'list_configs')
       .row()
-      .text('👨‍👩‍👧‍👦 Группа «Семья»', 'family_menu'),
+      .text('👨‍👩‍👧‍👦 Группа «Семья»', 'family_menu')
+      .row()
+      .text('🔍 Поиск клиента', 'admin_search'),
 
   createConfigKeyboard: () =>
     new InlineKeyboard()
@@ -451,4 +453,158 @@ export const BotUi = {
 
   backToOwnPeerKeyboard: (peerName: string) =>
     new InlineKeyboard().text('« К конфигу', `manage_peer:${peerName}`),
+
+  // === Поиск клиентов (для админов) ===
+
+  clientSearchPrompt:
+    '🔍 *Поиск клиента*\n\n' +
+    'Введите Telegram ID клиента:\n\n' +
+    '• `123456789` — числовой ID\n\n' +
+    'Узнать ID можно через @Getmyid\\_bot',
+
+  invalidClientIdInput:
+    '❌ *Неверный формат*\n\n' +
+    'Введите числовой Telegram ID:\n' +
+    '• `123456789`\n\n' +
+    'Узнать ID можно через @Getmyid\\_bot',
+
+  clientFoundText: (telegramId: string, configsCount: number) =>
+    `👤 *Клиент*\n\n` +
+    `🆔 Telegram ID: \`${telegramId}\`\n` +
+    `📂 Конфигов: ${configsCount}\n\n` +
+    `Нажмите "Открыть меню" для управления`,
+
+  clientFoundKeyboard: (telegramId: string) =>
+    new InlineKeyboard()
+      .text('👤 Открыть меню', `admin_client:${telegramId}`)
+      .row()
+      .text('🔍 Искать другого', 'admin_search')
+      .row()
+      .text('« В меню', 'main_menu'),
+
+  cancelClientSearchKeyboard: () =>
+    new InlineKeyboard().text('❌ Отмена', 'admin_cancel_search'),
+
+  backToAdminSearchKeyboard: () =>
+    new InlineKeyboard()
+      .text('🔍 Искать снова', 'admin_search')
+      .row()
+      .text('« В меню', 'main_menu'),
+
+  clientDetailsText: (telegramId: string, configsCount: number) => {
+    return (
+      `👤 *Информация о клиенте*\n\n` +
+      `🆔 Telegram ID: \`${telegramId}\`\n` +
+      `📂 Конфигов: ${configsCount}`
+    );
+  },
+
+  clientDetailsKeyboard: (telegramId: string, peers: TPeer[]) => {
+    const keyboard = new InlineKeyboard();
+
+    if (peers.length > 0) {
+      keyboard.text('📂 Конфиги', `admin_client_configs:${telegramId}`).row();
+    }
+
+    keyboard
+      .text('🔍 Искать другого', 'admin_search')
+      .row()
+      .text('« В меню', 'main_menu');
+
+    return keyboard;
+  },
+
+  clientConfigsListTitle: (telegramId: string, count: number) =>
+    count > 0
+      ? `📂 *Конфиги клиента* \`${telegramId}\`:`
+      : `📂 *У клиента* \`${telegramId}\` *нет конфигов*`,
+
+  clientConfigsListKeyboard: (peers: TPeer[], telegramId: string) => {
+    const keyboard = new InlineKeyboard();
+
+    peers.forEach((peer) => {
+      const status = getPeerStatusIcon(peer);
+      keyboard
+        .text(`${status} ${peer.name}`, `admin_peer:${peer.name}:${telegramId}`)
+        .row();
+    });
+
+    keyboard.text('« Назад', `admin_client:${telegramId}`);
+    return keyboard;
+  },
+
+  clientPeerDetailsText: (peer: TPeer) => {
+    const expired = isExpired(peer);
+    let status: string;
+
+    if (expired) {
+      status = '🟡 Срок истёк';
+    } else if (peer.paused) {
+      status = '🔴 Приостановлен';
+    } else {
+      status = '🟢 Активен';
+    }
+
+    const subscriptionDetails = formatSubscriptionDetails(peer);
+
+    let text =
+      `⚙️ *Конфиг клиента*\n\n` +
+      `🏷 Имя: \`${peer.name}\`\n` +
+      `🌐 IP: \`${peer.ip}\`\n` +
+      `📊 Статус: ${status}\n\n` +
+      subscriptionDetails;
+
+    if (peer.description) {
+      text += `\n\n📝 *Описание:*\n${peer.description}`;
+    }
+
+    return text;
+  },
+
+  clientPeerDetailsKeyboard: (peer: TPeer, telegramId: string) => {
+    const keyboard = new InlineKeyboard();
+    const expired = isExpired(peer);
+
+    // Кнопка включить/пауза
+    if (!expired) {
+      const toggleBtnText = peer.paused ? '▶️ Включить' : '⏸ Пауза';
+      keyboard.text(toggleBtnText, `admin_toggle_peer:${peer.name}:${telegramId}`);
+    }
+
+    const descriptionBtnText = peer.description
+      ? '📝 Изменить описание'
+      : '📝 Добавить описание';
+    keyboard
+      .text(descriptionBtnText, `admin_edit_description:${peer.name}:${telegramId}`)
+      .row()
+      .text('📅 Изменить срок', `admin_change_duration:${peer.name}:${telegramId}`)
+      .row()
+      .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
+      .row()
+      .text('« К конфигам', `admin_client_configs:${telegramId}`);
+
+    return keyboard;
+  },
+
+  clientChangeDurationKeyboard: (peerName: string, telegramId: string) =>
+    new InlineKeyboard()
+      .text('♾️ Бессрочный', `admin_set_duration:${peerName}:${telegramId}:unlimited`)
+      .row()
+      .text('30 дней', `admin_set_duration:${peerName}:${telegramId}:30`)
+      .text('60 дней', `admin_set_duration:${peerName}:${telegramId}:60`)
+      .text('90 дней', `admin_set_duration:${peerName}:${telegramId}:90`)
+      .row()
+      .text('« Назад', `admin_peer:${peerName}:${telegramId}`),
+
+  cancelClientEditDescriptionKeyboard: (peerName: string, telegramId: string) =>
+    new InlineKeyboard().text(
+      '❌ Отмена',
+      `admin_cancel_edit_description:${peerName}:${telegramId}`,
+    ),
+
+  backToClientPeerKeyboard: (peerName: string, telegramId: string) =>
+    new InlineKeyboard().text(
+      '« К конфигу',
+      `admin_peer:${peerName}:${telegramId}`,
+    ),
 };

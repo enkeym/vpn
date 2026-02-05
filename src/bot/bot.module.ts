@@ -8,6 +8,7 @@ import { PeerCreateHandler } from './handlers/peer-create.handler';
 import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
+import { AdminHandler } from './handlers/admin.handler';
 
 @Module({
   imports: [PeersModule, FamilyModule],
@@ -18,6 +19,7 @@ import { FamilyHandler } from './handlers/family.handler';
     PeerDeleteHandler,
     PeerManageHandler,
     FamilyHandler,
+    AdminHandler,
   ],
   controllers: [BotController],
 })
