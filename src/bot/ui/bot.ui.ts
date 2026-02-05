@@ -114,7 +114,7 @@ export const BotUi = {
 
   emptyConfigsKeyboard: () =>
     new InlineKeyboard()
-      .text('Создать', 'create_config')
+      .text('Создать', 'show_create_options')
       .row()
       .text('Назад', 'main_menu'),
 
