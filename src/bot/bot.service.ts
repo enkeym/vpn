@@ -94,15 +94,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Проверяем, является ли членом группы "Семья"
-      const isFamilyMember = await this.familyService.isMember(
-        userId,
-        username,
-      );
+      const isFamilyMember = await this.familyService.isMember(userId);
       if (isFamilyMember) {
-        // Привязываем telegramId если был добавлен по username
-        if (username) {
-          await this.familyService.bindTelegramId(username, userId);
-        }
         await next();
         return;
       }
@@ -122,6 +115,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       // Если админ ожидает ввода для добавления в группу
       if (this.isAdmin(userId) && this.familyHandler.isAwaitingInput(userId)) {
         await this.familyHandler.handleAddMemberInput(ctx);
+        return;
+      }
+
+      // Если админ ожидает ввода нового имени участника
+      if (this.isAdmin(userId) && this.familyHandler.isAwaitingNameEdit(userId)) {
+        await this.familyHandler.handleEditNameInput(ctx);
         return;
       }
 
@@ -346,6 +345,34 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
       const memberId = ctx.match[1];
       await this.familyHandler.removeMember(ctx, memberId);
+    });
+
+    // Редактирование имени участника
+    this.bot.callbackQuery(/^family_edit_name:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const memberId = ctx.match[1];
+      await this.familyHandler.showEditNamePrompt(ctx, memberId);
+    });
+
+    // Отмена редактирования имени
+    this.bot.callbackQuery(/^family_cancel_edit_name:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const memberId = ctx.match[1];
+      await this.familyHandler.cancelEditName(ctx, memberId);
     });
   }
 

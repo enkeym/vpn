@@ -6,6 +6,8 @@ import { BotUi } from '../ui/bot.ui';
 
 // Состояние ожидания ввода для добавления члена группы
 const awaitingFamilyInput = new Map<string, boolean>();
+// Состояние ожидания ввода для редактирования имени
+const awaitingNameEdit = new Map<string, string>(); // userId -> memberId
 
 @Injectable()
 export class FamilyHandler {
@@ -28,6 +30,22 @@ export class FamilyHandler {
     }
   }
 
+  isAwaitingNameEdit(userId: string): boolean {
+    return awaitingNameEdit.has(userId);
+  }
+
+  getAwaitingNameEditMemberId(userId: string): string | undefined {
+    return awaitingNameEdit.get(userId);
+  }
+
+  setAwaitingNameEdit(userId: string, memberId: string | null) {
+    if (memberId) {
+      awaitingNameEdit.set(userId, memberId);
+    } else {
+      awaitingNameEdit.delete(userId);
+    }
+  }
+
   async showAddMemberPrompt(ctx: Context) {
     if (!ctx.from) return;
 
@@ -47,24 +65,8 @@ export class FamilyHandler {
 
     const input = ctx.message.text.trim();
 
-    let telegramId: string | undefined;
-    let username: string | undefined;
-
-    if (input.startsWith('@')) {
-      // Добавление по username
-      username = input.slice(1);
-      if (!username || username.length < 3) {
-        await ctx.reply(BotUi.invalidInput, {
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.cancelKeyboard(),
-        });
-        this.setAwaitingInput(adminId, true);
-        return;
-      }
-    } else if (/^\d+$/.test(input)) {
-      // Добавление по telegram ID
-      telegramId = input;
-    } else {
+    // Принимаем только telegramId (числа)
+    if (!/^\d+$/.test(input)) {
       await ctx.reply(BotUi.invalidInput, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.cancelKeyboard(),
@@ -73,11 +75,10 @@ export class FamilyHandler {
       return;
     }
 
+    const telegramId = input;
+
     try {
-      const member = await this.familyService.addMember(adminId, {
-        username,
-        telegramId,
-      });
+      const member = await this.familyService.addMember(adminId, telegramId);
       await ctx.reply(BotUi.memberAdded(member), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToFamilyKeyboard(),
@@ -121,10 +122,7 @@ export class FamilyHandler {
 
     try {
       const member = await this.familyService.findMemberById(memberId);
-      // Конфиги есть только если привязан telegramId
-      const peers = member.telegramId
-        ? await this.peersService.getPeersByTelegramId(member.telegramId)
-        : [];
+      const peers = await this.peersService.getPeersByTelegramId(member.telegramId);
 
       await ctx.editMessageText(BotUi.memberDetailsText(member, peers.length), {
         parse_mode: 'Markdown',
@@ -145,19 +143,13 @@ export class FamilyHandler {
     try {
       const member = await this.familyService.findMemberById(memberId);
 
-      if (!member.telegramId) {
-        await ctx.answerCallbackQuery({
-          text: 'У пользователя нет конфигов (ID не привязан)',
-          show_alert: true,
-        });
-        return;
-      }
-
       const peers = await this.peersService.getPeersByTelegramId(
         member.telegramId,
       );
 
-      await ctx.editMessageText(BotUi.memberConfigsListTitle(member.username), {
+      const displayName = this.familyService.getDisplayName(member);
+
+      await ctx.editMessageText(BotUi.memberConfigsListTitle(displayName), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.memberConfigsListKeyboard(peers, memberId),
       });
@@ -259,23 +251,21 @@ export class FamilyHandler {
     try {
       const member = await this.familyService.findMemberById(memberId);
 
-      // Удаляем все конфиги члена группы (если есть telegramId)
-      if (member.telegramId) {
-        const peers = await this.peersService.getPeersByTelegramId(
-          member.telegramId,
-        );
-        for (const peer of peers) {
-          try {
-            if (peer.configMessageId) {
-              await ctx.api.deleteMessage(
-                peer.telegramId,
-                peer.configMessageId,
-              );
-            }
-            await this.peersService.deletePeer(peer.name);
-          } catch (error) {
-            this.logger.warn(`Ошибка удаления конфига ${peer.name}: ${error}`);
+      // Удаляем все конфиги члена группы
+      const peers = await this.peersService.getPeersByTelegramId(
+        member.telegramId,
+      );
+      for (const peer of peers) {
+        try {
+          if (peer.configMessageId) {
+            await ctx.api.deleteMessage(
+              peer.telegramId,
+              peer.configMessageId,
+            );
           }
+          await this.peersService.deletePeer(peer.name);
+        } catch (error) {
+          this.logger.warn(`Ошибка удаления конфига ${peer.name}: ${error}`);
         }
       }
 
@@ -328,5 +318,68 @@ export class FamilyHandler {
         show_alert: true,
       });
     }
+  }
+
+  // === Редактирование имени участника ===
+
+  async showEditNamePrompt(ctx: Context, memberId: string) {
+    if (!(await this.checkOwnership(ctx, memberId))) return;
+
+    const userId = String(ctx.from!.id);
+    this.setAwaitingNameEdit(userId, memberId);
+
+    try {
+      const member = await this.familyService.findMemberById(memberId);
+      await ctx.editMessageText(BotUi.editNamePrompt(member), {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.cancelEditNameKeyboard(memberId),
+      });
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Член группы не найден',
+        show_alert: true,
+      });
+    }
+  }
+
+  async handleEditNameInput(ctx: Context) {
+    if (!ctx.from || !ctx.message?.text) return;
+
+    const userId = String(ctx.from.id);
+    const memberId = this.getAwaitingNameEditMemberId(userId);
+
+    if (!memberId) return;
+
+    this.setAwaitingNameEdit(userId, null);
+
+    const newName = ctx.message.text.trim();
+
+    if (newName.length < 1 || newName.length > 50) {
+      await ctx.reply(BotUi.invalidNameInput, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMemberKeyboard(memberId),
+      });
+      return;
+    }
+
+    try {
+      await this.familyService.updateDisplayName(memberId, newName);
+      await ctx.reply(BotUi.nameUpdated(newName), {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMemberKeyboard(memberId),
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await ctx.reply(BotUi.editNameError(errorMsg), {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMemberKeyboard(memberId),
+      });
+    }
+  }
+
+  async cancelEditName(ctx: Context, memberId: string) {
+    if (!ctx.from) return;
+    this.setAwaitingNameEdit(String(ctx.from.id), null);
+    await this.showMemberDetails(ctx, memberId);
   }
 }

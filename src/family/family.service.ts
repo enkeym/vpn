@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { desc, eq, or } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 
 export type TFamilyMember = typeof schema.familyMembers.$inferSelect;
 
@@ -15,48 +15,33 @@ export class FamilyService {
   ) {}
 
   /**
-   * Добавление члена группы по username ИЛИ telegramId
+   * Добавление члена группы по telegramId
+   * displayName опционален - если не указан, будет использован telegramId
    */
   async addMember(
     addedBy: string,
-    options: { username?: string; telegramId?: string },
+    telegramId: string,
+    displayName?: string,
   ): Promise<TFamilyMember> {
-    const { username, telegramId } = options;
-
-    if (!username && !telegramId) {
-      throw new Error('Нужно указать username или telegramId');
-    }
-
     // Проверяем, нет ли уже такого пользователя
-    if (telegramId) {
-      const existingById = await this.db.query.familyMembers.findFirst({
-        where: eq(schema.familyMembers.telegramId, telegramId),
-      });
-      if (existingById) {
-        throw new Error('Пользователь с таким ID уже в группе');
-      }
-    }
-
-    if (username) {
-      const existingByUsername = await this.db.query.familyMembers.findFirst({
-        where: eq(schema.familyMembers.username, username),
-      });
-      if (existingByUsername) {
-        throw new Error('Пользователь с таким username уже в группе');
-      }
+    const existingById = await this.db.query.familyMembers.findFirst({
+      where: eq(schema.familyMembers.telegramId, telegramId),
+    });
+    if (existingById) {
+      throw new Error('Пользователь с таким ID уже в группе');
     }
 
     const [member] = await this.db
       .insert(schema.familyMembers)
       .values({
-        telegramId: telegramId || null,
-        username: username || null,
+        telegramId,
+        displayName: displayName || null,
         addedBy,
       })
       .returning();
 
-    const displayName = username ? `@${username}` : telegramId;
-    this.logger.log(`Добавлен член группы: ${displayName}`);
+    const name = displayName || telegramId;
+    this.logger.log(`Добавлен член группы: ${name}`);
     return member;
   }
 
@@ -89,46 +74,12 @@ export class FamilyService {
     return member ?? null;
   }
 
-  async findMemberByUsername(username: string): Promise<TFamilyMember | null> {
-    const member = await this.db.query.familyMembers.findFirst({
-      where: eq(schema.familyMembers.username, username),
-    });
-    return member ?? null;
-  }
-
   /**
-   * Проверка доступа: по telegramId или username
+   * Проверка доступа: только по telegramId
    */
-  async isMember(telegramId: string, username?: string): Promise<boolean> {
-    // Сначала проверяем по telegramId
+  async isMember(telegramId: string): Promise<boolean> {
     const byId = await this.findMemberByTelegramId(telegramId);
-    if (byId) return true;
-
-    // Если не нашли по ID, проверяем по username
-    if (username) {
-      const byUsername = await this.findMemberByUsername(username);
-      if (byUsername) return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Привязка telegramId к записи, добавленной по username
-   */
-  async bindTelegramId(username: string, telegramId: string): Promise<void> {
-    const member = await this.findMemberByUsername(username);
-    if (!member) return;
-
-    // Если telegramId уже привязан - ничего не делаем
-    if (member.telegramId) return;
-
-    await this.db
-      .update(schema.familyMembers)
-      .set({ telegramId })
-      .where(eq(schema.familyMembers.id, member.id));
-
-    this.logger.log(`Привязан telegramId ${telegramId} к @${username}`);
+    return !!byId;
   }
 
   async getAllMembers(): Promise<TFamilyMember[]> {
@@ -157,13 +108,22 @@ export class FamilyService {
     return member?.addedBy === adminId;
   }
 
-  async updateMemberData(
-    memberId: string,
-    data: { username?: string | null; telegramId?: string | null },
-  ): Promise<void> {
+  /**
+   * Обновить displayName участника
+   */
+  async updateDisplayName(memberId: string, displayName: string): Promise<void> {
     await this.db
       .update(schema.familyMembers)
-      .set(data)
+      .set({ displayName })
       .where(eq(schema.familyMembers.id, memberId));
+
+    this.logger.log(`Обновлено имя участника ${memberId}: ${displayName}`);
+  }
+
+  /**
+   * Получить отображаемое имя участника
+   */
+  getDisplayName(member: TFamilyMember): string {
+    return member.displayName || member.telegramId;
   }
 }

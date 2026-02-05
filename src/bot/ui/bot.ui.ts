@@ -33,6 +33,10 @@ function getPeerStatusIcon(peer: TPeer): string {
   return '🟢';
 }
 
+function getMemberDisplayName(member: TFamilyMember): string {
+  return member.displayName || member.telegramId;
+}
+
 export const BotUi = {
   // Главное меню для обычных пользователей
   mainMenuKeyboard: () =>
@@ -160,10 +164,7 @@ export const BotUi = {
     keyboard.text('➕ Добавить в группу', 'family_add').row();
 
     members.forEach((member) => {
-      // Показываем @username или просто telegramId
-      const displayName = member.username
-        ? `@${member.username}`
-        : member.telegramId || 'Не привязан';
+      const displayName = getMemberDisplayName(member);
       keyboard.text(`👤 ${displayName}`, `family_member:${member.id}`).row();
     });
 
@@ -173,22 +174,18 @@ export const BotUi = {
 
   addMemberPrompt:
     '➕ *Добавление в группу*\n\n' +
-    'Отправьте данные пользователя:\n\n' +
-    '• `@username` — если есть username\n' +
-    '• `123456789` — Telegram ID, если нет username\n\n' +
-    '_Узнать ID можно через @userinfobot_',
+    'Отправьте Telegram ID пользователя:\n\n' +
+    '• `123456789` — числовой ID\n\n' +
+    '_Узнать ID можно через @Getmyid_bot',
 
   invalidInput:
     '❌ *Неверный формат*\n\n' +
-    'Отправьте:\n' +
-    '• `@username` — если есть username\n' +
-    '• `123456789` — Telegram ID, если нет',
+    'Отправьте числовой Telegram ID:\n' +
+    '• `123456789`\n\n' +
+    '_Узнать ID можно через @Getmyid_bot',
 
   memberAdded: (member: TFamilyMember) => {
-    if (member.username) {
-      return `✅ *Пользователь добавлен в группу*\n\n👤 Username: @${member.username}`;
-    }
-    return `✅ *Пользователь добавлен в группу*\n\n🆔 ID: \`${member.telegramId}\``;
+    return `✅ *Пользователь добавлен в группу*\n\n🆔 ID: \`${member.telegramId}\`\n\n_Вы можете изменить имя в настройках участника_`;
   },
 
   addMemberError: (msg: string) => `❌ *Ошибка:* ${msg}`,
@@ -202,15 +199,9 @@ export const BotUi = {
   memberDetailsText: (member: TFamilyMember, configsCount: number) => {
     const lines: string[] = [`👤 *Информация о члене группы*\n`];
 
-    if (member.username) {
-      lines.push(`👤 Username: @${member.username}`);
-    }
-    if (member.telegramId) {
-      lines.push(`🆔 ID: \`${member.telegramId}\``);
-    }
-    if (!member.telegramId) {
-      lines.push(`⏳ _ID будет привязан при первом обращении к боту_`);
-    }
+    const displayName = getMemberDisplayName(member);
+    lines.push(`📛 Имя: ${displayName}`);
+    lines.push(`🆔 Telegram ID: \`${member.telegramId}\``);
 
     lines.push(`📂 Конфигов: ${configsCount}`);
     lines.push(
@@ -227,6 +218,9 @@ export const BotUi = {
   memberDetailsKeyboard: (member: TFamilyMember, peers: TPeer[]) => {
     const keyboard = new InlineKeyboard();
 
+    // Кнопка редактирования имени
+    keyboard.text('✏️ Изменить имя', `family_edit_name:${member.id}`).row();
+
     if (peers.length > 0) {
       keyboard.text('📂 Конфиги', `family_member_configs:${member.id}`).row();
     }
@@ -239,8 +233,8 @@ export const BotUi = {
     return keyboard;
   },
 
-  memberConfigsListTitle: (username?: string | null) =>
-    `📂 *Конфиги ${username ? `@${username}` : 'пользователя'}:*`,
+  memberConfigsListTitle: (displayName: string) =>
+    `📂 *Конфиги ${displayName}:*`,
 
   memberConfigsListKeyboard: (peers: TPeer[], memberId: string) => {
     const keyboard = new InlineKeyboard();
@@ -324,4 +318,30 @@ export const BotUi = {
       .text('90 дней', `family_set_duration:${peerName}:${memberId}:90`)
       .row()
       .text('« Назад', `family_peer:${peerName}:${memberId}`),
+
+  // === Редактирование имени участника ===
+
+  editNamePrompt: (member: TFamilyMember) => {
+    const currentName = getMemberDisplayName(member);
+    return (
+      `✏️ *Изменение имени участника*\n\n` +
+      `Текущее имя: ${currentName}\n\n` +
+      `Отправьте новое имя (до 50 символов):`
+    );
+  },
+
+  invalidNameInput:
+    '❌ *Неверный формат*\n\n' +
+    'Имя должно быть от 1 до 50 символов.',
+
+  nameUpdated: (newName: string) =>
+    `✅ *Имя обновлено*\n\nНовое имя: ${newName}`,
+
+  editNameError: (msg: string) => `❌ *Ошибка:* ${msg}`,
+
+  cancelEditNameKeyboard: (memberId: string) =>
+    new InlineKeyboard().text('❌ Отмена', `family_cancel_edit_name:${memberId}`),
+
+  backToMemberKeyboard: (memberId: string) =>
+    new InlineKeyboard().text('« К участнику', `family_member:${memberId}`),
 };

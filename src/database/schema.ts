@@ -7,9 +7,9 @@ export const familyMembers = sqliteTable('family_members', {
   id: text('id')
     .primaryKey()
     .$defaultFn(() => randomUUID()),
-  telegramId: text('telegramId').unique(), // Может быть null если добавлен по username
-  username: text('username').unique(), // Может быть null если добавлен по ID
-  addedBy: text('addedBy').notNull(), // ID админа, который добавил
+  telegramId: text('telegramId').notNull().unique(),
+  displayName: text('displayName'),
+  addedBy: text('addedBy').notNull(),
   createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
     () => new Date(),
   ),

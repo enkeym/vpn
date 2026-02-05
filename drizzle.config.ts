@@ -5,6 +5,6 @@ export default defineConfig({
   out: './drizzle',
   dialect: 'sqlite',
   dbCredentials: {
-    url: './configs/vpn.db',
+    url: './src/database/vpn.db',
   },
 });
