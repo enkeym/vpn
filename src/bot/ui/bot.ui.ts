@@ -27,6 +27,49 @@ function formatExpirationStatus(peer: TPeer): string {
   return `📆 Осталось ${diffDays} дн.`;
 }
 
+function formatSubscriptionDetails(peer: TPeer): string {
+  if (!peer.expiresAt) {
+    return `📅 Получен: ${
+      peer.createdAt
+        ? new Date(peer.createdAt).toLocaleDateString('ru-RU')
+        : 'Неизвестно'
+    }\n⏳ Срок: ♾️ Бессрочно`;
+  }
+
+  const now = new Date();
+  const expiresAt = peer.expiresAt;
+  const createdAt = peer.createdAt ? new Date(peer.createdAt) : null;
+
+  const createdText = createdAt
+    ? createdAt.toLocaleDateString('ru-RU')
+    : 'Неизвестно';
+  const expiresText = expiresAt.toLocaleDateString('ru-RU');
+
+  if (now > expiresAt) {
+    return (
+      `📅 Получен: ${createdText}\n` +
+      `🔚 Истёк: ${expiresText}\n` +
+      `⏰ Статус: *Срок действия истёк*`
+    );
+  }
+
+  const diffMs = expiresAt.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  let remainingText: string;
+  if (diffDays <= 3) {
+    remainingText = `⚠️ Осталось: *${diffDays} дн.* (скоро истекает)`;
+  } else {
+    remainingText = `✅ Осталось: *${diffDays} дн.*`;
+  }
+
+  return (
+    `📅 Получен: ${createdText}\n` +
+    `🔚 Действует до: ${expiresText}\n` +
+    remainingText
+  );
+}
+
 function getPeerStatusIcon(peer: TPeer): string {
   if (peer.paused) return '🔴';
   if (isExpired(peer)) return '🟡';
@@ -145,19 +188,14 @@ export const BotUi = {
       status = '🟢 Активен';
     }
 
-    const expirationText = formatExpirationStatus(peer);
+    const subscriptionDetails = formatSubscriptionDetails(peer);
 
     let text =
       `⚙️ *Управление конфигом*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
       `🌐 IP: \`${peer.ip}\`\n` +
-      `📊 Статус: ${status}\n` +
-      `⏳ Срок: ${expirationText}\n` +
-      `📅 Создан: ${
-        peer.createdAt
-          ? new Date(peer.createdAt).toLocaleDateString('ru-RU')
-          : 'Неизвестно'
-      }`;
+      `📊 Статус: ${status}\n\n` +
+      subscriptionDetails;
 
     // Описание видят только админы
     if (isAdmin && peer.description) {
@@ -277,19 +315,14 @@ export const BotUi = {
       status = '🟢 Активен';
     }
 
-    const expirationText = formatExpirationStatus(peer);
+    const subscriptionDetails = formatSubscriptionDetails(peer);
 
     let text =
       `⚙️ *Конфиг члена группы*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
       `🌐 IP: \`${peer.ip}\`\n` +
-      `📊 Статус: ${status}\n` +
-      `⏳ Срок: ${expirationText}\n` +
-      `📅 Создан: ${
-        peer.createdAt
-          ? new Date(peer.createdAt).toLocaleDateString('ru-RU')
-          : 'Неизвестно'
-      }`;
+      `📊 Статус: ${status}\n\n` +
+      subscriptionDetails;
 
     if (peer.description) {
       text += `\n\n📝 *Описание:*\n${peer.description}`;
