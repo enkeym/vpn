@@ -238,13 +238,13 @@ export const BotUi = {
     '➕ *Добавление в группу*\n\n' +
     'Отправьте Telegram ID пользователя:\n\n' +
     '• `123456789` — числовой ID\n\n' +
-    '_Узнать ID можно через @Getmyid_bot',
+    '_Узнать ID можно через_ @Getmyid\\_bot',
 
   invalidInput:
     '❌ *Неверный формат*\n\n' +
     'Отправьте числовой Telegram ID:\n' +
     '• `123456789`\n\n' +
-    '_Узнать ID можно через @Getmyid_bot',
+    '_Узнать ID можно через_ @Getmyid\\_bot',
 
   memberAdded: (member: TFamilyMember) => {
     return `✅ *Пользователь добавлен в группу*\n\n🆔 ID: \`${member.telegramId}\`\n\n_Вы можете изменить имя в настройках участника_`;
