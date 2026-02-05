@@ -4,14 +4,13 @@ import { TPeer } from 'src/peers/peers.service';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+  return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 }
 
 function isExpired(peer: TPeer): boolean {
   if (!peer.expiresAt) return false;
   return new Date() > peer.expiresAt;
 }
-
 
 function formatSubscriptionDetails(peer: TPeer): string {
   if (!peer.expiresAt) {

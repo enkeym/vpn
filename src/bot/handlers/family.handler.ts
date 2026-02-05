@@ -746,7 +746,7 @@ export class FamilyHandler {
 
       // Уведомляем админа
       const escapedName = displayName.replace(
-        /([_*\[\]()~`>#+\-=|{}.!\\])/g,
+        /([_*[\]()~`>#+\-=|{}.!\\])/g,
         '\\$1',
       );
       await ctx.editMessageText(

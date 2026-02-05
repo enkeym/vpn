@@ -5,7 +5,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot, Context, GrammyError, HttpError } from 'grammy';
+import { Bot, GrammyError, HttpError } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from './handlers/main.handler';
@@ -14,7 +14,6 @@ import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
-import { BotUi } from './ui/bot.ui';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {

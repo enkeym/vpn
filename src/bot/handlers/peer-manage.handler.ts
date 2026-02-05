@@ -234,7 +234,7 @@ export class PeerManageHandler {
       const { canReplace, hoursLeft } = this.peersService.canReplacePeer(peer);
 
       if (!canReplace) {
-        await ctx.editMessageText(BotUi.replaceNotAvailable(hoursLeft!), {
+        await ctx.editMessageText(BotUi.replaceNotAvailable(hoursLeft ?? 0), {
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
         });
