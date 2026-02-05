@@ -85,7 +85,7 @@ export const BotUi = {
     return keyboard;
   },
 
-  peerDetailsKeyboard: (peer: TPeer) => {
+  peerDetailsKeyboard: (peer: TPeer, isAdmin: boolean = false) => {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
 
@@ -100,7 +100,16 @@ export const BotUi = {
       keyboard.text(toggleBtnText, `toggle_peer:${peer.name}`);
     }
 
+    // Кнопка описания только для админов
+    if (isAdmin) {
+      const descriptionBtnText = peer.description
+        ? '📝 Изменить описание'
+        : '📝 Добавить описание';
+      keyboard.text(descriptionBtnText, `edit_description:${peer.name}`);
+    }
+
     keyboard
+      .row()
       .text('Удалить', `delete_peer:${peer.name}`)
       .row()
       .text('К списку', 'list_configs');
@@ -124,7 +133,7 @@ export const BotUi = {
 
   configsListTitle: (count: number) => `📂 *Ваши конфигурации (${count}):*`,
 
-  peerDetailsText: (peer: TPeer) => {
+  peerDetailsText: (peer: TPeer, isAdmin: boolean = false) => {
     const expired = isExpired(peer);
     let status: string;
 
@@ -138,7 +147,7 @@ export const BotUi = {
 
     const expirationText = formatExpirationStatus(peer);
 
-    return (
+    let text =
       `⚙️ *Управление конфигом*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
       `🌐 IP: \`${peer.ip}\`\n` +
@@ -148,8 +157,14 @@ export const BotUi = {
         peer.createdAt
           ? new Date(peer.createdAt).toLocaleDateString('ru-RU')
           : 'Неизвестно'
-      }`
-    );
+      }`;
+
+    // Описание видят только админы
+    if (isAdmin && peer.description) {
+      text += `\n\n📝 *Описание:*\n${peer.description}`;
+    }
+
+    return text;
   },
 
   // === Группа "Семья" ===
@@ -264,7 +279,7 @@ export const BotUi = {
 
     const expirationText = formatExpirationStatus(peer);
 
-    return (
+    let text =
       `⚙️ *Конфиг члена группы*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
       `🌐 IP: \`${peer.ip}\`\n` +
@@ -274,8 +289,13 @@ export const BotUi = {
         peer.createdAt
           ? new Date(peer.createdAt).toLocaleDateString('ru-RU')
           : 'Неизвестно'
-      }`
-    );
+      }`;
+
+    if (peer.description) {
+      text += `\n\n📝 *Описание:*\n${peer.description}`;
+    }
+
+    return text;
   },
 
   memberPeerDetailsKeyboard: (peer: TPeer, memberId: string) => {
@@ -291,7 +311,12 @@ export const BotUi = {
       );
     }
 
+    const descriptionBtnText = peer.description
+      ? '📝 Изменить описание'
+      : '📝 Добавить описание';
     keyboard
+      .text(descriptionBtnText, `family_edit_description:${peer.name}:${memberId}`)
+      .row()
       .text(
         '📅 Изменить срок',
         `family_change_duration:${peer.name}:${memberId}`,
@@ -344,4 +369,53 @@ export const BotUi = {
 
   backToMemberKeyboard: (memberId: string) =>
     new InlineKeyboard().text('« К участнику', `family_member:${memberId}`),
+
+  // === Редактирование описания конфига ===
+
+  editDescriptionPrompt: (peer: TPeer) => {
+    const currentDesc = peer.description
+      ? `Текущее описание:\n_${peer.description}_`
+      : 'Описание не задано';
+    return (
+      `📝 *Изменение описания конфига*\n\n` +
+      `🏷 Конфиг: \`${peer.name}\`\n\n` +
+      `${currentDesc}\n\n` +
+      `Отправьте новое описание (до 200 символов):\n` +
+      `_Отправьте "-" чтобы удалить описание_`
+    );
+  },
+
+  invalidDescriptionInput:
+    '❌ *Неверный формат*\n\n' +
+    'Описание должно быть до 200 символов.',
+
+  descriptionUpdated: (description: string | null) =>
+    description
+      ? `✅ *Описание обновлено*\n\n${description}`
+      : '✅ *Описание удалено*',
+
+  editDescriptionError: (msg: string) => `❌ *Ошибка:* ${msg}`,
+
+  cancelEditDescriptionKeyboard: (peerName: string, memberId: string) =>
+    new InlineKeyboard().text(
+      '❌ Отмена',
+      `family_cancel_edit_description:${peerName}:${memberId}`,
+    ),
+
+  backToPeerKeyboard: (peerName: string, memberId: string) =>
+    new InlineKeyboard().text(
+      '« К конфигу',
+      `family_peer:${peerName}:${memberId}`,
+    ),
+
+  // === Редактирование описания для своих конфигов ===
+
+  cancelEditOwnDescriptionKeyboard: (peerName: string) =>
+    new InlineKeyboard().text(
+      '❌ Отмена',
+      `cancel_edit_description:${peerName}`,
+    ),
+
+  backToOwnPeerKeyboard: (peerName: string) =>
+    new InlineKeyboard().text('« К конфигу', `manage_peer:${peerName}`),
 };

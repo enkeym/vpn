@@ -23,6 +23,7 @@ export const peers = sqliteTable('peers', {
   username: text('username'),
   configMessageId: integer('configMessageId'),
   name: text('name').notNull().unique(),
+  description: text('description'),
   publicKey: text('publicKey').notNull(),
   privateKey: text('privateKey').notNull(),
   presharedKey: text('presharedKey'),

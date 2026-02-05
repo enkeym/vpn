@@ -124,6 +124,24 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
+      // Если админ ожидает ввода описания конфига члена группы
+      if (
+        this.isAdmin(userId) &&
+        this.familyHandler.isAwaitingDescriptionEdit(userId)
+      ) {
+        await this.familyHandler.handleEditDescriptionInput(ctx);
+        return;
+      }
+
+      // Если админ ожидает ввода описания своего конфига
+      if (
+        this.isAdmin(userId) &&
+        this.peerManageHandler.isAwaitingDescriptionEdit(userId)
+      ) {
+        await this.peerManageHandler.handleEditDescriptionInput(ctx);
+        return;
+      }
+
       await next();
     });
   }
@@ -167,13 +185,15 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot.callbackQuery(/^manage_peer:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
-      await this.peerManageHandler.showPeerDetails(ctx, peerName);
+      const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
+      await this.peerManageHandler.showPeerDetails(ctx, peerName, isAdmin);
     });
 
     // Пауза/Старт
     this.bot.callbackQuery(/^toggle_peer:(.+)$/, async (ctx) => {
       const peerName = ctx.match[1];
-      await this.peerManageHandler.togglePeer(ctx, peerName);
+      const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
+      await this.peerManageHandler.togglePeer(ctx, peerName, isAdmin);
     });
 
     // Удаление пира
@@ -188,6 +208,27 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         text: '🚧 Функция продления скоро будет доступна',
         show_alert: true,
       });
+    });
+
+    // Редактирование описания своего конфига (только для админов)
+    this.bot.callbackQuery(/^edit_description:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerManageHandler.showEditDescriptionPrompt(ctx, peerName);
+    });
+
+    // Отмена редактирования описания своего конфига
+    this.bot.callbackQuery(/^cancel_edit_description:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerManageHandler.cancelEditDescription(ctx, peerName, true);
     });
   }
 
@@ -374,6 +415,44 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       const memberId = ctx.match[1];
       await this.familyHandler.cancelEditName(ctx, memberId);
     });
+
+    // Редактирование описания конфига
+    this.bot.callbackQuery(
+      /^family_edit_description:(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        await ctx.answerCallbackQuery();
+        const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+        await this.familyHandler.showEditDescriptionPrompt(
+          ctx,
+          peerName,
+          memberId,
+        );
+      },
+    );
+
+    // Отмена редактирования описания
+    this.bot.callbackQuery(
+      /^family_cancel_edit_description:(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        await ctx.answerCallbackQuery();
+        const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
+        await this.familyHandler.cancelEditDescription(ctx, peerName, memberId);
+      },
+    );
   }
 
   // Запуск бота

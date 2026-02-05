@@ -267,4 +267,20 @@ export class PeersService {
       `Обновлен срок действия конфига ${peerName}: ${expiresAt ? expiresAt.toISOString() : 'бессрочно'}`,
     );
   }
+
+  async updatePeerDescription(
+    peerName: string,
+    description: string | null,
+  ): Promise<void> {
+    await this.findPeer(peerName);
+
+    await this.db
+      .update(schema.peers)
+      .set({ description })
+      .where(eq(schema.peers.name, peerName));
+
+    this.logger.log(
+      `Обновлено описание конфига ${peerName}: ${description || '(удалено)'}`,
+    );
+  }
 }

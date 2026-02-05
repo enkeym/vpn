@@ -16,6 +16,12 @@ const awaitingNameEdit = new Map<
   string,
   { memberId: string; promptMessageId: number; chatId: number }
 >();
+// Состояние ожидания ввода для редактирования описания конфига
+// userId -> { peerName: string, memberId: string, promptMessageId: number, chatId: number }
+const awaitingDescriptionEdit = new Map<
+  string,
+  { peerName: string; memberId: string; promptMessageId: number; chatId: number }
+>();
 
 @Injectable()
 export class FamilyHandler {
@@ -61,6 +67,30 @@ export class FamilyHandler {
       awaitingNameEdit.set(userId, state);
     } else {
       awaitingNameEdit.delete(userId);
+    }
+  }
+
+  isAwaitingDescriptionEdit(userId: string): boolean {
+    return awaitingDescriptionEdit.has(userId);
+  }
+
+  getAwaitingDescriptionEditState(userId: string) {
+    return awaitingDescriptionEdit.get(userId);
+  }
+
+  setAwaitingDescriptionEdit(
+    userId: string,
+    state: {
+      peerName: string;
+      memberId: string;
+      promptMessageId: number;
+      chatId: number;
+    } | null,
+  ) {
+    if (state) {
+      awaitingDescriptionEdit.set(userId, state);
+    } else {
+      awaitingDescriptionEdit.delete(userId);
     }
   }
 
@@ -454,6 +484,110 @@ export class FamilyHandler {
     if (!ctx.from) return;
     this.setAwaitingNameEdit(String(ctx.from.id), null);
     await this.showMemberDetails(ctx, memberId);
+  }
+
+  // === Редактирование описания конфига ===
+
+  async showEditDescriptionPrompt(
+    ctx: Context,
+    peerName: string,
+    memberId: string,
+  ) {
+    if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!ctx.chat) return;
+
+    try {
+      const peer = await this.peersService.findPeer(peerName);
+      const result = await ctx.editMessageText(
+        BotUi.editDescriptionPrompt(peer),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, memberId),
+        },
+      );
+
+      // Сохраняем ID prompt-сообщения для последующего удаления
+      if (result && typeof result === 'object' && 'message_id' in result) {
+        this.setAwaitingDescriptionEdit(String(ctx.from!.id), {
+          peerName,
+          memberId,
+          promptMessageId: result.message_id,
+          chatId: ctx.chat.id,
+        });
+      }
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Конфиг не найден',
+        show_alert: true,
+      });
+    }
+  }
+
+  async handleEditDescriptionInput(ctx: Context) {
+    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
+
+    const userId = String(ctx.from.id);
+    const state = this.getAwaitingDescriptionEditState(userId);
+
+    if (!state) return;
+
+    const { peerName, memberId } = state;
+    this.setAwaitingDescriptionEdit(userId, null);
+
+    const input = ctx.message.text.trim();
+
+    // Удаляем сообщение пользователя
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
+    // Удаляем prompt-сообщение
+    try {
+      await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
+    // Проверка на удаление описания
+    const newDescription = input === '-' ? null : input;
+
+    // Валидация длины
+    if (newDescription && newDescription.length > 200) {
+      const errorMsg = await ctx.reply(BotUi.invalidDescriptionInput, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, memberId),
+      });
+      // Сохраняем новое prompt-сообщение для повторной попытки
+      this.setAwaitingDescriptionEdit(userId, {
+        peerName,
+        memberId,
+        promptMessageId: errorMsg.message_id,
+        chatId: ctx.chat.id,
+      });
+      return;
+    }
+
+    try {
+      await this.peersService.updatePeerDescription(peerName, newDescription);
+      await ctx.reply(BotUi.descriptionUpdated(newDescription), {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToPeerKeyboard(peerName, memberId),
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await ctx.reply(BotUi.editDescriptionError(errorMsg), {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToPeerKeyboard(peerName, memberId),
+      });
+    }
+  }
+
+  async cancelEditDescription(ctx: Context, peerName: string, memberId: string) {
+    if (!ctx.from) return;
+    this.setAwaitingDescriptionEdit(String(ctx.from.id), null);
+    await this.showMemberPeerDetails(ctx, peerName, memberId);
   }
 
   // Вспомогательный метод для безопасного удаления сообщения
