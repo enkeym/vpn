@@ -221,6 +221,29 @@ export class PeerManageHandler {
     await this.showPeerDetails(ctx, peerName, isAdmin);
   }
 
+  // === Показать QR-код конфига ===
+
+  async showQrCode(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    try {
+      const qrBuffer = await this.peersService.generatePeerQrCode(peerName);
+      const peer = await this.peersService.findPeer(peerName);
+
+      await ctx.replyWithPhoto(new InputFile(qrBuffer, `${peerName}_qr.png`), {
+        caption: `📷 *QR\\-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении WireGuard_`,
+        parse_mode: 'MarkdownV2',
+        reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка генерации QR: ${error}`);
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка генерации QR-кода',
+        show_alert: true,
+      });
+    }
+  }
+
   // === Замена конфига ===
 
   async replacePeer(ctx: Context, peerName: string) {

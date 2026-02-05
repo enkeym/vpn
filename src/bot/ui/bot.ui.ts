@@ -133,6 +133,9 @@ export const BotUi = {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
 
+    // Кнопка QR-кода всегда первая
+    keyboard.text('📷 QR-код', `show_qr:${peer.name}`).row();
+
     // Показываем кнопку "Продлить" если конфиг истёк или на паузе
     if (peer.paused || expired) {
       keyboard.text('🔄 Продлить', `extend_peer:${peer.name}`).row();

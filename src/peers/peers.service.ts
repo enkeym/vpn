@@ -21,6 +21,7 @@ import {
   CACHE_NAMESPACES,
   CACHE_TTL,
 } from 'src/common/cache/cache.service';
+import * as QRCode from 'qrcode';
 
 export type TPeer = typeof schema.peers.$inferInsert;
 export type TPeerSelect = typeof schema.peers.$inferSelect;
@@ -645,6 +646,90 @@ export class PeersService {
         throw error;
       }
     });
+  }
+
+  /**
+   * Генерирует строку конфига WireGuard для существующего пира
+   */
+  generatePeerConfig(peer: TPeerSelect): string {
+    if (!peer.presharedKey) {
+      throw new InternalServerErrorException(
+        'Отсутствует presharedKey у пира',
+      );
+    }
+
+    return `[Interface]
+PrivateKey = ${peer.privateKey}
+Address = ${peer.ip}/32
+DNS = 1.1.1.1, 8.8.8.8
+MTU = 1420
+
+[Peer]
+PublicKey = ${this.wgService.host ? '' : ''}${peer.endpoint?.split(':')[0] ? '' : ''}
+PresharedKey = ${peer.presharedKey}
+Endpoint = ${peer.endpoint}
+AllowedIPs = ${process.env.WG_ALLOWED_IPS || '0.0.0.0/0'}
+PersistentKeepalive = 25
+`;
+  }
+
+  /**
+   * Генерирует QR-код для конфига пира (возвращает Buffer с PNG изображением)
+   */
+  async generatePeerQrCode(peerName: string): Promise<Buffer> {
+    const peer = await this.findPeer(peerName);
+
+    // Получаем публичный ключ сервера через endpoint
+    const serverPublicKey = await this.getServerPublicKey();
+
+    const config = `[Interface]
+PrivateKey = ${peer.privateKey}
+Address = ${peer.ip}/32
+DNS = 1.1.1.1, 8.8.8.8
+MTU = 1420
+
+[Peer]
+PublicKey = ${serverPublicKey}
+PresharedKey = ${peer.presharedKey}
+Endpoint = ${peer.endpoint}
+AllowedIPs = ${process.env.WG_ALLOWED_IPS || '0.0.0.0/0'}
+PersistentKeepalive = 25
+`;
+
+    return QRCode.toBuffer(config, {
+      type: 'png',
+      width: 512,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+  }
+
+  /**
+   * Получить публичный ключ сервера (кешируется в WgService)
+   */
+  private async getServerPublicKey(): Promise<string> {
+    // Используем exec для получения публичного ключа из приватного
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+
+    // Читаем конфиг сервера для получения приватного ключа
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const configPath = path.join(process.cwd(), '/configs/wg0.conf');
+    const configContent = await fs.readFile(configPath, 'utf-8');
+
+    // Извлекаем приватный ключ
+    const privateKeyMatch = configContent.match(/PrivateKey\s*=\s*(.+)/);
+    if (!privateKeyMatch) {
+      throw new InternalServerErrorException(
+        'Не удалось найти приватный ключ сервера',
+      );
+    }
+
+    const privateKey = privateKeyMatch[1].trim();
+    const { stdout } = await execAsync(`echo '${privateKey}' | wg pubkey`);
+    return stdout.trim();
   }
 
   /**

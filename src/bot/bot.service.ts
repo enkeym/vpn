@@ -311,6 +311,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.peerManageHandler.showPeerDetailsReply(ctx, peerName, isAdmin);
     });
 
+    // Показать QR-код конфига
+    this.bot.callbackQuery(/^show_qr:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerManageHandler.showQrCode(ctx, peerName);
+    });
+
     // Редактирование описания своего конфига (только для админов)
     this.bot.callbackQuery(/^edit_description:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
