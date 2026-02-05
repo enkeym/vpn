@@ -136,6 +136,9 @@ export const BotUi = {
     // Кнопка QR-кода всегда первая
     keyboard.text('📷 QR-код', `show_qr:${peer.name}`).row();
 
+    // Кнопка получения файла конфига
+    keyboard.text('📄 Получить файл', `get_config_file:${peer.name}`).row();
+
     // Показываем кнопку "Продлить" если конфиг истёк или на паузе
     if (peer.paused || expired) {
       keyboard.text('🔄 Продлить', `extend_peer:${peer.name}`).row();

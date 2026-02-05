@@ -674,15 +674,15 @@ PersistentKeepalive = 25
   }
 
   /**
-   * Генерирует QR-код для конфига пира (возвращает Buffer с PNG изображением)
+   * Генерирует строку конфига WireGuard для существующего пира
    */
-  async generatePeerQrCode(peerName: string): Promise<Buffer> {
+  async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
     // Получаем публичный ключ сервера через endpoint
     const serverPublicKey = await this.getServerPublicKey();
 
-    const config = `[Interface]
+    return `[Interface]
 PrivateKey = ${peer.privateKey}
 Address = ${peer.ip}/32
 DNS = 1.1.1.1, 8.8.8.8
@@ -695,6 +695,13 @@ Endpoint = ${peer.endpoint}
 AllowedIPs = ${process.env.WG_ALLOWED_IPS || '0.0.0.0/0'}
 PersistentKeepalive = 25
 `;
+  }
+
+  /**
+   * Генерирует QR-код для конфига пира (возвращает Buffer с PNG изображением)
+   */
+  async generatePeerQrCode(peerName: string): Promise<Buffer> {
+    const config = await this.getPeerConfigString(peerName);
 
     return QRCode.toBuffer(config, {
       type: 'png',

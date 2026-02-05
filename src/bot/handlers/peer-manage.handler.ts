@@ -244,6 +244,32 @@ export class PeerManageHandler {
     }
   }
 
+  // === Получить файл конфига ===
+
+  async sendConfigFile(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    try {
+      const config = await this.peersService.getPeerConfigString(peerName);
+      const peer = await this.peersService.findPeer(peerName);
+
+      await ctx.replyWithDocument(
+        new InputFile(Buffer.from(config), `${peer.name}.conf`),
+        {
+          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение WireGuard_`,
+          parse_mode: 'MarkdownV2',
+          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+        },
+      );
+    } catch (error) {
+      this.logger.error(`Ошибка отправки файла конфига: ${error}`);
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка получения файла конфига',
+        show_alert: true,
+      });
+    }
+  }
+
   // === Замена конфига ===
 
   async replacePeer(ctx: Context, peerName: string) {
