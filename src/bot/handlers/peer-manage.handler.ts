@@ -76,13 +76,16 @@ export class PeerManageHandler {
     try {
       await this.peersService.updatedPeer(peerName);
       await this.showPeerDetails(ctx, peerName, isAdmin);
-      await ctx.answerCallbackQuery('Статус изменен');
     } catch (error) {
       this.logger.error(`Ошибка переключения: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка изменения статуса',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка изменения статуса',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 

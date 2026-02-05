@@ -247,10 +247,14 @@ export class FamilyHandler {
     );
 
     if (!isOwner) {
-      await ctx.answerCallbackQuery({
-        text: 'Нет доступа к этому участнику',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа к этому участнику',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
 
     return isOwner;
@@ -307,13 +311,16 @@ export class FamilyHandler {
     try {
       await this.peersService.updatedPeer(peerName);
       await this.showMemberPeerDetails(ctx, peerName, memberId);
-      await ctx.answerCallbackQuery('Статус изменен');
     } catch (error) {
       this.logger.error(`Ошибка переключения: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка изменения статуса',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка изменения статуса',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -332,14 +339,17 @@ export class FamilyHandler {
       }
 
       await this.peersService.deletePeer(peerName);
-      await ctx.answerCallbackQuery({ text: 'Конфиг удален' });
       await this.showMemberDetails(ctx, memberId);
     } catch (error) {
       this.logger.error(`Ошибка удаления: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка удаления',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка удаления',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -368,14 +378,17 @@ export class FamilyHandler {
       }
 
       await this.familyService.removeMemberById(memberId);
-      await ctx.answerCallbackQuery({ text: 'Член группы удален' });
       await this.showFamilyMenu(ctx);
     } catch (error) {
       this.logger.error(`Ошибка удаления члена группы: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка удаления',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка удаления',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -415,14 +428,17 @@ export class FamilyHandler {
       }
 
       await this.peersService.updatePeerExpiration(peerName, newExpiresAt);
-      await ctx.answerCallbackQuery({ text: 'Срок действия изменен' });
       await this.showMemberPeerDetails(ctx, peerName, memberId);
     } catch (error) {
       this.logger.error(`Ошибка изменения срока: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка изменения срока',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка изменения срока',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -725,8 +741,6 @@ export class FamilyHandler {
           reply_markup: BotUi.backToMemberDetailsKeyboard(member.id),
         },
       );
-
-      await ctx.answerCallbackQuery({ text: 'Конфиг создан' });
     } catch (error) {
       this.logger.error(`Ошибка создания конфига: ${error}`);
       const errorMsg = error instanceof Error ? error.message : String(error);

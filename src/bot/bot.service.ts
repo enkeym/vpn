@@ -70,7 +70,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private registerMiddleware() {
-    this.bot.catch((err) => {
+    this.bot.catch(async (err) => {
       const ctx = err.ctx;
       this.logger.error(`Ошибка во время выполнения ${ctx.update.update_id}`);
       const error = err.error;
@@ -81,11 +81,36 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       } else {
         this.logger.error(`Неизвестная ошибка: ${String(error)}`);
       }
+
+      // Отвечаем на callback query, чтобы кнопка не "зависала"
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.answerCallbackQuery({
+            text: 'Произошла ошибка. Попробуйте позже.',
+            show_alert: true,
+          });
+        } catch {
+          // Игнорируем ошибку, если callback уже был отвечен
+        }
+      }
     });
 
     // Middleware проверки доступа: админы и члены группы "Семья"
     this.bot.use(async (ctx, next) => {
-      if (!ctx.from) return;
+      if (!ctx.from) {
+        // Отвечаем на callback query, чтобы кнопка не зависала
+        if (ctx.callbackQuery) {
+          try {
+            await ctx.answerCallbackQuery({
+              text: 'Ошибка авторизации',
+              show_alert: true,
+            });
+          } catch {
+            // Игнорируем
+          }
+        }
+        return;
+      }
 
       const userId = String(ctx.from.id);
       const username = ctx.from.username;
@@ -107,6 +132,18 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `Попытка несанкционированного доступа от ID: ${userId} (${username})`,
       );
+
+      // Отвечаем на callback query, чтобы кнопка не зависала
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.answerCallbackQuery({
+            text: 'У вас нет доступа к этому боту',
+            show_alert: true,
+          });
+        } catch {
+          // Игнорируем
+        }
+      }
     });
 
     // Обработка текстовых сообщений для ввода данных члена группы
@@ -212,6 +249,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     // Пауза/Старт
     this.bot.callbackQuery(/^toggle_peer:(.+)$/, async (ctx) => {
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
       await this.peerManageHandler.togglePeer(ctx, peerName, isAdmin);
@@ -219,6 +258,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     // Удаление пира
     this.bot.callbackQuery(/^delete_peer:(.+)$/, async (ctx) => {
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       await this.peerDeleteHandler.deletePeer(ctx, peerName);
     });
@@ -337,6 +378,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
       await this.familyHandler.toggleMemberPeer(ctx, peerName, memberId);
     });
@@ -350,6 +393,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const [peerName, memberId] = [ctx.match[1], ctx.match[2]];
       await this.familyHandler.deleteMemberPeer(ctx, peerName, memberId);
     });
@@ -377,6 +422,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const [peerName, memberId, duration] = [
         ctx.match[1],
         ctx.match[2],
@@ -399,6 +446,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. удаление может занять время
+      await ctx.answerCallbackQuery();
       const memberId = ctx.match[1];
       await this.familyHandler.removeMember(ctx, memberId);
     });
@@ -486,6 +535,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, чтобы кнопка не зависала во время создания конфига
+      await ctx.answerCallbackQuery();
       const [memberId, duration] = [
         ctx.match[1],
         ctx.match[2] === 'u' ? 'unlimited' : ctx.match[2],
@@ -565,6 +616,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
       await this.adminHandler.toggleClientPeer(ctx, peerName, telegramId);
     });
@@ -578,6 +631,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
       await this.adminHandler.deleteClientPeer(ctx, peerName, telegramId);
     });
@@ -605,6 +660,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
       const [peerName, telegramId, duration] = [
         ctx.match[1],
         ctx.match[2],
@@ -672,6 +729,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
+      // Сразу отвечаем, т.к. создание конфига может занять время
+      await ctx.answerCallbackQuery();
       const [telegramId, duration] = [
         ctx.match[1],
         ctx.match[2] === 'u' ? 'unlimited' : ctx.match[2],

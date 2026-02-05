@@ -166,10 +166,14 @@ export class AdminHandler {
         parse_mode: 'Markdown',
       });
     } catch {
-      await ctx.answerCallbackQuery({
-        text: 'Конфиг не найден',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Конфиг не найден',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
       await this.showClientDetails(ctx, telegramId);
     }
   }
@@ -178,13 +182,16 @@ export class AdminHandler {
     try {
       await this.peersService.updatedPeer(peerName);
       await this.showClientPeerDetails(ctx, peerName, telegramId);
-      await ctx.answerCallbackQuery('Статус изменен');
     } catch (error) {
       this.logger.error(`Ошибка переключения: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка изменения статуса',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка изменения статуса',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -201,14 +208,17 @@ export class AdminHandler {
       }
 
       await this.peersService.deletePeer(peerName);
-      await ctx.answerCallbackQuery({ text: 'Конфиг удален' });
       await this.showClientDetails(ctx, telegramId);
     } catch (error) {
       this.logger.error(`Ошибка удаления: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка удаления',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка удаления',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -237,14 +247,17 @@ export class AdminHandler {
       }
 
       await this.peersService.updatePeerExpiration(peerName, newExpiresAt);
-      await ctx.answerCallbackQuery({ text: 'Срок действия изменен' });
       await this.showClientPeerDetails(ctx, peerName, telegramId);
     } catch (error) {
       this.logger.error(`Ошибка изменения срока: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка изменения срока',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка изменения срока',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 
@@ -441,8 +454,6 @@ export class AdminHandler {
           reply_markup: BotUi.backToClientDetailsKeyboard(telegramId),
         },
       );
-
-      await ctx.answerCallbackQuery({ text: 'Конфиг создан' });
     } catch (error) {
       this.logger.error(`Ошибка создания конфига: ${error}`);
       const errorMsg = error instanceof Error ? error.message : String(error);

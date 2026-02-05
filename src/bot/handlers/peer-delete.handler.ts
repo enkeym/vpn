@@ -25,14 +25,17 @@ export class PeerDeleteHandler {
       }
 
       await this.peersService.deletePeer(peerName);
-      await ctx.answerCallbackQuery({ text: 'Конфиг удален' });
       await this.peerManageHandler.showConfigsList(ctx);
     } catch (error) {
       this.logger.error(`Ошибка удаления: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка удаления',
-        show_alert: true,
-      });
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка удаления',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
     }
   }
 }

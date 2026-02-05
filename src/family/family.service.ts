@@ -1,4 +1,11 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
@@ -6,13 +13,60 @@ import { desc, eq } from 'drizzle-orm';
 
 export type TFamilyMember = typeof schema.familyMembers.$inferSelect;
 
+// Кеш членства: telegramId -> { isMember: boolean, expiresAt: number }
+interface MembershipCacheEntry {
+  isMember: boolean;
+  expiresAt: number;
+}
+
 @Injectable()
-export class FamilyService {
+export class FamilyService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(FamilyService.name);
+
+  // Кеш проверки членства (TTL 5 минут)
+  private readonly membershipCache = new Map<string, MembershipCacheEntry>();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 минут
+  private readonly CACHE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // Очистка каждые 10 минут
+  private cacheCleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
   ) {}
+
+  onModuleInit() {
+    // Запускаем периодическую очистку кеша
+    this.cacheCleanupInterval = setInterval(() => {
+      this.cleanupExpiredCache();
+    }, this.CACHE_CLEANUP_INTERVAL_MS);
+
+    this.logger.log('Кеш членства инициализирован');
+  }
+
+  onModuleDestroy() {
+    if (this.cacheCleanupInterval) {
+      clearInterval(this.cacheCleanupInterval);
+      this.cacheCleanupInterval = null;
+    }
+  }
+
+  /**
+   * Очистка устаревших записей кеша
+   */
+  private cleanupExpiredCache(): void {
+    const now = Date.now();
+    let cleaned = 0;
+
+    for (const [key, value] of this.membershipCache.entries()) {
+      if (value.expiresAt <= now) {
+        this.membershipCache.delete(key);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      this.logger.debug(`Очищено ${cleaned} устаревших записей кеша членства`);
+    }
+  }
 
   /**
    * Добавление члена группы по telegramId
@@ -40,15 +94,28 @@ export class FamilyService {
       })
       .returning();
 
+    // Инвалидируем кеш для нового участника
+    this.invalidateMembershipCache(telegramId);
+
     const name = displayName || telegramId;
     this.logger.log(`Добавлен член группы: ${name}`);
     return member;
   }
 
   async removeMemberById(memberId: string): Promise<void> {
+    // Получаем telegramId перед удалением для инвалидации кеша
+    const member = await this.db.query.familyMembers.findFirst({
+      where: eq(schema.familyMembers.id, memberId),
+    });
+
     await this.db
       .delete(schema.familyMembers)
       .where(eq(schema.familyMembers.id, memberId));
+
+    // Инвалидируем кеш
+    if (member) {
+      this.invalidateMembershipCache(member.telegramId);
+    }
 
     this.logger.log(`Удален член группы: ${memberId}`);
   }
@@ -85,11 +152,40 @@ export class FamilyService {
   }
 
   /**
-   * Проверка доступа: только по telegramId
+   * Проверка доступа: только по telegramId (с кешированием)
    */
   async isMember(telegramId: string): Promise<boolean> {
+    // Проверяем кеш
+    const cached = this.membershipCache.get(telegramId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.isMember;
+    }
+
+    // Запрос к БД
     const byId = await this.findMemberByTelegramId(telegramId);
-    return !!byId;
+    const isMember = !!byId;
+
+    // Сохраняем в кеш
+    this.membershipCache.set(telegramId, {
+      isMember,
+      expiresAt: Date.now() + this.CACHE_TTL_MS,
+    });
+
+    return isMember;
+  }
+
+  /**
+   * Инвалидация кеша для конкретного пользователя
+   */
+  invalidateMembershipCache(telegramId: string): void {
+    this.membershipCache.delete(telegramId);
+  }
+
+  /**
+   * Полная очистка кеша членства
+   */
+  clearMembershipCache(): void {
+    this.membershipCache.clear();
   }
 
   async getAllMembers(): Promise<TFamilyMember[]> {
