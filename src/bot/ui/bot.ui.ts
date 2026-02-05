@@ -72,7 +72,18 @@ export const BotUi = {
     new InlineKeyboard()
       .text('📄 Создать конфиг', 'show_create_options')
       .row()
-      .text('📂 Мои конфиги', 'list_configs'),
+      .text('📂 Мои конфиги', 'list_configs')
+      .row()
+      .text('📖 Инструкция', 'show_instructions'),
+
+  // Главное меню для членов семьи
+  familyMemberMenuKeyboard: () =>
+    new InlineKeyboard()
+      .text('📄 Создать конфиг', 'show_create_options')
+      .row()
+      .text('📂 Мои конфиги', 'list_configs')
+      .row()
+      .text('📖 Инструкция', 'show_instructions'),
 
   // Главное меню для админов (с кнопкой управления группой и поиском)
   adminMenuKeyboard: () =>
@@ -83,7 +94,9 @@ export const BotUi = {
       .row()
       .text('👨‍👩‍👧‍👦 Группа «Семья»', 'family_menu')
       .row()
-      .text('🔍 Поиск клиента', 'admin_search'),
+      .text('🔍 Поиск клиента', 'admin_search')
+      .row()
+      .text('📖 Инструкция', 'show_instructions'),
 
   createConfigKeyboard: () =>
     new InlineKeyboard()
@@ -151,6 +164,36 @@ export const BotUi = {
     return keyboard;
   },
 
+  // === Приветственные сообщения ===
+
+  welcomeMessageAdmin:
+    '👋 *Добро пожаловать, Администратор\\!*\n\n' +
+    '🔧 Вы имеете полный доступ к управлению VPN:\n' +
+    '• Создание и управление конфигами\n' +
+    '• Управление группой «Семья»\n' +
+    '• Поиск и управление клиентами\n' +
+    '• Блокировка/разблокировка пользователей\n\n' +
+    'Выберите действие:',
+
+  welcomeMessageFamily:
+    '👋 *Добро пожаловать в VPN Manager\\!*\n\n' +
+    '🏠 Вы являетесь членом группы «Семья»\\.\n\n' +
+    'Вам доступно:\n' +
+    '• 📄 Создание VPN конфигов\n' +
+    '• 📂 Управление своими конфигами\n' +
+    '• 📖 Инструкции по установке\n\n' +
+    '_При возникновении вопросов обратитесь к администратору\\._\n\n' +
+    'Выберите действие:',
+
+  welcomeMessageUser:
+    '👋 *Добро пожаловать в VPN Manager\\!*\n\n' +
+    'Вам доступно:\n' +
+    '• 📄 Создание VPN конфигов\n' +
+    '• 📂 Управление своими конфигами\n' +
+    '• 📖 Инструкции по установке\n\n' +
+    'Выберите действие:',
+
+  // Старое сообщение для обратной совместимости
   welcomeMessage: '👋 *VPN Manager*\n\nВыберите действие:',
   creatingConfig: '⏳ *Создаю конфигурацию...*',
   noConfigs: '📂 *У вас пока нет активных конфигураций.*',
@@ -707,4 +750,130 @@ export const BotUi = {
       '« К конфигу',
       `admin_peer:${peerName}:${telegramId}`,
     ),
+
+  // === Инструкции по установке WireGuard ===
+
+  instructionsMenuTitle:
+    '📖 *Инструкция по установке WireGuard*\n\n' +
+    'Выберите вашу платформу для получения подробной инструкции:',
+
+  instructionsMenuKeyboard: () =>
+    new InlineKeyboard()
+      .text('📱 Android', 'instruction:android')
+      .text('🍎 iOS / iPhone', 'instruction:ios')
+      .row()
+      .text('🪟 Windows', 'instruction:windows')
+      .text('🍏 macOS', 'instruction:macos')
+      .row()
+      .text('🐧 Linux', 'instruction:linux')
+      .row()
+      .text('« Назад в меню', 'main_menu'),
+
+  backToInstructionsKeyboard: () =>
+    new InlineKeyboard()
+      .text('« К списку платформ', 'show_instructions')
+      .row()
+      .text('« В меню', 'main_menu'),
+
+  instructionAndroid:
+    '📱 *Установка WireGuard на Android*\n\n' +
+    '*Шаг 1: Установите приложение*\n' +
+    '• Откройте Google Play Store\n' +
+    '• Найдите "WireGuard"\n' +
+    '• Установите приложение от WireGuard Development Team\n\n' +
+    '*Шаг 2: Импортируйте конфиг*\n' +
+    '• Откройте WireGuard\n' +
+    '• Нажмите кнопку "\\+" внизу справа\n' +
+    '• Выберите "Импорт из файла или архива"\n' +
+    '• Найдите скачанный файл \\.conf\n\n' +
+    '*Шаг 3: Подключитесь*\n' +
+    '• Включите переключатель рядом с конфигом\n' +
+    '• Разрешите создание VPN\\-соединения\n' +
+    '• Готово\\! 🎉\n\n' +
+    '_💡 Совет: Для автоподключения удерживайте конфиг и включите "Auto\\-activate"_',
+
+  instructionIos:
+    '🍎 *Установка WireGuard на iOS / iPhone*\n\n' +
+    '*Шаг 1: Установите приложение*\n' +
+    '• Откройте App Store\n' +
+    '• Найдите "WireGuard"\n' +
+    '• Установите приложение\n\n' +
+    '*Шаг 2: Импортируйте конфиг*\n\n' +
+    '_Способ 1 \\(через файл\\):_\n' +
+    '• Скачайте файл \\.conf из бота\n' +
+    '• Нажмите на файл → "Поделиться"\n' +
+    '• Выберите "WireGuard"\n\n' +
+    '_Способ 2 \\(через QR\\-код\\):_\n' +
+    '• Откройте WireGuard\n' +
+    '• Нажмите "\\+" → "Создать из QR\\-кода"\n' +
+    '• Отсканируйте QR\\-код из бота\n\n' +
+    '*Шаг 3: Подключитесь*\n' +
+    '• Включите переключатель рядом с конфигом\n' +
+    '• Разрешите добавление VPN\\-конфигурации\n' +
+    '• Готово\\! 🎉\n\n' +
+    '_💡 Совет: Добавьте виджет WireGuard для быстрого подключения_',
+
+  instructionWindows:
+    '🪟 *Установка WireGuard на Windows*\n\n' +
+    '*Шаг 1: Скачайте и установите*\n' +
+    '• Перейдите на [wireguard\\.com/install](https://www.wireguard.com/install/)\n' +
+    '• Скачайте установщик для Windows\n' +
+    '• Запустите и установите программу\n\n' +
+    '*Шаг 2: Импортируйте конфиг*\n' +
+    '• Запустите WireGuard\n' +
+    '• Нажмите "Импортировать туннель из файла"\n' +
+    '• Выберите скачанный файл \\.conf\n\n' +
+    '*Шаг 3: Подключитесь*\n' +
+    '• Выберите конфиг в списке\n' +
+    '• Нажмите кнопку "Подключить"\n' +
+    '• Готово\\! 🎉\n\n' +
+    '_💡 Совет: Включите "Запускать при входе в систему" в настройках_',
+
+  instructionMacos:
+    '🍏 *Установка WireGuard на macOS*\n\n' +
+    '*Шаг 1: Установите приложение*\n' +
+    '• Откройте App Store на Mac\n' +
+    '• Найдите "WireGuard"\n' +
+    '• Установите приложение\n\n' +
+    '*Шаг 2: Импортируйте конфиг*\n' +
+    '• Запустите WireGuard\n' +
+    '• Нажмите "Импортировать туннель\\(и\\) из файла"\n' +
+    '• Или перетащите файл \\.conf в окно приложения\n\n' +
+    '*Шаг 3: Подключитесь*\n' +
+    '• Выберите конфиг в списке\n' +
+    '• Нажмите "Активировать"\n' +
+    '• Разрешите добавление VPN\\-конфигурации\n' +
+    '• Готово\\! 🎉\n\n' +
+    '_💡 Совет: Иконка WireGuard в меню\\-баре позволяет быстро включать/выключать VPN_',
+
+  instructionLinux:
+    '🐧 *Установка WireGuard на Linux*\n\n' +
+    '*Ubuntu / Debian:*\n' +
+    '```\n' +
+    'sudo apt update\n' +
+    'sudo apt install wireguard\n' +
+    '```\n\n' +
+    '*Fedora:*\n' +
+    '```\n' +
+    'sudo dnf install wireguard\\-tools\n' +
+    '```\n\n' +
+    '*Arch Linux:*\n' +
+    '```\n' +
+    'sudo pacman \\-S wireguard\\-tools\n' +
+    '```\n\n' +
+    '*Настройка:*\n' +
+    '1\\. Скачайте файл конфигурации\n' +
+    '2\\. Скопируйте в /etc/wireguard/:\n' +
+    '```\n' +
+    'sudo cp config\\.conf /etc/wireguard/wg0\\.conf\n' +
+    '```\n' +
+    '3\\. Запустите VPN:\n' +
+    '```\n' +
+    'sudo wg\\-quick up wg0\n' +
+    '```\n' +
+    '4\\. Для автозапуска:\n' +
+    '```\n' +
+    'sudo systemctl enable wg\\-quick@wg0\n' +
+    '```\n\n' +
+    '_💡 Для GUI: установите network\\-manager\\-wireguard_',
 };

@@ -154,7 +154,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         `Попытка несанкционированного доступа от ID: ${userId} (${username})`,
       );
 
-      // Отвечаем на callback query, чтобы кнопка не зависала
       if (ctx.callbackQuery) {
         try {
           await ctx.answerCallbackQuery({
@@ -331,6 +330,21 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       await this.peerManageHandler.cancelEditDescription(ctx, peerName, true);
+    });
+
+    // === Инструкции ===
+
+    // Показать меню инструкций
+    this.bot.callbackQuery('show_instructions', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.showInstructions(ctx);
+    });
+
+    // Показать инструкцию для конкретной платформы
+    this.bot.callbackQuery(/^instruction:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const platform = ctx.match[1];
+      await this.mainHandler.showInstruction(ctx, platform);
     });
   }
 
