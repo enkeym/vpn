@@ -5,9 +5,17 @@ import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 
 // Состояние ожидания ввода для добавления члена группы
-const awaitingFamilyInput = new Map<string, boolean>();
+// userId -> { promptMessageId: number, chatId: number }
+const awaitingFamilyInput = new Map<
+  string,
+  { promptMessageId: number; chatId: number }
+>();
 // Состояние ожидания ввода для редактирования имени
-const awaitingNameEdit = new Map<string, string>(); // userId -> memberId
+// userId -> { memberId: string, promptMessageId: number, chatId: number }
+const awaitingNameEdit = new Map<
+  string,
+  { memberId: string; promptMessageId: number; chatId: number }
+>();
 
 @Injectable()
 export class FamilyHandler {
@@ -19,12 +27,19 @@ export class FamilyHandler {
   ) {}
 
   isAwaitingInput(userId: string): boolean {
-    return awaitingFamilyInput.get(userId) === true;
+    return awaitingFamilyInput.has(userId);
   }
 
-  setAwaitingInput(userId: string, value: boolean) {
-    if (value) {
-      awaitingFamilyInput.set(userId, true);
+  getAwaitingInputState(userId: string) {
+    return awaitingFamilyInput.get(userId);
+  }
+
+  setAwaitingInput(
+    userId: string,
+    state: { promptMessageId: number; chatId: number } | null,
+  ) {
+    if (state) {
+      awaitingFamilyInput.set(userId, state);
     } else {
       awaitingFamilyInput.delete(userId);
     }
@@ -34,44 +49,74 @@ export class FamilyHandler {
     return awaitingNameEdit.has(userId);
   }
 
-  getAwaitingNameEditMemberId(userId: string): string | undefined {
+  getAwaitingNameEditState(userId: string) {
     return awaitingNameEdit.get(userId);
   }
 
-  setAwaitingNameEdit(userId: string, memberId: string | null) {
-    if (memberId) {
-      awaitingNameEdit.set(userId, memberId);
+  setAwaitingNameEdit(
+    userId: string,
+    state: { memberId: string; promptMessageId: number; chatId: number } | null,
+  ) {
+    if (state) {
+      awaitingNameEdit.set(userId, state);
     } else {
       awaitingNameEdit.delete(userId);
     }
   }
 
   async showAddMemberPrompt(ctx: Context) {
-    if (!ctx.from) return;
+    if (!ctx.from || !ctx.chat) return;
 
-    this.setAwaitingInput(String(ctx.from.id), true);
-
-    await ctx.editMessageText(BotUi.addMemberPrompt, {
+    const result = await ctx.editMessageText(BotUi.addMemberPrompt, {
       parse_mode: 'Markdown',
       reply_markup: BotUi.cancelKeyboard(),
     });
+
+    // Сохраняем ID prompt-сообщения для последующего удаления
+    if (result && typeof result === 'object' && 'message_id' in result) {
+      this.setAwaitingInput(String(ctx.from.id), {
+        promptMessageId: result.message_id,
+        chatId: ctx.chat.id,
+      });
+    }
   }
 
   async handleAddMemberInput(ctx: Context) {
-    if (!ctx.from || !ctx.message?.text) return;
+    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
 
     const adminId = String(ctx.from.id);
-    this.setAwaitingInput(adminId, false);
+    const state = this.getAwaitingInputState(adminId);
+    this.setAwaitingInput(adminId, null);
 
     const input = ctx.message.text.trim();
 
+    // Удаляем сообщение пользователя
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
+    // Удаляем prompt-сообщение
+    if (state) {
+      try {
+        await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
+      } catch {
+        // Игнорируем ошибку удаления
+      }
+    }
+
     // Принимаем только telegramId (числа)
     if (!/^\d+$/.test(input)) {
-      await ctx.reply(BotUi.invalidInput, {
+      const errorMsg = await ctx.reply(BotUi.invalidInput, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.cancelKeyboard(),
       });
-      this.setAwaitingInput(adminId, true);
+      // Сохраняем новое prompt-сообщение
+      this.setAwaitingInput(adminId, {
+        promptMessageId: errorMsg.message_id,
+        chatId: ctx.chat.id,
+      });
       return;
     }
 
@@ -94,7 +139,7 @@ export class FamilyHandler {
 
   async cancelAddMember(ctx: Context) {
     if (!ctx.from) return;
-    this.setAwaitingInput(String(ctx.from.id), false);
+    this.setAwaitingInput(String(ctx.from.id), null);
     await this.showFamilyMenu(ctx);
   }
 
@@ -324,16 +369,23 @@ export class FamilyHandler {
 
   async showEditNamePrompt(ctx: Context, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
-
-    const userId = String(ctx.from!.id);
-    this.setAwaitingNameEdit(userId, memberId);
+    if (!ctx.chat) return;
 
     try {
       const member = await this.familyService.findMemberById(memberId);
-      await ctx.editMessageText(BotUi.editNamePrompt(member), {
+      const result = await ctx.editMessageText(BotUi.editNamePrompt(member), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.cancelEditNameKeyboard(memberId),
       });
+
+      // Сохраняем ID prompt-сообщения для последующего удаления
+      if (result && typeof result === 'object' && 'message_id' in result) {
+        this.setAwaitingNameEdit(String(ctx.from!.id), {
+          memberId,
+          promptMessageId: result.message_id,
+          chatId: ctx.chat.id,
+        });
+      }
     } catch {
       await ctx.answerCallbackQuery({
         text: 'Член группы не найден',
@@ -343,21 +395,42 @@ export class FamilyHandler {
   }
 
   async handleEditNameInput(ctx: Context) {
-    if (!ctx.from || !ctx.message?.text) return;
+    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
 
     const userId = String(ctx.from.id);
-    const memberId = this.getAwaitingNameEditMemberId(userId);
+    const state = this.getAwaitingNameEditState(userId);
 
-    if (!memberId) return;
+    if (!state) return;
 
+    const { memberId } = state;
     this.setAwaitingNameEdit(userId, null);
 
     const newName = ctx.message.text.trim();
 
+    // Удаляем сообщение пользователя
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
+    // Удаляем prompt-сообщение
+    try {
+      await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
     if (newName.length < 1 || newName.length > 50) {
-      await ctx.reply(BotUi.invalidNameInput, {
+      const errorMsg = await ctx.reply(BotUi.invalidNameInput, {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.backToMemberKeyboard(memberId),
+        reply_markup: BotUi.cancelEditNameKeyboard(memberId),
+      });
+      // Сохраняем новое prompt-сообщение для повторной попытки
+      this.setAwaitingNameEdit(userId, {
+        memberId,
+        promptMessageId: errorMsg.message_id,
+        chatId: ctx.chat.id,
       });
       return;
     }
@@ -381,5 +454,18 @@ export class FamilyHandler {
     if (!ctx.from) return;
     this.setAwaitingNameEdit(String(ctx.from.id), null);
     await this.showMemberDetails(ctx, memberId);
+  }
+
+  // Вспомогательный метод для безопасного удаления сообщения
+  private async safeDeleteMessage(
+    ctx: Context,
+    chatId: number,
+    messageId: number,
+  ): Promise<void> {
+    try {
+      await ctx.api.deleteMessage(chatId, messageId);
+    } catch {
+      // Игнорируем ошибку удаления (сообщение уже удалено или нет прав)
+    }
   }
 }
