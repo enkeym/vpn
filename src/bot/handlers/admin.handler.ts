@@ -163,20 +163,42 @@ export class AdminHandler {
     if (!ctx.from) return;
 
     try {
-      await this.blockedUsersService.blockUser(
-        telegramId,
-        String(ctx.from.id),
+      await this.blockedUsersService.blockUser(telegramId, String(ctx.from.id));
+      this.logger.log(
+        `Клиент ${telegramId} заблокирован админом ${ctx.from.id}`,
       );
-      this.logger.log(`Клиент ${telegramId} заблокирован админом ${ctx.from.id}`);
+
+      const peers = await this.peersService.getPeersByTelegramId(telegramId);
+      for (const peer of peers) {
+        try {
+          const chatId = peer.telegramId;
+          for (const messageId of [
+            peer.configMessageId,
+            peer.qrMessageId,
+            peer.fileMessageId,
+          ]) {
+            if (messageId != null) {
+              try {
+                await ctx.api.deleteMessage(chatId, messageId);
+              } catch {
+                // Игнорируем ошибки удаления сообщений (чат мог быть удалён и т.д.)
+              }
+            }
+          }
+          await this.peersService.deletePeer(peer.name);
+        } catch (error) {
+          this.logger.warn(
+            `Ошибка удаления конфига ${peer.name} при блокировке: ${error}`,
+          );
+        }
+      }
+
       await this.showClientDetails(ctx, telegramId);
     } catch (error) {
       this.logger.error(`Ошибка блокировки: ${error}`);
       try {
         await ctx.answerCallbackQuery({
-          text:
-            error instanceof Error
-              ? error.message
-              : 'Ошибка блокировки',
+          text: error instanceof Error ? error.message : 'Ошибка блокировки',
           show_alert: true,
         });
       } catch {
