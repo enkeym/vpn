@@ -541,6 +541,9 @@ export const BotUi = {
   clientDetailsKeyboard: (telegramId: string, peers: TPeer[]) => {
     const keyboard = new InlineKeyboard();
 
+    // Кнопка создания конфига
+    keyboard.text('➕ Создать конфиг', `admin_cc:${telegramId}`).row();
+
     if (peers.length > 0) {
       keyboard.text('📂 Конфиги', `admin_client_configs:${telegramId}`).row();
     }
@@ -552,6 +555,24 @@ export const BotUi = {
 
     return keyboard;
   },
+
+  // === Создание конфига для клиента ===
+
+  clientCreateConfigTitle: (telegramId: string) =>
+    `➕ *Создание конфига для клиента*\n\n🆔 ID: \`${telegramId}\`\n\nВыберите срок действия:`,
+
+  clientCreateConfigKeyboard: (telegramId: string) =>
+    new InlineKeyboard()
+      .text('♾️ Бессрочный', `admin_dc:${telegramId}:u`)
+      .row()
+      .text('30 дней', `admin_dc:${telegramId}:30`)
+      .text('60 дней', `admin_dc:${telegramId}:60`)
+      .text('90 дней', `admin_dc:${telegramId}:90`)
+      .row()
+      .text('« Назад', `admin_client:${telegramId}`),
+
+  backToClientDetailsKeyboard: (telegramId: string) =>
+    new InlineKeyboard().text('« К клиенту', `admin_client:${telegramId}`),
 
   clientConfigsListTitle: (telegramId: string, count: number) =>
     count > 0

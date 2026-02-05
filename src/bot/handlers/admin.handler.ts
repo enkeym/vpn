@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'grammy';
+import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
+import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 
 // Состояние ожидания ввода telegramId для поиска клиента
 // adminId -> { promptMessageId: number, chatId: number }
@@ -380,5 +381,75 @@ export class AdminHandler {
     if (!ctx.from) return;
     this.setAwaitingClientDescriptionEdit(String(ctx.from.id), null);
     await this.showClientPeerDetails(ctx, peerName, telegramId);
+  }
+
+  // === Создание конфига для клиента ===
+
+  async showCreateConfigOptions(ctx: Context, telegramId: string) {
+    await ctx.editMessageText(BotUi.clientCreateConfigTitle(telegramId), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.clientCreateConfigKeyboard(telegramId),
+    });
+  }
+
+  async createClientConfig(ctx: Context, telegramId: string, duration: string) {
+    try {
+      // Показываем сообщение о создании
+      await ctx.editMessageText('⏳ *Создаю конфигурацию...*', {
+        parse_mode: 'Markdown',
+      });
+
+      // Определяем срок действия
+      const durationDays: SubscriptionDuration | undefined =
+        duration === 'unlimited'
+          ? undefined
+          : (Number(duration) as SubscriptionDuration);
+
+      // Создаем конфиг для клиента
+      const { config, peer } = await this.peersService.createPeer({
+        telegramId,
+        durationDays,
+      });
+
+      // Отправляем конфиг клиенту
+      try {
+        const message = await ctx.api.sendDocument(
+          telegramId,
+          new InputFile(Buffer.from(config), `${peer.name}.conf`),
+          {
+            caption: BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+            parse_mode: 'Markdown',
+          },
+        );
+        await this.peersService.setConfigMessageId(peer.name, message.message_id);
+      } catch (error) {
+        this.logger.warn(
+          `Не удалось отправить конфиг клиенту ${telegramId}: ${error}`,
+        );
+      }
+
+      // Уведомляем админа
+      await ctx.editMessageText(
+        `✅ *Конфиг создан для клиента* \`${telegramId}\`\n\n` +
+          `🏷 Имя: \`${peer.name}\`\n` +
+          `🌐 IP: \`${peer.ip}\`\n` +
+          (peer.expiresAt
+            ? `📅 Действует до: ${peer.expiresAt.toLocaleDateString('ru-RU')}`
+            : '⏳ Срок: ♾️ Бессрочно'),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToClientDetailsKeyboard(telegramId),
+        },
+      );
+
+      await ctx.answerCallbackQuery({ text: 'Конфиг создан' });
+    } catch (error) {
+      this.logger.error(`Ошибка создания конфига: ${error}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await ctx.editMessageText(`❌ *Ошибка:* ${errorMsg}`, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToClientDetailsKeyboard(telegramId),
+      });
+    }
   }
 }

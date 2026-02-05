@@ -648,6 +648,36 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         await this.adminHandler.cancelEditDescription(ctx, peerName, telegramId);
       },
     );
+
+    // Меню создания конфига для клиента (admin_cc = admin_create_config)
+    this.bot.callbackQuery(/^admin_cc:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const telegramId = ctx.match[1];
+      await this.adminHandler.showCreateConfigOptions(ctx, telegramId);
+    });
+
+    // Создать конфиг для клиента (admin_dc = admin_do_create, u = unlimited)
+    this.bot.callbackQuery(/^admin_dc:(.+):(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      const [telegramId, duration] = [
+        ctx.match[1],
+        ctx.match[2] === 'u' ? 'unlimited' : ctx.match[2],
+      ];
+      await this.adminHandler.createClientConfig(ctx, telegramId, duration);
+    });
   }
 
   // Запуск бота
