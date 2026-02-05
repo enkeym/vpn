@@ -509,11 +509,20 @@ export const BotUi = {
     '• `123456789`\n\n' +
     'Узнать ID можно через @Getmyid\\_bot',
 
-  clientFoundText: (telegramId: string, configsCount: number) =>
-    `👤 *Клиент*\n\n` +
-    `🆔 Telegram ID: \`${telegramId}\`\n` +
-    `📂 Конфигов: ${configsCount}\n\n` +
-    `Нажмите "Открыть меню" для управления`,
+  clientFoundText: (
+    telegramId: string,
+    configsCount: number,
+    isBlocked: boolean,
+  ) => {
+    const blockedText = isBlocked ? '\n🚫 *Статус: ЗАБЛОКИРОВАН*' : '';
+    return (
+      `👤 *Клиент*\n\n` +
+      `🆔 Telegram ID: \`${telegramId}\`\n` +
+      `📂 Конфигов: ${configsCount}` +
+      blockedText +
+      `\n\nНажмите "Открыть меню" для управления`
+    );
+  },
 
   clientFoundKeyboard: (telegramId: string) =>
     new InlineKeyboard()
@@ -532,15 +541,25 @@ export const BotUi = {
       .row()
       .text('« В меню', 'main_menu'),
 
-  clientDetailsText: (telegramId: string, configsCount: number) => {
+  clientDetailsText: (
+    telegramId: string,
+    configsCount: number,
+    isBlocked: boolean,
+  ) => {
+    const blockedText = isBlocked ? '\n🚫 *Статус: ЗАБЛОКИРОВАН*' : '';
     return (
       `👤 *Информация о клиенте*\n\n` +
       `🆔 Telegram ID: \`${telegramId}\`\n` +
-      `📂 Конфигов: ${configsCount}`
+      `📂 Конфигов: ${configsCount}` +
+      blockedText
     );
   },
 
-  clientDetailsKeyboard: (telegramId: string, peers: TPeer[]) => {
+  clientDetailsKeyboard: (
+    telegramId: string,
+    peers: TPeer[],
+    isBlocked: boolean,
+  ) => {
     const keyboard = new InlineKeyboard();
 
     // Кнопка создания конфига
@@ -548,6 +567,13 @@ export const BotUi = {
 
     if (peers.length > 0) {
       keyboard.text('📂 Конфиги', `admin_client_configs:${telegramId}`).row();
+    }
+
+    // Кнопка блокировки/разблокировки
+    if (isBlocked) {
+      keyboard.text('✅ Разблокировать', `admin_unblock:${telegramId}`).row();
+    } else {
+      keyboard.text('🚫 Заблокировать', `admin_block:${telegramId}`).row();
     }
 
     keyboard

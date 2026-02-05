@@ -15,6 +15,18 @@ export const familyMembers = sqliteTable('family_members', {
   ),
 });
 
+export const blockedUsers = sqliteTable('blocked_users', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  telegramId: text('telegramId').notNull().unique(),
+  reason: text('reason'),
+  blockedBy: text('blockedBy').notNull(),
+  createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
+    () => new Date(),
+  ),
+});
+
 export const peers = sqliteTable('peers', {
   id: text('id')
     .primaryKey()

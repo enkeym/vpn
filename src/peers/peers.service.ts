@@ -14,13 +14,21 @@ import { WgService } from 'src/wg/wg.service';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
+import { NotificationService } from 'src/notification/notification.service';
 
 export type TPeer = typeof schema.peers.$inferInsert;
 export type TPeerSelect = typeof schema.peers.$inferSelect;
 
+const SYNC_MAX_RETRIES = 5;
+const SYNC_RETRY_DELAY_MS = 2000;
+
 function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
   const now = new Date();
   return new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 @Injectable()
@@ -31,6 +39,7 @@ export class PeersService {
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly wgService: WgService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async onModuleInit() {
@@ -38,20 +47,64 @@ export class PeersService {
   }
 
   private async syncWgWithDb() {
-    const activePeers = await this.db.query.peers.findMany({
-      where: eq(schema.peers.paused, false),
-    });
+    let lastError: Error | null = null;
 
-    if (!activePeers) return;
+    for (let attempt = 1; attempt <= SYNC_MAX_RETRIES; attempt++) {
+      try {
+        const activePeers = await this.db.query.peers.findMany({
+          where: eq(schema.peers.paused, false),
+        });
 
-    const peers = activePeers.map((peer) => ({
-      name: peer.name,
-      publicKey: peer.publicKey,
-      presharedKey: peer.presharedKey!,
-      ip: peer.ip,
-    }));
+        if (!activePeers) return;
 
-    await this.wgService.restoreConfigs(peers);
+        const peers = activePeers.map((peer) => ({
+          name: peer.name,
+          publicKey: peer.publicKey,
+          presharedKey: peer.presharedKey!,
+          ip: peer.ip,
+        }));
+
+        await this.wgService.restoreConfigs(peers);
+
+        // Успешная синхронизация
+        if (attempt > 1) {
+          this.logger.log(
+            `Синхронизация WG с БД успешна с ${attempt}-й попытки`,
+          );
+        }
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.logger.error(
+          `Ошибка синхронизации WG с БД (попытка ${attempt}/${SYNC_MAX_RETRIES}): ${lastError.message}`,
+        );
+
+        if (attempt < SYNC_MAX_RETRIES) {
+          const delay = SYNC_RETRY_DELAY_MS * attempt; // Экспоненциальная задержка
+          this.logger.warn(`Повторная попытка через ${delay}мс...`);
+          await sleep(delay);
+        }
+      }
+    }
+
+    // Все попытки исчерпаны - отправляем уведомление админам
+    const errorDetails = [
+      `Не удалось синхронизировать конфигурацию WireGuard с базой данных после ${SYNC_MAX_RETRIES} попыток.`,
+      ``,
+      `*Ошибка:* \`${lastError?.message || 'Неизвестная ошибка'}\``,
+      ``,
+      `Требуется ручное вмешательство для восстановления работы VPN.`,
+    ].join('\n');
+
+    await this.notificationService.notifyCriticalError(
+      'Сбой синхронизации WireGuard',
+      errorDetails,
+      SYNC_MAX_RETRIES,
+    );
+
+    this.logger.error(
+      `КРИТИЧЕСКАЯ ОШИБКА: Синхронизация WG с БД провалена после ${SYNC_MAX_RETRIES} попыток. Уведомление отправлено админам.`,
+    );
   }
 
   async createPeer(dto: ICreatePeer) {

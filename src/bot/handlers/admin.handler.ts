@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
+import { BlockedUsersService } from 'src/blocked/blocked.service';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 
@@ -27,7 +28,10 @@ const awaitingClientDescriptionEdit = new Map<
 export class AdminHandler {
   private readonly logger = new Logger(AdminHandler.name);
 
-  constructor(private readonly peersService: PeersService) {}
+  constructor(
+    private readonly peersService: PeersService,
+    private readonly blockedUsersService: BlockedUsersService,
+  ) {}
 
   // === Поиск клиента ===
 
@@ -108,13 +112,17 @@ export class AdminHandler {
 
     // Ищем конфиги клиента (может быть 0)
     const peers = await this.peersService.getPeersByTelegramId(telegramId);
+    const isBlocked = await this.blockedUsersService.isBlocked(telegramId);
 
     // Показываем сообщение "Клиент найден" с кнопкой открыть меню
     // Клиент создаётся как "оболочка" даже если конфигов нет
-    await ctx.reply(BotUi.clientFoundText(telegramId, peers.length), {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.clientFoundKeyboard(telegramId),
-    });
+    await ctx.reply(
+      BotUi.clientFoundText(telegramId, peers.length, isBlocked),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.clientFoundKeyboard(telegramId),
+      },
+    );
   }
 
   async cancelSearch(ctx: Context) {
@@ -138,14 +146,61 @@ export class AdminHandler {
 
   async showClientDetails(ctx: Context, telegramId: string) {
     const peers = await this.peersService.getPeersByTelegramId(telegramId);
+    const isBlocked = await this.blockedUsersService.isBlocked(telegramId);
 
     await ctx.editMessageText(
-      BotUi.clientDetailsText(telegramId, peers.length),
+      BotUi.clientDetailsText(telegramId, peers.length, isBlocked),
       {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.clientDetailsKeyboard(telegramId, peers),
+        reply_markup: BotUi.clientDetailsKeyboard(telegramId, peers, isBlocked),
       },
     );
+  }
+
+  // === Блокировка/Разблокировка ===
+
+  async blockClient(ctx: Context, telegramId: string) {
+    if (!ctx.from) return;
+
+    try {
+      await this.blockedUsersService.blockUser(
+        telegramId,
+        String(ctx.from.id),
+      );
+      this.logger.log(`Клиент ${telegramId} заблокирован админом ${ctx.from.id}`);
+      await this.showClientDetails(ctx, telegramId);
+    } catch (error) {
+      this.logger.error(`Ошибка блокировки: ${error}`);
+      try {
+        await ctx.answerCallbackQuery({
+          text:
+            error instanceof Error
+              ? error.message
+              : 'Ошибка блокировки',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
+    }
+  }
+
+  async unblockClient(ctx: Context, telegramId: string) {
+    try {
+      await this.blockedUsersService.unblockUser(telegramId);
+      this.logger.log(`Клиент ${telegramId} разблокирован`);
+      await this.showClientDetails(ctx, telegramId);
+    } catch (error) {
+      this.logger.error(`Ошибка разблокировки: ${error}`);
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка разблокировки',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
+    }
   }
 
   async showClientConfigs(ctx: Context, telegramId: string) {

@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { Bot, GrammyError, HttpError } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
+import { BlockedUsersService } from 'src/blocked/blocked.service';
 import { MainHandler } from './handlers/main.handler';
 import { PeerCreateHandler } from './handlers/peer-create.handler';
 import { PeerManageHandler } from './handlers/peer-manage.handler';
@@ -31,6 +32,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly adminHandler: AdminHandler,
     private readonly familyService: FamilyService,
     private readonly peersService: PeersService,
+    private readonly blockedUsersService: BlockedUsersService,
   ) {}
 
   onModuleInit() {
@@ -117,6 +119,26 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       // Проверяем, является ли админом
       if (this.isAdmin(userId)) {
         await next();
+        return;
+      }
+
+      // Проверяем, заблокирован ли пользователь
+      const isBlocked = await this.blockedUsersService.isBlocked(userId);
+      if (isBlocked) {
+        this.logger.warn(
+          `Заблокированный пользователь пытается получить доступ: ${userId} (${username})`,
+        );
+        // Отвечаем на callback query, чтобы кнопка не зависала
+        if (ctx.callbackQuery) {
+          try {
+            await ctx.answerCallbackQuery({
+              text: 'Вы заблокированы',
+              show_alert: true,
+            });
+          } catch {
+            // Игнорируем
+          }
+        }
         return;
       }
 
@@ -768,6 +790,34 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         ctx.match[2] === 'u' ? 'unlimited' : ctx.match[2],
       ];
       await this.adminHandler.createClientConfig(ctx, telegramId, duration);
+    });
+
+    // Блокировка клиента
+    this.bot.callbackQuery(/^admin_block:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const telegramId = ctx.match[1];
+      await this.adminHandler.blockClient(ctx, telegramId);
+    });
+
+    // Разблокировка клиента
+    this.bot.callbackQuery(/^admin_unblock:(.+)$/, async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const telegramId = ctx.match[1];
+      await this.adminHandler.unblockClient(ctx, telegramId);
     });
   }
 

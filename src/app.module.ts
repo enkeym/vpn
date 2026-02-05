@@ -7,11 +7,13 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { PeersModule } from './peers/peers.module';
 import { DatabaseModule } from './database/database.module';
 import { BotModule } from './bot/bot.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    NotificationModule,
     DatabaseModule,
     WgModule,
     PeersModule,
