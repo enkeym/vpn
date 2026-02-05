@@ -2,11 +2,22 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Api } from 'grammy';
 
+interface NotificationResult {
+  adminId: string;
+  success: boolean;
+  error?: string;
+}
+
 @Injectable()
 export class NotificationService implements OnModuleInit {
   private readonly logger = new Logger(NotificationService.name);
   private api: Api | null = null;
   private adminIds: string[] = [];
+
+  // Настройки rate limiting
+  private readonly MAX_CONCURRENT_SENDS = 5;
+  private readonly RETRY_DELAY_MS = 1000;
+  private readonly MAX_RETRIES = 2;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -36,26 +47,99 @@ export class NotificationService implements OnModuleInit {
   }
 
   /**
-   * Отправить сообщение всем админам
+   * Отправить сообщение одному админу с retry
    */
-  async notifyAdmins(message: string): Promise<void> {
+  private async sendToAdmin(
+    adminId: string,
+    message: string,
+    retries = 0,
+  ): Promise<NotificationResult> {
+    try {
+      await this.api!.sendMessage(adminId, message, {
+        parse_mode: 'Markdown',
+      });
+      return { adminId, success: true };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      // Retry при временных ошибках
+      if (retries < this.MAX_RETRIES && this.isRetryableError(error)) {
+        this.logger.warn(
+          `Retry отправки админу ${adminId} (попытка ${retries + 1}/${this.MAX_RETRIES})`,
+        );
+        await this.sleep(this.RETRY_DELAY_MS * (retries + 1));
+        return this.sendToAdmin(adminId, message, retries + 1);
+      }
+
+      this.logger.error(
+        `Ошибка отправки уведомления админу ${adminId}: ${errorMessage}`,
+      );
+      return { adminId, success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Проверка, можно ли повторить запрос
+   */
+  private isRetryableError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const message = error.message.toLowerCase();
+      return (
+        message.includes('timeout') ||
+        message.includes('network') ||
+        message.includes('429') || // Too Many Requests
+        message.includes('503') || // Service Unavailable
+        message.includes('504') // Gateway Timeout
+      );
+    }
+    return false;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Отправить сообщение всем админам ПАРАЛЛЕЛЬНО
+   * с ограничением на количество одновременных запросов
+   */
+  async notifyAdmins(message: string): Promise<NotificationResult[]> {
     if (!this.api || this.adminIds.length === 0) {
       this.logger.warn('Невозможно отправить уведомление: нет API или админов');
-      return;
+      return [];
     }
 
-    for (const adminId of this.adminIds) {
-      try {
-        await this.api.sendMessage(adminId, message, {
-          parse_mode: 'Markdown',
-        });
-        this.logger.log(`Уведомление отправлено админу ${adminId}`);
-      } catch (error) {
-        this.logger.error(
-          `Ошибка отправки уведомления админу ${adminId}: ${error instanceof Error ? error.message : error}`,
-        );
+    const results: NotificationResult[] = [];
+
+    // Разбиваем на батчи для ограничения параллельных запросов
+    for (let i = 0; i < this.adminIds.length; i += this.MAX_CONCURRENT_SENDS) {
+      const batch = this.adminIds.slice(i, i + this.MAX_CONCURRENT_SENDS);
+
+      const batchResults = await Promise.all(
+        batch.map((adminId) => this.sendToAdmin(adminId, message)),
+      );
+
+      results.push(...batchResults);
+
+      // Небольшая пауза между батчами для соблюдения rate limits Telegram
+      if (i + this.MAX_CONCURRENT_SENDS < this.adminIds.length) {
+        await this.sleep(100);
       }
     }
+
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.length - successCount;
+
+    if (failCount > 0) {
+      this.logger.warn(
+        `Уведомления: успешно ${successCount}, ошибок ${failCount}`,
+      );
+    } else {
+      this.logger.log(`Уведомления отправлены всем ${successCount} админам`);
+    }
+
+    return results;
   }
 
   /**
@@ -65,7 +149,7 @@ export class NotificationService implements OnModuleInit {
     title: string,
     details: string,
     attempts?: number,
-  ): Promise<void> {
+  ): Promise<NotificationResult[]> {
     const message = [
       `🚨 *КРИТИЧЕСКАЯ ОШИБКА*`,
       ``,
@@ -79,6 +163,31 @@ export class NotificationService implements OnModuleInit {
       .filter(Boolean)
       .join('\n');
 
-    await this.notifyAdmins(message);
+    return this.notifyAdmins(message);
+  }
+
+  /**
+   * Отправить информационное уведомление
+   */
+  async notifyInfo(title: string, details: string): Promise<NotificationResult[]> {
+    const message = [
+      `ℹ️ *${title}*`,
+      ``,
+      details,
+      ``,
+      `⏰ ${new Date().toLocaleString('ru-RU')}`,
+    ].join('\n');
+
+    return this.notifyAdmins(message);
+  }
+
+  /**
+   * Получить статистику (для мониторинга)
+   */
+  getStats() {
+    return {
+      configured: this.api !== null,
+      adminCount: this.adminIds.length,
+    };
   }
 }

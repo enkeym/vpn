@@ -29,6 +29,11 @@ export interface IDbPeer {
   ip: string;
 }
 
+interface ParsedConfigCache {
+  config: WgConfig;
+  timestamp: number;
+}
+
 @Injectable()
 export class WgService implements OnModuleInit {
   private readonly logger = new Logger(WgService.name);
@@ -43,6 +48,18 @@ export class WgService implements OnModuleInit {
 
   private _serverPublicKeyCache: string | null = null;
   private readonly configMutex = new Mutex();
+
+  // Кеш парсированного конфига для избежания повторного парсинга
+  private configCache: ParsedConfigCache | null = null;
+  private readonly CONFIG_CACHE_TTL = 30 * 1000; // 30 секунд
+
+  // Буфер для батчинга изменений конфига
+  private pendingPeerOperations: Array<{
+    type: 'add' | 'remove';
+    peer: { publicKey: string; presharedKey?: string; ip?: string };
+  }> = [];
+  private batchTimeout: NodeJS.Timeout | null = null;
+  private readonly BATCH_DELAY = 100; // 100ms для сбора операций
 
   async onModuleInit() {
     if (!this.host) throw new Error(`WG_HOST в .env не задан`);
@@ -83,8 +100,32 @@ export class WgService implements OnModuleInit {
     this.logger.log(`Серверная конфигурация создана: ${this.filePath}`);
   }
 
-  private async getConfig() {
-    return parseWgConfig(this.filePath);
+  /**
+   * Получить парсированный конфиг с кешированием
+   */
+  private async getConfig(): Promise<WgConfig> {
+    const now = Date.now();
+
+    // Проверяем кеш
+    if (
+      this.configCache &&
+      now - this.configCache.timestamp < this.CONFIG_CACHE_TTL
+    ) {
+      return this.configCache.config;
+    }
+
+    // Парсим конфиг и сохраняем в кеш
+    const config = await parseWgConfig(this.filePath);
+    this.configCache = { config, timestamp: now };
+
+    return config;
+  }
+
+  /**
+   * Инвалидировать кеш конфига
+   */
+  private invalidateConfigCache(): void {
+    this.configCache = null;
   }
 
   private async getServerPublicKey(): Promise<string> {
@@ -186,6 +227,9 @@ export class WgService implements OnModuleInit {
 
   async createClientConfig(name: string, credentials: ICredentialsProps) {
     return await this.configMutex.runExclusive(async () => {
+      // Инвалидируем кеш перед изменениями
+      this.invalidateConfigCache();
+
       const server = await this.getConfig();
       const serverPublicKey = await this.getServerPublicKey();
 
@@ -198,26 +242,32 @@ export class WgService implements OnModuleInit {
       await server.writeToFile();
       this.logger.log(`Клиент ${name} добавлен в конфиг: ${credentials.ip}`);
 
+      // Инвалидируем кеш после записи
+      this.invalidateConfigCache();
+
       await this.syncSystem();
 
       return `[Interface]
-   PrivateKey = ${credentials.privateKey}
-   Address = ${credentials.ip}/32
-   DNS = ${this.clientDns}
-   MTU = 1420
+PrivateKey = ${credentials.privateKey}
+Address = ${credentials.ip}/32
+DNS = ${this.clientDns}
+MTU = 1420
 
-   [Peer]
-   PublicKey = ${serverPublicKey}
-   PresharedKey = ${credentials.presharedKey}
-   Endpoint = ${this.host}:${this.port}
-   AllowedIPs = ${this.allowedIps}
-   PersistentKeepalive = 25
-   `;
+[Peer]
+PublicKey = ${serverPublicKey}
+PresharedKey = ${credentials.presharedKey}
+Endpoint = ${this.host}:${this.port}
+AllowedIPs = ${this.allowedIps}
+PersistentKeepalive = 25
+`;
     });
   }
 
   async removePeer(publicKey: string) {
     return await this.configMutex.runExclusive(async () => {
+      // Инвалидируем кеш перед изменениями
+      this.invalidateConfigCache();
+
       const server = await this.getConfig();
 
       if (server.peers?.some((peer) => peer.publicKey === publicKey)) {
@@ -226,6 +276,10 @@ export class WgService implements OnModuleInit {
         );
 
         await server.writeToFile();
+
+        // Инвалидируем кеш после записи
+        this.invalidateConfigCache();
+
         await this.syncSystem();
         this.logger.log(`Пир удален: ${publicKey}`);
       }
@@ -234,6 +288,9 @@ export class WgService implements OnModuleInit {
 
   async restoreConfigs(dbPeers: IDbPeer[]) {
     return await this.configMutex.runExclusive(async () => {
+      // Инвалидируем кеш перед проверкой
+      this.invalidateConfigCache();
+
       const server = await this.getConfig();
       const serverPeers = server.peers || [];
       const fileKeys = new Set(serverPeers.map((p) => p.publicKey));
@@ -267,9 +324,26 @@ export class WgService implements OnModuleInit {
     }
 
     await server.writeToFile();
+
+    // Инвалидируем кеш после записи
+    this.invalidateConfigCache();
+
     await this.syncSystem();
     this.logger.log(
       `Конфигурация восстановлена. Активных пиров: ${peers.length}`,
     );
+  }
+
+  /**
+   * Получить статистику (для мониторинга)
+   */
+  getStats() {
+    return {
+      configCached: this.configCache !== null,
+      configCacheAge: this.configCache
+        ? Date.now() - this.configCache.timestamp
+        : null,
+      serverPublicKeyCached: this._serverPublicKeyCache !== null,
+    };
   }
 }

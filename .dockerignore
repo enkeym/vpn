@@ -1,4 +1,55 @@
+# Dependencies
 node_modules
+.pnpm-store
+
+# Build outputs
 dist
+*.tsbuildinfo
+
+# Git
 .git
+.gitignore
+
+# Environment and secrets
 .env
+.env.*
+!.env.example
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+.cursor
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test
+coverage
+.nyc_output
+*.spec.ts
+*.test.ts
+test
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Documentation
+README.md
+docs
+
+# Data (mounted as volumes)
+data
+configs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Drizzle (generated in build)
+drizzle/*.sql

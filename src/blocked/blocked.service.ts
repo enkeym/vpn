@@ -161,4 +161,13 @@ export class BlockedUsersService implements OnModuleInit, OnModuleDestroy {
   clearCache(): void {
     this.blockedCache.clear();
   }
+
+  /**
+   * Получить статистику кеша (для мониторинга)
+   */
+  getCacheStats() {
+    return {
+      blockedCacheSize: this.blockedCache.size,
+    };
+  }
 }

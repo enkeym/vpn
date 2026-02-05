@@ -9,7 +9,13 @@ import {
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, like, sql } from 'drizzle-orm';
+import {
+  CacheService,
+  CacheStats,
+  CACHE_NAMESPACES,
+  CACHE_TTL,
+} from 'src/common/cache/cache.service';
 
 export type TFamilyMember = typeof schema.familyMembers.$inferSelect;
 
@@ -31,6 +37,7 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
+    private readonly cacheService: CacheService,
   ) {}
 
   onModuleInit() {
@@ -69,6 +76,13 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Инвалидировать кеш списка всех членов
+   */
+  private invalidateAllMembersCache(): void {
+    this.cacheService.clear(CACHE_NAMESPACES.FAMILY_MEMBERS);
+  }
+
+  /**
    * Добавление члена группы по telegramId
    * displayName опционален - если не указан, будет использован telegramId
    */
@@ -96,6 +110,7 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
 
     // Инвалидируем кеш для нового участника
     this.invalidateMembershipCache(telegramId);
+    this.invalidateAllMembersCache();
 
     const name = displayName || telegramId;
     this.logger.log(`Добавлен член группы: ${name}`);
@@ -116,12 +131,14 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
     if (member) {
       this.invalidateMembershipCache(member.telegramId);
     }
+    this.invalidateAllMembersCache();
 
     this.logger.log(`Удален член группы: ${memberId}`);
   }
 
   /**
    * Поиск члена группы по ID (поддерживает как полный UUID, так и сокращённый)
+   * ОПТИМИЗАЦИЯ: Использует SQL LIKE вместо загрузки всех записей
    */
   async findMemberById(memberId: string): Promise<TFamilyMember> {
     // Сначала пробуем найти по полному ID
@@ -129,10 +146,11 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
       where: eq(schema.familyMembers.id, memberId),
     });
 
-    // Если не нашли и ID короткий, ищем по prefix
+    // Если не нашли и ID короткий, ищем по prefix через SQL LIKE
     if (!member && memberId.length < 36) {
-      const members = await this.db.query.familyMembers.findMany();
-      member = members.find((m) => m.id.startsWith(memberId));
+      member = await this.db.query.familyMembers.findFirst({
+        where: like(schema.familyMembers.id, `${memberId}%`),
+      });
     }
 
     if (!member) {
@@ -189,24 +207,63 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getAllMembers(): Promise<TFamilyMember[]> {
-    return await this.db.query.familyMembers.findMany({
+    // Проверяем кеш
+    const cached = this.cacheService.get<TFamilyMember[]>(
+      CACHE_NAMESPACES.FAMILY_MEMBERS,
+      'all',
+    );
+    if (cached) {
+      return cached;
+    }
+
+    const members = await this.db.query.familyMembers.findMany({
       orderBy: [desc(schema.familyMembers.createdAt)],
     });
+
+    // Сохраняем в кеш
+    this.cacheService.set(
+      CACHE_NAMESPACES.FAMILY_MEMBERS,
+      'all',
+      members,
+      CACHE_TTL.MEDIUM,
+    );
+
+    return members;
   }
 
   /**
    * Получить членов группы конкретного админа
    */
   async getMembersByAdmin(adminId: string): Promise<TFamilyMember[]> {
-    return await this.db.query.familyMembers.findMany({
+    // Проверяем кеш
+    const cacheKey = `by_admin:${adminId}`;
+    const cached = this.cacheService.get<TFamilyMember[]>(
+      CACHE_NAMESPACES.FAMILY_MEMBERS,
+      cacheKey,
+    );
+    if (cached) {
+      return cached;
+    }
+
+    const members = await this.db.query.familyMembers.findMany({
       where: eq(schema.familyMembers.addedBy, adminId),
       orderBy: [desc(schema.familyMembers.createdAt)],
     });
+
+    // Сохраняем в кеш
+    this.cacheService.set(
+      CACHE_NAMESPACES.FAMILY_MEMBERS,
+      cacheKey,
+      members,
+      CACHE_TTL.MEDIUM,
+    );
+
+    return members;
   }
 
   /**
    * Проверить, что член группы принадлежит админу
-   * Поддерживает как полный ID, так и сокращённый (первые 8 символов)
+   * ОПТИМИЗАЦИЯ: Использует SQL LIKE для поиска по prefix
    */
   async isMemberOwnedByAdmin(
     memberId: string,
@@ -217,10 +274,11 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
       where: eq(schema.familyMembers.id, memberId),
     });
 
-    // Если не нашли, ищем по partial ID
+    // Если не нашли, ищем по partial ID через SQL LIKE
     if (!member && memberId.length < 36) {
-      const members = await this.db.query.familyMembers.findMany();
-      member = members.find((m) => m.id.startsWith(memberId));
+      member = await this.db.query.familyMembers.findFirst({
+        where: like(schema.familyMembers.id, `${memberId}%`),
+      });
     }
 
     return member?.addedBy === adminId;
@@ -238,6 +296,9 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
       .set({ displayName })
       .where(eq(schema.familyMembers.id, memberId));
 
+    // Инвалидируем кеш
+    this.invalidateAllMembersCache();
+
     this.logger.log(`Обновлено имя участника ${memberId}: ${displayName}`);
   }
 
@@ -246,5 +307,20 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
    */
   getDisplayName(member: TFamilyMember): string {
     return member.displayName || member.telegramId;
+  }
+
+  /**
+   * Получить статистику кеша (для мониторинга)
+   */
+  getCacheStats(): {
+    membershipCacheSize: number;
+    globalCache: CacheStats | null;
+  } {
+    return {
+      membershipCacheSize: this.membershipCache.size,
+      globalCache: this.cacheService.getStats(
+        CACHE_NAMESPACES.FAMILY_MEMBERS,
+      ) as CacheStats | null,
+    };
   }
 }

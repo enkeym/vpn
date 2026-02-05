@@ -15,6 +15,12 @@ import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
 import { NotificationService } from 'src/notification/notification.service';
+import {
+  CacheService,
+  CacheStats,
+  CACHE_NAMESPACES,
+  CACHE_TTL,
+} from 'src/common/cache/cache.service';
 
 export type TPeer = typeof schema.peers.$inferInsert;
 export type TPeerSelect = typeof schema.peers.$inferSelect;
@@ -36,14 +42,91 @@ export class PeersService {
   private readonly logger = new Logger(PeersService.name);
   private readonly createPeerMutex = new Mutex();
 
+  // Локальный кеш использованных IP для быстрого доступа (критичная оптимизация)
+  private usedIpsCache: Set<string> | null = null;
+  private usedIpsCacheTime = 0;
+  private readonly USED_IPS_CACHE_TTL = 60 * 1000; // 1 минута
+
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly wgService: WgService,
     private readonly notificationService: NotificationService,
+    private readonly cacheService: CacheService,
   ) {}
 
   async onModuleInit() {
+    // Прогреваем кеш IP адресов при старте
+    await this.warmUpIpsCache();
     await this.syncWgWithDb();
+  }
+
+  /**
+   * Прогрев кеша IP адресов при старте
+   */
+  private async warmUpIpsCache(): Promise<void> {
+    const usedPeers = await this.db.query.peers.findMany({
+      columns: { ip: true },
+    });
+    this.usedIpsCache = new Set(usedPeers.map((peer) => peer.ip));
+    this.usedIpsCacheTime = Date.now();
+    this.logger.log(`Кеш IP прогрет: ${this.usedIpsCache.size} адресов`);
+  }
+
+  /**
+   * Получить использованные IP адреса (с кешированием)
+   */
+  private async getUsedIps(): Promise<Set<string>> {
+    const now = Date.now();
+
+    // Проверяем актуальность локального кеша
+    if (
+      this.usedIpsCache &&
+      now - this.usedIpsCacheTime < this.USED_IPS_CACHE_TTL
+    ) {
+      return new Set(this.usedIpsCache);
+    }
+
+    // Обновляем кеш
+    const usedPeers = await this.db.query.peers.findMany({
+      columns: { ip: true },
+    });
+    this.usedIpsCache = new Set(usedPeers.map((peer) => peer.ip));
+    this.usedIpsCacheTime = now;
+
+    return new Set(this.usedIpsCache);
+  }
+
+  /**
+   * Добавить IP в локальный кеш
+   */
+  private addIpToCache(ip: string): void {
+    if (this.usedIpsCache) {
+      this.usedIpsCache.add(ip);
+    }
+  }
+
+  /**
+   * Удалить IP из локального кеша
+   */
+  private removeIpFromCache(ip: string): void {
+    if (this.usedIpsCache) {
+      this.usedIpsCache.delete(ip);
+    }
+  }
+
+  /**
+   * Инвалидировать кеш пиров пользователя
+   */
+  private invalidateUserPeersCache(telegramId: string): void {
+    this.cacheService.delete(CACHE_NAMESPACES.PEERS_BY_USER, telegramId);
+    this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+  }
+
+  /**
+   * Инвалидировать кеш конкретного пира
+   */
+  private invalidatePeerCache(peerName: string): void {
+    this.cacheService.delete(CACHE_NAMESPACES.PEER_BY_NAME, peerName);
   }
 
   private async syncWgWithDb() {
@@ -116,6 +199,17 @@ export class PeersService {
       const telegramIdStr = String(dto.telegramId);
       const peerName = `${telegramIdStr.slice(0, 3)}${randomBytes(3).toString('hex')}`;
 
+      // Быстрая проверка через кеш
+      const cachedPeer = this.cacheService.get<TPeerSelect>(
+        CACHE_NAMESPACES.PEER_BY_NAME,
+        peerName,
+      );
+      if (cachedPeer) {
+        throw new BadRequestException(
+          `Конфиг с именем ${peerName} уже существует`,
+        );
+      }
+
       const existing = await this.db.query.peers.findFirst({
         where: eq(schema.peers.name, peerName),
       });
@@ -126,11 +220,8 @@ export class PeersService {
         );
       }
 
-      const usedPeers = await this.db.query.peers.findMany({
-        columns: { ip: true },
-      });
-      const usedIps = new Set(usedPeers.map((peer) => peer.ip));
-
+      // Используем кешированные IP
+      const usedIps = await this.getUsedIps();
       const credentials =
         await this.wgService.generateClientCredentials(usedIps);
 
@@ -157,26 +248,45 @@ export class PeersService {
         .values(peerData)
         .returning();
 
+      // Обновляем кеш IP
+      this.addIpToCache(credentials.ip);
+
       try {
         const config = await this.wgService.createClientConfig(
           newPeer.name,
           credentials,
         );
 
+        // Инвалидируем кеши
+        this.invalidateUserPeersCache(dto.telegramId);
+
         return { peer: newPeer, config };
       } catch (error) {
         this.logger.error(
           `Ошибка создания конфига: ${error instanceof Error ? error.message : error}`,
         );
+
+        // Откатываем изменения
         await this.db
           .delete(schema.peers)
           .where(eq(schema.peers.id, newPeer.id));
+        this.removeIpFromCache(credentials.ip);
+
         throw error;
       }
     });
   }
 
   async findPeer(peerName: string): Promise<TPeerSelect> {
+    // Проверяем кеш
+    const cached = this.cacheService.get<TPeerSelect>(
+      CACHE_NAMESPACES.PEER_BY_NAME,
+      peerName,
+    );
+    if (cached) {
+      return cached;
+    }
+
     const peer = await this.db.query.peers.findFirst({
       where: eq(schema.peers.name, peerName),
     });
@@ -184,6 +294,14 @@ export class PeersService {
     if (!peer) {
       throw new NotFoundException(`Конфиг с именем ${peerName} не найден`);
     }
+
+    // Сохраняем в кеш
+    this.cacheService.set(
+      CACHE_NAMESPACES.PEER_BY_NAME,
+      peerName,
+      peer,
+      CACHE_TTL.MEDIUM,
+    );
 
     return peer;
   }
@@ -196,6 +314,10 @@ export class PeersService {
       .update(schema.peers)
       .set({ paused: shouldPause })
       .where(eq(schema.peers.name, peerName));
+
+    // Инвалидируем кеши
+    this.invalidatePeerCache(peerName);
+    this.invalidateUserPeersCache(peer.telegramId);
 
     try {
       if (shouldPause) {
@@ -220,6 +342,10 @@ export class PeersService {
         .set({ paused: !shouldPause })
         .where(eq(schema.peers.name, peerName));
 
+      // Повторно инвалидируем после отката
+      this.invalidatePeerCache(peerName);
+      this.invalidateUserPeersCache(peer.telegramId);
+
       throw error;
     }
   }
@@ -228,6 +354,11 @@ export class PeersService {
     const peer = await this.findPeer(peerName);
 
     await this.db.delete(schema.peers).where(eq(schema.peers.name, peerName));
+
+    // Обновляем кеши
+    this.removeIpFromCache(peer.ip);
+    this.invalidatePeerCache(peerName);
+    this.invalidateUserPeersCache(peer.telegramId);
 
     if (!peer.paused) {
       try {
@@ -240,11 +371,30 @@ export class PeersService {
     return { message: `Конфиг ${peerName} успешно удален` };
   }
 
-  async getPeersByTelegramId(telegramId: string) {
-    return await this.db.query.peers.findMany({
+  async getPeersByTelegramId(telegramId: string): Promise<TPeerSelect[]> {
+    // Проверяем кеш
+    const cached = this.cacheService.get<TPeerSelect[]>(
+      CACHE_NAMESPACES.PEERS_BY_USER,
+      telegramId,
+    );
+    if (cached) {
+      return cached;
+    }
+
+    const peers = await this.db.query.peers.findMany({
       where: eq(schema.peers.telegramId, telegramId),
       orderBy: [desc(schema.peers.createdAt)],
     });
+
+    // Сохраняем в кеш
+    this.cacheService.set(
+      CACHE_NAMESPACES.PEERS_BY_USER,
+      telegramId,
+      peers,
+      CACHE_TTL.MEDIUM,
+    );
+
+    return peers;
   }
 
   async setConfigMessageId(peerName: string, messageId: number) {
@@ -252,12 +402,34 @@ export class PeersService {
       .update(schema.peers)
       .set({ configMessageId: messageId })
       .where(eq(schema.peers.name, peerName));
+
+    // Инвалидируем кеш пира
+    this.invalidatePeerCache(peerName);
   }
 
-  async allPeers() {
-    return await this.db.query.peers.findMany({
+  async allPeers(): Promise<TPeerSelect[]> {
+    // Проверяем кеш
+    const cached = this.cacheService.get<TPeerSelect[]>(
+      CACHE_NAMESPACES.ALL_PEERS,
+      'all',
+    );
+    if (cached) {
+      return cached;
+    }
+
+    const peers = await this.db.query.peers.findMany({
       orderBy: [desc(schema.peers.createdAt)],
     });
+
+    // Сохраняем в кеш с коротким TTL (данные часто меняются)
+    this.cacheService.set(
+      CACHE_NAMESPACES.ALL_PEERS,
+      'all',
+      peers,
+      CACHE_TTL.SHORT,
+    );
+
+    return peers;
   }
 
   async deactivateExpiredPeers(): Promise<number> {
@@ -283,6 +455,10 @@ export class PeersService {
           .where(eq(schema.peers.id, peer.id));
 
         await this.wgService.removePeer(peer.publicKey);
+
+        // Инвалидируем кеши
+        this.invalidatePeerCache(peer.name);
+        this.invalidateUserPeersCache(peer.telegramId);
 
         this.logger.log(`Конфиг ${peer.name} деактивирован по истечению срока`);
       } catch (error) {
@@ -311,6 +487,10 @@ export class PeersService {
       .set({ expiresAt })
       .where(eq(schema.peers.name, peerName));
 
+    // Инвалидируем кеши
+    this.invalidatePeerCache(peerName);
+    this.invalidateUserPeersCache(peer.telegramId);
+
     // Если конфиг был на паузе из-за истечения срока, и мы продлили - включаем его
     if (peer.paused && expiresAt && expiresAt > new Date()) {
       await this.updatedPeer(peerName); // Это переключит статус
@@ -325,12 +505,16 @@ export class PeersService {
     peerName: string,
     description: string | null,
   ): Promise<void> {
-    await this.findPeer(peerName);
+    const peer = await this.findPeer(peerName);
 
     await this.db
       .update(schema.peers)
       .set({ description })
       .where(eq(schema.peers.name, peerName));
+
+    // Инвалидируем кеши
+    this.invalidatePeerCache(peerName);
+    this.invalidateUserPeersCache(peer.telegramId);
 
     this.logger.log(
       `Обновлено описание конфига ${peerName}: ${description || '(удалено)'}`,
@@ -394,12 +578,9 @@ export class PeersService {
       }
 
       // Генерируем новые ключи
-      const usedPeers = await this.db.query.peers.findMany({
-        columns: { ip: true },
-      });
-      const usedIps = new Set(
-        usedPeers.filter((p) => p.ip !== oldPeer.ip).map((p) => p.ip),
-      );
+      const usedIps = await this.getUsedIps();
+      // Исключаем старый IP из списка занятых
+      usedIps.delete(oldPeer.ip);
 
       const credentials =
         await this.wgService.generateClientCredentials(usedIps);
@@ -419,6 +600,14 @@ export class PeersService {
         })
         .where(eq(schema.peers.name, peerName))
         .returning();
+
+      // Обновляем кеш IP
+      this.removeIpFromCache(oldPeer.ip);
+      this.addIpToCache(credentials.ip);
+
+      // Инвалидируем кеши
+      this.invalidatePeerCache(peerName);
+      this.invalidateUserPeersCache(oldPeer.telegramId);
 
       // Создаём новый конфиг в WireGuard
       try {
@@ -445,8 +634,33 @@ export class PeersService {
           })
           .where(eq(schema.peers.name, peerName));
 
+        // Откатываем кеш IP
+        this.removeIpFromCache(credentials.ip);
+        this.addIpToCache(oldPeer.ip);
+
+        // Инвалидируем кеши после отката
+        this.invalidatePeerCache(peerName);
+        this.invalidateUserPeersCache(oldPeer.telegramId);
+
         throw error;
       }
     });
+  }
+
+  /**
+   * Получить статистику кеша (для мониторинга)
+   */
+  getCacheStats(): {
+    usedIpsCache: number;
+    usedIpsCacheAge: number | null;
+    globalCache: Record<string, CacheStats> | CacheStats | null;
+  } {
+    return {
+      usedIpsCache: this.usedIpsCache?.size ?? 0,
+      usedIpsCacheAge: this.usedIpsCacheTime
+        ? Date.now() - this.usedIpsCacheTime
+        : null,
+      globalCache: this.cacheService.getStats(),
+    };
   }
 }
