@@ -29,13 +29,12 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 COPY --from=dependencies /app/node_modules ./node_modules
 
-# Копируем исходный код и миграции
+# Копируем исходный код
 COPY tsconfig*.json nest-cli.json drizzle.config.ts ./
 COPY src ./src
-COPY drizzle ./drizzle
 
-# Сборка приложения (миграции уже есть в репозитории)
-RUN pnpm run build
+# Сборка и генерация миграций
+RUN pnpm run build && pnpm run generate
 
 # Удаляем dev-зависимости для production
 RUN CI=true pnpm prune --prod
