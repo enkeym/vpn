@@ -15,7 +15,7 @@ export const DRIZZLE = Symbol('DRIZZLE');
       provide: DRIZZLE,
       useFactory: () => {
         const logger = new Logger('DatabaseModule');
-        const dbPath = path.join(process.cwd(), 'src/database', 'vpn.db');
+        const dbPath = path.join(process.cwd(), 'data', 'vpn.db');
         const dbDir = path.dirname(dbPath);
 
         if (!existsSync(dbDir)) {

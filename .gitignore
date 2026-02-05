@@ -57,4 +57,5 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 configs/*
 drizzle/*
-src/database/vpn.db
+# Database
+/data
