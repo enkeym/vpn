@@ -59,3 +59,4 @@ configs/*
 drizzle/*
 # Database
 /data
+src/database/vpn.db
