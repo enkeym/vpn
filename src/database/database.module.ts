@@ -40,22 +40,9 @@ export const DRIZZLE = Symbol('DRIZZLE');
 
         const db = drizzle(sqlite, { schema });
 
-        // Проверяем, существуют ли уже таблицы в базе данных
-        const existingTables = sqlite
-          .prepare(
-            `SELECT name FROM sqlite_master WHERE type='table' AND name IN ('peers', 'family_members', 'blocked_users')`,
-          )
-          .all() as { name: string }[];
-
-        if (existingTables.length > 0) {
-          logger.log(
-            `База данных уже инициализирована (найдено таблиц: ${existingTables.length}). Пропускаем миграции.`,
-          );
-        } else {
-          logger.log('Первый запуск. Применяем миграции...');
-          migrate(db, { migrationsFolder: './drizzle' });
-          logger.log('Миграции успешно применены.');
-        }
+        logger.log('Первый запуск. Применяем миграции...');
+        migrate(db, { migrationsFolder: './drizzle' });
+        logger.log('Миграции успешно применены.');
 
         return db;
       },
