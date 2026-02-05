@@ -62,6 +62,7 @@ export const peers = sqliteTable(
     ip: text('ip').notNull().unique(),
     endpoint: text('endpoint').notNull(),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
+    pausedAt: integer('pausedAt', { mode: 'timestamp' }),
     expiresAt: integer('expiresAt', { mode: 'timestamp' }),
     lastReplacedAt: integer('lastReplacedAt', { mode: 'timestamp' }),
     createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(

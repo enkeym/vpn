@@ -9,7 +9,7 @@ import {
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { and, desc, eq, isNotNull, lte } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { WgService } from 'src/wg/wg.service';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
@@ -59,6 +59,25 @@ export class PeersService {
     // Прогреваем кеш IP адресов при старте
     await this.warmUpIpsCache();
     await this.syncWgWithDb();
+    await this.backfillPausedAt();
+  }
+
+  /**
+   * Для уже приостановленных конфигов без pausedAt проставляем pausedAt = updatedAt,
+   * чтобы ежемесячная очистка могла их учитывать.
+   */
+  private async backfillPausedAt(): Promise<void> {
+    const result = await this.db
+      .update(schema.peers)
+      .set({ pausedAt: sql`${schema.peers.updatedAt}` })
+      .where(and(eq(schema.peers.paused, true), isNull(schema.peers.pausedAt)))
+      .returning({ name: schema.peers.name });
+
+    if (result.length > 0) {
+      this.logger.log(
+        `Проставлен pausedAt для ${result.length} конфигов на паузе`,
+      );
+    }
   }
 
   /**
@@ -313,7 +332,10 @@ export class PeersService {
 
     await this.db
       .update(schema.peers)
-      .set({ paused: shouldPause })
+      .set({
+        paused: shouldPause,
+        pausedAt: shouldPause ? new Date() : null,
+      })
       .where(eq(schema.peers.name, peerName));
 
     // Инвалидируем кеши
@@ -340,7 +362,10 @@ export class PeersService {
       );
       await this.db
         .update(schema.peers)
-        .set({ paused: !shouldPause })
+        .set({
+          paused: !shouldPause,
+          pausedAt: shouldPause ? null : new Date(),
+        })
         .where(eq(schema.peers.name, peerName));
 
       // Повторно инвалидируем после отката
@@ -470,7 +495,7 @@ export class PeersService {
       try {
         await this.db
           .update(schema.peers)
-          .set({ paused: true })
+          .set({ paused: true, pausedAt: new Date() })
           .where(eq(schema.peers.id, peer.id));
 
         await this.wgService.removePeer(peer.publicKey);
@@ -488,6 +513,40 @@ export class PeersService {
     }
 
     return expiredPeers.length;
+  }
+
+  /**
+   * Удаляет конфиги, которые находятся на паузе более месяца.
+   * Вызывается ежемесячно по расписанию.
+   */
+  async deletePeersPausedOverMonth(): Promise<number> {
+    const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const toDelete = await this.db.query.peers.findMany({
+      columns: { name: true },
+      where: and(
+        eq(schema.peers.paused, true),
+        isNotNull(schema.peers.pausedAt),
+        lte(schema.peers.pausedAt, monthAgo),
+      ),
+    });
+
+    if (toDelete.length === 0) {
+      return 0;
+    }
+
+    for (const { name } of toDelete) {
+      try {
+        await this.deletePeer(name);
+        this.logger.log(`Конфиг ${name} удалён (на паузе более месяца)`);
+      } catch (error) {
+        this.logger.error(
+          `Ошибка удаления конфига ${name}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+
+    return toDelete.length;
   }
 
   isExpired(peer: TPeerSelect): boolean {
@@ -614,6 +673,7 @@ export class PeersService {
           ip: credentials.ip,
           endpoint: `${this.wgService.host}:${this.wgService.port}`,
           paused: false, // Активируем конфиг при замене
+          pausedAt: null,
           expiresAt: currentExpiresAt, // Сохраняем тот же срок!
           lastReplacedAt: new Date(),
         })
@@ -649,6 +709,7 @@ export class PeersService {
             ip: oldPeer.ip,
             endpoint: oldPeer.endpoint,
             paused: oldPeer.paused,
+            pausedAt: oldPeer.pausedAt,
             lastReplacedAt: oldPeer.lastReplacedAt,
           })
           .where(eq(schema.peers.name, peerName));
@@ -671,9 +732,7 @@ export class PeersService {
    */
   generatePeerConfig(peer: TPeerSelect): string {
     if (!peer.presharedKey) {
-      throw new InternalServerErrorException(
-        'Отсутствует presharedKey у пира',
-      );
+      throw new InternalServerErrorException('Отсутствует presharedKey у пира');
     }
 
     return `[Interface]
