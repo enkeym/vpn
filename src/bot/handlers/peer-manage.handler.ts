@@ -230,11 +230,15 @@ export class PeerManageHandler {
       const qrBuffer = await this.peersService.generatePeerQrCode(peerName);
       const peer = await this.peersService.findPeer(peerName);
 
-      await ctx.replyWithPhoto(new InputFile(qrBuffer, `${peerName}_qr.png`), {
-        caption: `📷 *QR\\-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении WireGuard_`,
-        parse_mode: 'MarkdownV2',
-        reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
-      });
+      const message = await ctx.replyWithPhoto(
+        new InputFile(qrBuffer, `${peerName}_qr.png`),
+        {
+          caption: `📷 *QR\\-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении WireGuard_`,
+          parse_mode: 'MarkdownV2',
+          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+        },
+      );
+      await this.peersService.setQrMessageId(peer.name, message.message_id);
     } catch (error) {
       this.logger.error(`Ошибка генерации QR: ${error}`);
       await ctx.answerCallbackQuery({
@@ -253,7 +257,7 @@ export class PeerManageHandler {
       const config = await this.peersService.getPeerConfigString(peerName);
       const peer = await this.peersService.findPeer(peerName);
 
-      await ctx.replyWithDocument(
+      const message = await ctx.replyWithDocument(
         new InputFile(Buffer.from(config), `${peer.name}.conf`),
         {
           caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение WireGuard_`,
@@ -261,6 +265,7 @@ export class PeerManageHandler {
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
       );
+      await this.peersService.setFileMessageId(peer.name, message.message_id);
     } catch (error) {
       this.logger.error(`Ошибка отправки файла конфига: ${error}`);
       await ctx.answerCallbackQuery({

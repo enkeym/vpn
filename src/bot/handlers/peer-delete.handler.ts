@@ -16,11 +16,20 @@ export class PeerDeleteHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
-      if (peer.configMessageId) {
-        try {
-          await ctx.api.deleteMessage(peer.telegramId, peer.configMessageId);
-        } catch (error) {
-          this.logger.warn(`Не удалось удалить сообщение с конфигом: ${error}`);
+      const chatId = peer.telegramId;
+      for (const messageId of [
+        peer.configMessageId,
+        peer.qrMessageId,
+        peer.fileMessageId,
+      ]) {
+        if (messageId != null) {
+          try {
+            await ctx.api.deleteMessage(chatId, messageId);
+          } catch (error) {
+            this.logger.warn(
+              `Не удалось удалить связанное сообщение (${messageId}): ${error}`,
+            );
+          }
         }
       }
 

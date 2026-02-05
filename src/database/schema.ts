@@ -52,6 +52,8 @@ export const peers = sqliteTable(
     telegramId: text('telegramId').notNull(),
     username: text('username'),
     configMessageId: integer('configMessageId'),
+    qrMessageId: integer('qrMessageId'),
+    fileMessageId: integer('fileMessageId'),
     name: text('name').notNull().unique(),
     description: text('description'),
     publicKey: text('publicKey').notNull(),

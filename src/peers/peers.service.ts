@@ -408,6 +408,24 @@ export class PeersService {
     this.invalidatePeerCache(peerName);
   }
 
+  async setQrMessageId(peerName: string, messageId: number) {
+    await this.db
+      .update(schema.peers)
+      .set({ qrMessageId: messageId })
+      .where(eq(schema.peers.name, peerName));
+
+    this.invalidatePeerCache(peerName);
+  }
+
+  async setFileMessageId(peerName: string, messageId: number) {
+    await this.db
+      .update(schema.peers)
+      .set({ fileMessageId: messageId })
+      .where(eq(schema.peers.name, peerName));
+
+    this.invalidatePeerCache(peerName);
+  }
+
   async allPeers(): Promise<TPeerSelect[]> {
     // Проверяем кеш
     const cached = this.cacheService.get<TPeerSelect[]>(
