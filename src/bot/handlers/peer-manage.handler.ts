@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Context } from 'grammy';
+import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 
@@ -55,7 +55,11 @@ export class PeerManageHandler {
     });
   }
 
-  async showPeerDetails(ctx: Context, peerName: string, isAdmin: boolean = false) {
+  async showPeerDetails(
+    ctx: Context,
+    peerName: string,
+    isAdmin: boolean = false,
+  ) {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
@@ -69,6 +73,35 @@ export class PeerManageHandler {
         show_alert: true,
       });
       await this.showConfigsList(ctx);
+    }
+  }
+
+  // Показать детали конфига через новое сообщение (для использования после документов)
+  async showPeerDetailsReply(
+    ctx: Context,
+    peerName: string,
+    isAdmin: boolean = false,
+  ) {
+    try {
+      const peer = await this.peersService.findPeer(peerName);
+
+      // Удаляем текущее сообщение (с документом)
+      try {
+        await ctx.deleteMessage();
+      } catch {
+        // Игнорируем ошибку удаления
+      }
+
+      // Отправляем новое сообщение с деталями
+      await ctx.reply(BotUi.peerDetailsText(peer, isAdmin), {
+        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
+        parse_mode: 'Markdown',
+      });
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Конфиг не найден',
+        show_alert: true,
+      });
     }
   }
 
@@ -178,9 +211,90 @@ export class PeerManageHandler {
     }
   }
 
-  async cancelEditDescription(ctx: Context, peerName: string, isAdmin: boolean = false) {
+  async cancelEditDescription(
+    ctx: Context,
+    peerName: string,
+    isAdmin: boolean = false,
+  ) {
     if (!ctx.from) return;
     this.setAwaitingDescriptionEdit(String(ctx.from.id), null);
     await this.showPeerDetails(ctx, peerName, isAdmin);
+  }
+
+  // === Замена конфига ===
+
+  async replacePeer(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    let statusMessageDeleted = false;
+
+    try {
+      // Сначала проверяем, можно ли заменить
+      const peer = await this.peersService.findPeer(peerName);
+      const { canReplace, hoursLeft } = this.peersService.canReplacePeer(peer);
+
+      if (!canReplace) {
+        await ctx.editMessageText(BotUi.replaceNotAvailable(hoursLeft!), {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+        });
+        return;
+      }
+
+      // Показываем сообщение о процессе
+      await ctx.editMessageText(BotUi.replacingConfig, {
+        parse_mode: 'Markdown',
+      });
+
+      // Выполняем замену
+      const { peer: newPeer, config } =
+        await this.peersService.replacePeer(peerName);
+
+      // Удаляем сообщение "Заменяю конфигурацию..." ПЕРЕД отправкой файла
+      try {
+        await ctx.deleteMessage();
+        statusMessageDeleted = true;
+      } catch {
+        // Игнорируем ошибку удаления
+      }
+
+      // Отправляем новый конфиг файлом (используем ReplyKeyboard для документов)
+      await ctx.replyWithDocument(
+        new InputFile(Buffer.from(config), `${newPeer.name}.conf`),
+        {
+          caption: BotUi.configReplaced(
+            newPeer.name,
+            newPeer.ip,
+            newPeer.expiresAt,
+          ),
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+        },
+      );
+    } catch (error) {
+      this.logger.error(`Ошибка замены конфига: ${error}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // Если сообщение уже удалено, используем reply, иначе editMessageText
+      if (statusMessageDeleted) {
+        await ctx.reply(BotUi.configError(errorMsg), {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+        });
+      } else {
+        try {
+          await ctx.editMessageText(BotUi.configError(errorMsg), {
+            parse_mode: 'Markdown',
+            reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+          });
+        } catch {
+          // Если не удалось отредактировать, отправляем новое сообщение
+          await ctx.reply(BotUi.configError(errorMsg), {
+            parse_mode: 'Markdown',
+            reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+          });
+        }
+      }
+    }
   }
 }

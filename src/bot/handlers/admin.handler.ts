@@ -139,10 +139,13 @@ export class AdminHandler {
   async showClientDetails(ctx: Context, telegramId: string) {
     const peers = await this.peersService.getPeersByTelegramId(telegramId);
 
-    await ctx.editMessageText(BotUi.clientDetailsText(telegramId, peers.length), {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.clientDetailsKeyboard(telegramId, peers),
-    });
+    await ctx.editMessageText(
+      BotUi.clientDetailsText(telegramId, peers.length),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.clientDetailsKeyboard(telegramId, peers),
+      },
+    );
   }
 
   async showClientConfigs(ctx: Context, telegramId: string) {
@@ -157,7 +160,11 @@ export class AdminHandler {
     );
   }
 
-  async showClientPeerDetails(ctx: Context, peerName: string, telegramId: string) {
+  async showClientPeerDetails(
+    ctx: Context,
+    peerName: string,
+    telegramId: string,
+  ) {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
@@ -375,13 +382,19 @@ export class AdminHandler {
       await this.peersService.updatePeerDescription(peerName, newDescription);
       await ctx.reply(BotUi.descriptionUpdated(newDescription), {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.backToClientPeerKeyboard(peerName, clientTelegramId),
+        reply_markup: BotUi.backToClientPeerKeyboard(
+          peerName,
+          clientTelegramId,
+        ),
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await ctx.reply(BotUi.editDescriptionError(errorMsg), {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.backToClientPeerKeyboard(peerName, clientTelegramId),
+        reply_markup: BotUi.backToClientPeerKeyboard(
+          peerName,
+          clientTelegramId,
+        ),
       });
     }
   }
@@ -430,11 +443,18 @@ export class AdminHandler {
           telegramId,
           new InputFile(Buffer.from(config), `${peer.name}.conf`),
           {
-            caption: BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+            caption: BotUi.memberConfigCreated(
+              peer.name,
+              peer.ip,
+              peer.expiresAt,
+            ),
             parse_mode: 'Markdown',
           },
         );
-        await this.peersService.setConfigMessageId(peer.name, message.message_id);
+        await this.peersService.setConfigMessageId(
+          peer.name,
+          message.message_id,
+        );
       } catch (error) {
         this.logger.warn(
           `Не удалось отправить конфиг клиенту ${telegramId}: ${error}`,

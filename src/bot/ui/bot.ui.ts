@@ -12,25 +12,6 @@ function isExpired(peer: TPeer): boolean {
   return new Date() > peer.expiresAt;
 }
 
-function formatExpirationStatus(peer: TPeer): string {
-  if (!peer.expiresAt) return '♾️ Бессрочно';
-
-  const now = new Date();
-  const expiresAt = peer.expiresAt;
-
-  if (now > expiresAt) {
-    return '⏰ Истёк';
-  }
-
-  const diffMs = expiresAt.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays <= 3) {
-    return `⚠️ Осталось ${diffDays} дн.`;
-  }
-
-  return `📆 Осталось ${diffDays} дн.`;
-}
 
 function formatSubscriptionDetails(peer: TPeer): string {
   if (!peer.expiresAt) {
@@ -159,6 +140,9 @@ export const BotUi = {
       keyboard.text(descriptionBtnText, `edit_description:${peer.name}`);
     }
 
+    // Кнопка замены конфига (раз в день)
+    keyboard.row().text('🔁 Заменить конфиг', `replace_peer:${peer.name}`);
+
     keyboard
       .row()
       .text('Удалить', `delete_peer:${peer.name}`)
@@ -181,6 +165,23 @@ export const BotUi = {
   },
 
   configError: (msg: string) => `❌ *Ошибка:* ${msg}`,
+
+  // Замена конфига
+  configReplaced: (name: string, ip: string, expiresAt?: Date | null) => {
+    let msg = `✅ Конфиг *${name}* успешно заменён!\n\n🌐 Новый IP: \`${ip}\``;
+    if (expiresAt) {
+      msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
+    } else {
+      msg += '\n⏳ Срок: ♾️ Бессрочно';
+    }
+    msg += '\n\n_Скачайте новый конфиг и удалите старый из приложения._';
+    return msg;
+  },
+
+  replaceNotAvailable: (hoursLeft: number) =>
+    `⏳ *Замена конфига пока недоступна*\n\nВы можете заменить конфиг раз в 24 часа.\nОсталось: *${hoursLeft} ч.*`,
+
+  replacingConfig: '⏳ *Заменяю конфигурацию...*',
 
   configsListTitle: (count: number) => `📂 *Ваши конфигурации (${count}):*`,
 
@@ -428,8 +429,7 @@ export const BotUi = {
   },
 
   invalidNameInput:
-    '❌ *Неверный формат*\n\n' +
-    'Имя должно быть от 1 до 50 символов.',
+    '❌ *Неверный формат*\n\n' + 'Имя должно быть от 1 до 50 символов.',
 
   nameUpdated: (newName: string) =>
     `✅ *Имя обновлено*\n\nНовое имя: ${escapeMarkdown(newName)}`,
@@ -462,8 +462,7 @@ export const BotUi = {
   },
 
   invalidDescriptionInput:
-    '❌ *Неверный формат*\n\n' +
-    'Описание должно быть до 200 символов.',
+    '❌ *Неверный формат*\n\n' + 'Описание должно быть до 200 символов.',
 
   descriptionUpdated: (description: string | null) =>
     description
@@ -492,6 +491,10 @@ export const BotUi = {
 
   backToOwnPeerKeyboard: (peerName: string) =>
     new InlineKeyboard().text('« К конфигу', `manage_peer:${peerName}`),
+
+  // Кнопка для перехода к конфигу через новое сообщение (для использования после отправки документов)
+  backToOwnPeerKeyboardReply: (peerName: string) =>
+    new InlineKeyboard().text('« К конфигу', `goto_peer:${peerName}`),
 
   // === Поиск клиентов (для админов) ===
 
@@ -628,16 +631,25 @@ export const BotUi = {
     // Кнопка включить/пауза
     if (!expired) {
       const toggleBtnText = peer.paused ? '▶️ Включить' : '⏸ Пауза';
-      keyboard.text(toggleBtnText, `admin_toggle_peer:${peer.name}:${telegramId}`);
+      keyboard.text(
+        toggleBtnText,
+        `admin_toggle_peer:${peer.name}:${telegramId}`,
+      );
     }
 
     const descriptionBtnText = peer.description
       ? '📝 Изменить описание'
       : '📝 Добавить описание';
     keyboard
-      .text(descriptionBtnText, `admin_edit_description:${peer.name}:${telegramId}`)
+      .text(
+        descriptionBtnText,
+        `admin_edit_description:${peer.name}:${telegramId}`,
+      )
       .row()
-      .text('📅 Изменить срок', `admin_change_duration:${peer.name}:${telegramId}`)
+      .text(
+        '📅 Изменить срок',
+        `admin_change_duration:${peer.name}:${telegramId}`,
+      )
       .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
       .row()
@@ -648,7 +660,10 @@ export const BotUi = {
 
   clientChangeDurationKeyboard: (peerName: string, telegramId: string) =>
     new InlineKeyboard()
-      .text('♾️ Бессрочный', `admin_set_duration:${peerName}:${telegramId}:unlimited`)
+      .text(
+        '♾️ Бессрочный',
+        `admin_set_duration:${peerName}:${telegramId}:unlimited`,
+      )
       .row()
       .text('30 дней', `admin_set_duration:${peerName}:${telegramId}:30`)
       .text('60 дней', `admin_set_duration:${peerName}:${telegramId}:60`)

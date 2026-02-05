@@ -159,7 +159,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Если админ ожидает ввода нового имени участника
-      if (this.isAdmin(userId) && this.familyHandler.isAwaitingNameEdit(userId)) {
+      if (
+        this.isAdmin(userId) &&
+        this.familyHandler.isAwaitingNameEdit(userId)
+      ) {
         await this.familyHandler.handleEditNameInput(ctx);
         return;
       }
@@ -270,6 +273,22 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         text: '🚧 Функция продления скоро будет доступна',
         show_alert: true,
       });
+    });
+
+    // Замена конфига (раз в день)
+    this.bot.callbackQuery(/^replace_peer:(.+)$/, async (ctx) => {
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerManageHandler.replacePeer(ctx, peerName);
+    });
+
+    // Переход к конфигу через новое сообщение (после документов)
+    this.bot.callbackQuery(/^goto_peer:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
+      await this.peerManageHandler.showPeerDetailsReply(ctx, peerName, isAdmin);
     });
 
     // Редактирование описания своего конфига (только для админов)
@@ -652,42 +671,52 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
 
     // Установка нового срока действия
-    this.bot.callbackQuery(/^admin_set_duration:(.+):(.+):(.+)$/, async (ctx) => {
-      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-        await ctx.answerCallbackQuery({
-          text: 'Нет доступа',
-          show_alert: true,
-        });
-        return;
-      }
-      // Сразу отвечаем, т.к. операция может занять время
-      await ctx.answerCallbackQuery();
-      const [peerName, telegramId, duration] = [
-        ctx.match[1],
-        ctx.match[2],
-        ctx.match[3],
-      ];
-      await this.adminHandler.changePeerDuration(
-        ctx,
-        peerName,
-        telegramId,
-        duration,
-      );
-    });
+    this.bot.callbackQuery(
+      /^admin_set_duration:(.+):(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        // Сразу отвечаем, т.к. операция может занять время
+        await ctx.answerCallbackQuery();
+        const [peerName, telegramId, duration] = [
+          ctx.match[1],
+          ctx.match[2],
+          ctx.match[3],
+        ];
+        await this.adminHandler.changePeerDuration(
+          ctx,
+          peerName,
+          telegramId,
+          duration,
+        );
+      },
+    );
 
     // Редактирование описания конфига клиента
-    this.bot.callbackQuery(/^admin_edit_description:(.+):(.+)$/, async (ctx) => {
-      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-        await ctx.answerCallbackQuery({
-          text: 'Нет доступа',
-          show_alert: true,
-        });
-        return;
-      }
-      await ctx.answerCallbackQuery();
-      const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
-      await this.adminHandler.showEditDescriptionPrompt(ctx, peerName, telegramId);
-    });
+    this.bot.callbackQuery(
+      /^admin_edit_description:(.+):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+          await ctx.answerCallbackQuery({
+            text: 'Нет доступа',
+            show_alert: true,
+          });
+          return;
+        }
+        await ctx.answerCallbackQuery();
+        const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
+        await this.adminHandler.showEditDescriptionPrompt(
+          ctx,
+          peerName,
+          telegramId,
+        );
+      },
+    );
 
     // Отмена редактирования описания
     this.bot.callbackQuery(
@@ -702,7 +731,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         }
         await ctx.answerCallbackQuery();
         const [peerName, telegramId] = [ctx.match[1], ctx.match[2]];
-        await this.adminHandler.cancelEditDescription(ctx, peerName, telegramId);
+        await this.adminHandler.cancelEditDescription(
+          ctx,
+          peerName,
+          telegramId,
+        );
       },
     );
 

@@ -31,6 +31,7 @@ export const peers = sqliteTable('peers', {
   endpoint: text('endpoint').notNull(),
   paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
   expiresAt: integer('expiresAt', { mode: 'timestamp' }),
+  lastReplacedAt: integer('lastReplacedAt', { mode: 'timestamp' }),
   createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
     () => new Date(),
   ),

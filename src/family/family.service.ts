@@ -208,7 +208,10 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
    * Проверить, что член группы принадлежит админу
    * Поддерживает как полный ID, так и сокращённый (первые 8 символов)
    */
-  async isMemberOwnedByAdmin(memberId: string, adminId: string): Promise<boolean> {
+  async isMemberOwnedByAdmin(
+    memberId: string,
+    adminId: string,
+  ): Promise<boolean> {
     // Сначала пробуем найти по полному ID
     let member = await this.db.query.familyMembers.findFirst({
       where: eq(schema.familyMembers.id, memberId),
@@ -226,7 +229,10 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
   /**
    * Обновить displayName участника
    */
-  async updateDisplayName(memberId: string, displayName: string): Promise<void> {
+  async updateDisplayName(
+    memberId: string,
+    displayName: string,
+  ): Promise<void> {
     await this.db
       .update(schema.familyMembers)
       .set({ displayName })

@@ -21,7 +21,12 @@ const awaitingNameEdit = new Map<
 // userId -> { peerName: string, memberId: string, promptMessageId: number, chatId: number }
 const awaitingDescriptionEdit = new Map<
   string,
-  { peerName: string; memberId: string; promptMessageId: number; chatId: number }
+  {
+    peerName: string;
+    memberId: string;
+    promptMessageId: number;
+    chatId: number;
+  }
 >();
 
 @Injectable()
@@ -198,7 +203,9 @@ export class FamilyHandler {
 
     try {
       const member = await this.familyService.findMemberById(memberId);
-      const peers = await this.peersService.getPeersByTelegramId(member.telegramId);
+      const peers = await this.peersService.getPeersByTelegramId(
+        member.telegramId,
+      );
 
       await ctx.editMessageText(BotUi.memberDetailsText(member, peers.length), {
         parse_mode: 'Markdown',
@@ -237,7 +244,10 @@ export class FamilyHandler {
     }
   }
 
-  private async checkOwnership(ctx: Context, memberId: string): Promise<boolean> {
+  private async checkOwnership(
+    ctx: Context,
+    memberId: string,
+  ): Promise<boolean> {
     if (!ctx.from) return false;
 
     const adminId = String(ctx.from.id);
@@ -366,10 +376,7 @@ export class FamilyHandler {
       for (const peer of peers) {
         try {
           if (peer.configMessageId) {
-            await ctx.api.deleteMessage(
-              peer.telegramId,
-              peer.configMessageId,
-            );
+            await ctx.api.deleteMessage(peer.telegramId, peer.configMessageId);
           }
           await this.peersService.deletePeer(peer.name);
         } catch (error) {
@@ -550,7 +557,10 @@ export class FamilyHandler {
         BotUi.editDescriptionPrompt(peer),
         {
           parse_mode: 'Markdown',
-          reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, member.id),
+          reply_markup: BotUi.cancelEditDescriptionKeyboard(
+            peerName,
+            member.id,
+          ),
         },
       );
 
@@ -632,7 +642,11 @@ export class FamilyHandler {
     }
   }
 
-  async cancelEditDescription(ctx: Context, peerName: string, memberId: string) {
+  async cancelEditDescription(
+    ctx: Context,
+    peerName: string,
+    memberId: string,
+  ) {
     if (!ctx.from) return;
     this.setAwaitingDescriptionEdit(String(ctx.from.id), null);
     await this.showMemberPeerDetails(ctx, peerName, memberId);
@@ -672,11 +686,7 @@ export class FamilyHandler {
     }
   }
 
-  async createMemberConfig(
-    ctx: Context,
-    memberId: string,
-    duration: string,
-  ) {
+  async createMemberConfig(ctx: Context, memberId: string, duration: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
 
     let member;
@@ -716,11 +726,18 @@ export class FamilyHandler {
           member.telegramId,
           new InputFile(Buffer.from(config), `${peer.name}.conf`),
           {
-            caption: BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+            caption: BotUi.memberConfigCreated(
+              peer.name,
+              peer.ip,
+              peer.expiresAt,
+            ),
             parse_mode: 'Markdown',
           },
         );
-        await this.peersService.setConfigMessageId(peer.name, message.message_id);
+        await this.peersService.setConfigMessageId(
+          peer.name,
+          message.message_id,
+        );
       } catch (error) {
         this.logger.warn(
           `Не удалось отправить конфиг клиенту ${member.telegramId}: ${error}`,
@@ -728,7 +745,10 @@ export class FamilyHandler {
       }
 
       // Уведомляем админа
-      const escapedName = displayName.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+      const escapedName = displayName.replace(
+        /([_*\[\]()~`>#+\-=|{}.!\\])/g,
+        '\\$1',
+      );
       await ctx.editMessageText(
         `✅ *Конфиг создан для ${escapedName}*\n\n` +
           `🏷 Имя: \`${peer.name}\`\n` +

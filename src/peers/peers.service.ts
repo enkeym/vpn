@@ -16,7 +16,7 @@ import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
 
 export type TPeer = typeof schema.peers.$inferInsert;
-type TPeerSelect = typeof schema.peers.$inferSelect;
+export type TPeerSelect = typeof schema.peers.$inferSelect;
 
 function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
   const now = new Date();
@@ -282,5 +282,118 @@ export class PeersService {
     this.logger.log(
       `Обновлено описание конфига ${peerName}: ${description || '(удалено)'}`,
     );
+  }
+
+  /**
+   * Проверяет, можно ли заменить конфиг (прошло ли 24 часа с последней замены)
+   */
+  canReplacePeer(peer: TPeerSelect): {
+    canReplace: boolean;
+    hoursLeft?: number;
+  } {
+    if (!peer.lastReplacedAt) {
+      return { canReplace: true };
+    }
+
+    const now = new Date();
+    const lastReplaced = new Date(peer.lastReplacedAt);
+    const hoursSinceLastReplace =
+      (now.getTime() - lastReplaced.getTime()) / (1000 * 60 * 60);
+
+    if (hoursSinceLastReplace >= 24) {
+      return { canReplace: true };
+    }
+
+    return {
+      canReplace: false,
+      hoursLeft: Math.ceil(24 - hoursSinceLastReplace),
+    };
+  }
+
+  /**
+   * Заменяет конфиг: удаляет старый и создаёт новый с теми же параметрами (тариф, срок)
+   * Можно заменять только раз в 24 часа
+   */
+  async replacePeer(
+    peerName: string,
+  ): Promise<{ peer: TPeerSelect; config: string }> {
+    return await this.createPeerMutex.runExclusive(async () => {
+      const oldPeer = await this.findPeer(peerName);
+
+      // Проверяем, можно ли заменить
+      const { canReplace, hoursLeft } = this.canReplacePeer(oldPeer);
+      if (!canReplace) {
+        throw new BadRequestException(
+          `Заменить конфиг можно только раз в 24 часа. Осталось: ${hoursLeft} ч.`,
+        );
+      }
+
+      // Сохраняем текущий срок действия (expiresAt) - это важно!
+      const currentExpiresAt = oldPeer.expiresAt;
+
+      // Удаляем старый пир из WireGuard (если не на паузе)
+      if (!oldPeer.paused) {
+        try {
+          await this.wgService.removePeer(oldPeer.publicKey);
+        } catch (error) {
+          this.logger.error(`Ошибка удаления старого пира из WG: ${error}`);
+        }
+      }
+
+      // Генерируем новые ключи
+      const usedPeers = await this.db.query.peers.findMany({
+        columns: { ip: true },
+      });
+      const usedIps = new Set(
+        usedPeers.filter((p) => p.ip !== oldPeer.ip).map((p) => p.ip),
+      );
+
+      const credentials =
+        await this.wgService.generateClientCredentials(usedIps);
+
+      // Обновляем запись в БД с новыми ключами, но сохраняем срок
+      const [updatedPeer] = await this.db
+        .update(schema.peers)
+        .set({
+          publicKey: credentials.publicKey,
+          privateKey: credentials.privateKey,
+          presharedKey: credentials.presharedKey,
+          ip: credentials.ip,
+          endpoint: `${this.wgService.host}:${this.wgService.port}`,
+          paused: false, // Активируем конфиг при замене
+          expiresAt: currentExpiresAt, // Сохраняем тот же срок!
+          lastReplacedAt: new Date(),
+        })
+        .where(eq(schema.peers.name, peerName))
+        .returning();
+
+      // Создаём новый конфиг в WireGuard
+      try {
+        const config = await this.wgService.createClientConfig(
+          peerName,
+          credentials,
+        );
+
+        this.logger.log(`Конфиг ${peerName} успешно заменён`);
+        return { peer: updatedPeer, config };
+      } catch (error) {
+        // Если не удалось создать конфиг в WG, откатываем изменения
+        this.logger.error(`Ошибка создания нового конфига в WG: ${error}`);
+        await this.db
+          .update(schema.peers)
+          .set({
+            publicKey: oldPeer.publicKey,
+            privateKey: oldPeer.privateKey,
+            presharedKey: oldPeer.presharedKey,
+            ip: oldPeer.ip,
+            endpoint: oldPeer.endpoint,
+            paused: oldPeer.paused,
+            lastReplacedAt: oldPeer.lastReplacedAt,
+          })
+          .where(eq(schema.peers.name, peerName));
+
+        throw error;
+      }
+    });
   }
 }
