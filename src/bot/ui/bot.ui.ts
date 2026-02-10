@@ -96,7 +96,32 @@ export const BotUi = {
       .row()
       .text('🔍 Поиск клиента', 'admin_search')
       .row()
+      .text('📊 Статистика', 'admin_stats')
+      .row()
       .text('📖 Инструкция', 'show_instructions'),
+
+  adminStatsText: (stats: {
+    totalConfigs: number;
+    uniqueUsers: number;
+    activeConfigs: number;
+    pausedConfigs: number;
+    expiredConfigs: number;
+    expiringSoonConfigs: number;
+    unlimitedConfigs: number;
+    familyMembersCount: number;
+    blockedUsersCount: number;
+  }) =>
+    '📊 *Статистика*\n\n' +
+    '📄 *Конфиги*\n' +
+    `  Всего: *${stats.totalConfigs}* | Активных: *${stats.activeConfigs}* | На паузе: *${stats.pausedConfigs}*\n` +
+    `  Истекших: *${stats.expiredConfigs}* | Истекают в течение 7 дн.: *${stats.expiringSoonConfigs}*\n` +
+    `  Бессрочных: *${stats.unlimitedConfigs}*\n\n` +
+    `👤 Пользователей (уникальных): *${stats.uniqueUsers}*\n\n` +
+    `👨‍👩‍👧‍👦 В группе «Семья»: *${stats.familyMembersCount}*\n` +
+    `🚫 Заблокировано: *${stats.blockedUsersCount}*`,
+
+  adminStatsKeyboard: () =>
+    new InlineKeyboard().text('« В меню', 'main_menu'),
 
   createConfigKeyboard: () =>
     new InlineKeyboard()

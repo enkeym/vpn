@@ -633,6 +633,19 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.adminHandler.cancelSearch(ctx);
     });
 
+    // Статистика (конфиги и пользователи)
+    this.bot.callbackQuery('admin_stats', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showStats(ctx);
+    });
+
     // Просмотр клиента
     this.bot.callbackQuery(/^admin_client:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {

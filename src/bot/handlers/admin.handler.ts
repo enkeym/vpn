@@ -142,6 +142,24 @@ export class AdminHandler {
     }
   }
 
+  // === Статистика ===
+
+  async showStats(ctx: Context) {
+    const stats = await this.peersService.getStats();
+    const text = BotUi.adminStatsText(stats);
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.adminStatsKeyboard(),
+      });
+    } catch {
+      await ctx.reply(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.adminStatsKeyboard(),
+      });
+    }
+  }
+
   // === Управление клиентом ===
 
   async showClientDetails(ctx: Context, telegramId: string) {

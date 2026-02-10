@@ -397,6 +397,59 @@ export class PeersService {
     return { message: `Конфиг ${peerName} успешно удален` };
   }
 
+  /** Расширенная статистика для админ-панели. */
+  async getStats(): Promise<{
+    totalConfigs: number;
+    uniqueUsers: number;
+    activeConfigs: number;
+    pausedConfigs: number;
+    expiredConfigs: number;
+    expiringSoonConfigs: number;
+    unlimitedConfigs: number;
+    familyMembersCount: number;
+    blockedUsersCount: number;
+  }> {
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const [peersRow] = await this.db
+      .select({
+        totalConfigs: sql<number>`count(*)`,
+        uniqueUsers: sql<number>`count(distinct ${schema.peers.telegramId})`,
+        activeConfigs: sql<number>`sum(case when ${schema.peers.paused} = 0 then 1 else 0 end)`,
+        pausedConfigs: sql<number>`sum(case when ${schema.peers.paused} = 1 then 1 else 0 end)`,
+        expiredConfigs: sql<number>`sum(case when ${schema.peers.expiresAt} is not null and ${schema.peers.expiresAt} <= ${now.getTime()} then 1 else 0 end)`,
+        expiringSoonConfigs: sql<number>`sum(case when ${schema.peers.paused} = 0 and ${schema.peers.expiresAt} is not null and ${schema.peers.expiresAt} > ${now.getTime()} and ${schema.peers.expiresAt} <= ${in7Days.getTime()} then 1 else 0 end)`,
+        unlimitedConfigs: sql<number>`sum(case when ${schema.peers.expiresAt} is null then 1 else 0 end)`,
+      })
+      .from(schema.peers);
+
+    const [familyRow] = await this.db
+      .select({
+        count: sql<number>`count(*)`,
+      })
+      .from(schema.familyMembers);
+
+    const [blockedRow] = await this.db
+      .select({
+        count: sql<number>`count(*)`,
+      })
+      .from(schema.blockedUsers);
+
+    const toNum = (v: unknown) => (v != null ? Number(v) : 0);
+    return {
+      totalConfigs: toNum(peersRow?.totalConfigs),
+      uniqueUsers: toNum(peersRow?.uniqueUsers),
+      activeConfigs: toNum(peersRow?.activeConfigs),
+      pausedConfigs: toNum(peersRow?.pausedConfigs),
+      expiredConfigs: toNum(peersRow?.expiredConfigs),
+      expiringSoonConfigs: toNum(peersRow?.expiringSoonConfigs),
+      unlimitedConfigs: toNum(peersRow?.unlimitedConfigs),
+      familyMembersCount: toNum(familyRow?.count),
+      blockedUsersCount: toNum(blockedRow?.count),
+    };
+  }
+
   async getPeersByTelegramId(telegramId: string): Promise<TPeerSelect[]> {
     // Проверяем кеш
     const cached = this.cacheService.get<TPeerSelect[]>(
