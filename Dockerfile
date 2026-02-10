@@ -32,9 +32,10 @@ COPY --from=dependencies /app/node_modules ./node_modules
 # Копируем исходный код
 COPY tsconfig*.json nest-cli.json drizzle.config.ts ./
 COPY src ./src
+COPY drizzle ./drizzle
 
-# Сборка и генерация миграций
-RUN pnpm run build && pnpm run generate
+# Сборка (миграции должны быть уже сгенерированы локально)
+RUN pnpm run build
 
 # Удаляем dev-зависимости для production
 RUN CI=true pnpm prune --prod

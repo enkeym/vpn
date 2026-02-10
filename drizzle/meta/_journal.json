@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1770286157977,
-      "tag": "0000_freezing_lady_mastermind",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1770300224603,
-      "tag": "0001_short_surge",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1770319983762,
-      "tag": "0002_safe_bloodscream",
+      "when": 1770753414716,
+      "tag": "0000_gifted_switch",
       "breakpoints": true
     }
   ]

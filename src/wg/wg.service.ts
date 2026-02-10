@@ -53,14 +53,6 @@ export class WgService implements OnModuleInit {
   private configCache: ParsedConfigCache | null = null;
   private readonly CONFIG_CACHE_TTL = 30 * 1000; // 30 секунд
 
-  // Буфер для батчинга изменений конфига
-  private pendingPeerOperations: Array<{
-    type: 'add' | 'remove';
-    peer: { publicKey: string; presharedKey?: string; ip?: string };
-  }> = [];
-  private batchTimeout: NodeJS.Timeout | null = null;
-  private readonly BATCH_DELAY = 100; // 100ms для сбора операций
-
   async onModuleInit() {
     if (!this.host) throw new Error(`WG_HOST в .env не задан`);
 

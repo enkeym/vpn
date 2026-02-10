@@ -1,9 +1,69 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e7bff7ec-1836-4576-967c-3f71b1ce789d",
+  "id": "796fc10d-4996-4be8-b298-7def349426d7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
+    "blocked_users": {
+      "name": "blocked_users",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "telegramId": {
+          "name": "telegramId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "blockedBy": {
+          "name": "blockedBy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "blocked_users_telegramId_unique": {
+          "name": "blocked_users_telegramId_unique",
+          "columns": [
+            "telegramId"
+          ],
+          "isUnique": true
+        },
+        "blocked_telegram_id_idx": {
+          "name": "blocked_telegram_id_idx",
+          "columns": [
+            "telegramId"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "family_members": {
       "name": "family_members",
       "columns": {
@@ -50,6 +110,20 @@
             "telegramId"
           ],
           "isUnique": true
+        },
+        "family_telegram_id_idx": {
+          "name": "family_telegram_id_idx",
+          "columns": [
+            "telegramId"
+          ],
+          "isUnique": false
+        },
+        "family_added_by_idx": {
+          "name": "family_added_by_idx",
+          "columns": [
+            "addedBy"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},
@@ -83,6 +157,20 @@
         },
         "configMessageId": {
           "name": "configMessageId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "qrMessageId": {
+          "name": "qrMessageId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fileMessageId": {
+          "name": "fileMessageId",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -145,8 +233,22 @@
           "autoincrement": false,
           "default": false
         },
+        "pausedAt": {
+          "name": "pausedAt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "expiresAt": {
           "name": "expiresAt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lastReplacedAt": {
+          "name": "lastReplacedAt",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -181,6 +283,42 @@
             "ip"
           ],
           "isUnique": true
+        },
+        "peers_telegram_id_idx": {
+          "name": "peers_telegram_id_idx",
+          "columns": [
+            "telegramId"
+          ],
+          "isUnique": false
+        },
+        "peers_name_idx": {
+          "name": "peers_name_idx",
+          "columns": [
+            "name"
+          ],
+          "isUnique": false
+        },
+        "peers_ip_idx": {
+          "name": "peers_ip_idx",
+          "columns": [
+            "ip"
+          ],
+          "isUnique": false
+        },
+        "peers_paused_idx": {
+          "name": "peers_paused_idx",
+          "columns": [
+            "paused"
+          ],
+          "isUnique": false
+        },
+        "peers_expiration_idx": {
+          "name": "peers_expiration_idx",
+          "columns": [
+            "paused",
+            "expiresAt"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},

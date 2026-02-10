@@ -56,7 +56,7 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 configs/*
-drizzle/*
+
 # Database
 /data
 src/database/vpn.db

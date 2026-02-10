@@ -118,14 +118,12 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
   }
 
   async removeMemberById(memberId: string): Promise<void> {
-    // Получаем telegramId перед удалением для инвалидации кеша
-    const member = await this.db.query.familyMembers.findFirst({
-      where: eq(schema.familyMembers.id, memberId),
-    });
+    // Разрешаем короткий ID (первые 8 символов) так же, как в findMemberById
+    const member = await this.findMemberById(memberId);
 
     await this.db
       .delete(schema.familyMembers)
-      .where(eq(schema.familyMembers.id, memberId));
+      .where(eq(schema.familyMembers.id, member.id));
 
     // Инвалидируем кеш
     if (member) {
@@ -133,7 +131,7 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
     }
     this.invalidateAllMembersCache();
 
-    this.logger.log(`Удален член группы: ${memberId}`);
+    this.logger.log(`Удален член группы: ${member.id}`);
   }
 
   /**
