@@ -15,6 +15,7 @@ import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
+import { BotUi } from './ui/bot.ui';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -142,28 +143,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Проверяем, является ли членом группы "Семья"
-      const isFamilyMember = await this.familyService.isMember(userId);
-      if (isFamilyMember) {
-        await next();
-        return;
-      }
-
-      // Доступ запрещен
-      this.logger.warn(
-        `Попытка несанкционированного доступа от ID: ${userId} (${username})`,
-      );
-
-      if (ctx.callbackQuery) {
-        try {
-          await ctx.answerCallbackQuery({
-            text: 'У вас нет доступа к этому боту',
-            show_alert: true,
-          });
-        } catch {
-          // Игнорируем
-        }
-      }
+      // Все остальные пользователи тоже получают доступ (оплата через меню при создании конфига)
+      await next();
     });
 
     // Обработка текстовых сообщений для ввода данных члена группы
@@ -239,13 +220,36 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.mainHandler.showMainMenu(ctx);
     });
 
-    // Показать меню создания конфига
+    // Показать меню создания конфига (для user — тарифы с оплатой, для admin/family — выбор срока без оплаты)
     this.bot.callbackQuery('show_create_options', async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.peerCreateHandler.showCreateOptions(ctx);
+      if (!ctx.from) return;
+      const userType = await this.mainHandler.getUserType(String(ctx.from.id));
+      if (userType === 'user') {
+        await this.peerCreateHandler.showPaymentPlans(ctx);
+      } else {
+        await this.peerCreateHandler.showCreateOptions(ctx);
+      }
     });
 
-    // Создание конфига с выбором длительности
+    // Выбор тарифа (30/60/90) — показать подтверждение оплаты
+    this.bot.callbackQuery(/^pay_plan:(30|60|90)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const days = Number(ctx.match[1]) as 30 | 60 | 90;
+      await this.peerCreateHandler.showPaymentConfirm(ctx, days);
+    });
+
+    // Моковая оплата: после "Оплатить" создаём конфиг
+    this.bot.callbackQuery(/^pay_confirm:(30|60|90)$/, async (ctx) => {
+      await ctx.answerCallbackQuery({ text: 'Оплата прошла успешно!' });
+      const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
+      await ctx.editMessageText(BotUi.paymentSuccessTitle, {
+        parse_mode: 'Markdown',
+      });
+      await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
+    });
+
+    // Создание конфига с выбором длительности (admin/family, без оплаты)
     this.bot.callbackQuery(/^create_config:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       const duration = ctx.match[1];

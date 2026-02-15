@@ -4,7 +4,7 @@ import { Context } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { BotUi } from '../ui/bot.ui';
 
-type UserType = 'admin' | 'family' | 'user';
+export type UserType = 'admin' | 'family' | 'user';
 
 @Injectable()
 export class MainHandler {
@@ -28,7 +28,7 @@ export class MainHandler {
     return this.adminIds.includes(userId);
   }
 
-  private async getUserType(userId: string): Promise<UserType> {
+  async getUserType(userId: string): Promise<UserType> {
     if (this.isAdmin(userId)) return 'admin';
     const isFamilyMember = await this.familyService.isMember(userId);
     if (isFamilyMember) return 'family';

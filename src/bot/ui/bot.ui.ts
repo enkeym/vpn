@@ -70,7 +70,7 @@ export const BotUi = {
   // Главное меню для обычных пользователей
   mainMenuKeyboard: () =>
     new InlineKeyboard()
-      .text('📄 Создать конфиг', 'show_create_options')
+      .text('📄 Получить ВПН', 'show_create_options')
       .row()
       .text('📂 Мои конфиги', 'list_configs')
       .row()
@@ -79,7 +79,7 @@ export const BotUi = {
   // Главное меню для членов семьи
   familyMemberMenuKeyboard: () =>
     new InlineKeyboard()
-      .text('📄 Создать конфиг', 'show_create_options')
+      .text('📄 Получить ВПН', 'show_create_options')
       .row()
       .text('📂 Мои конфиги', 'list_configs')
       .row()
@@ -88,7 +88,7 @@ export const BotUi = {
   // Главное меню для админов (с кнопкой управления группой и поиском)
   adminMenuKeyboard: () =>
     new InlineKeyboard()
-      .text('📄 Создать конфиг', 'show_create_options')
+      .text('📄 Получить ВПН', 'show_create_options')
       .row()
       .text('📂 Мои конфиги', 'list_configs')
       .row()
@@ -135,11 +135,38 @@ export const BotUi = {
 
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
+  // Меню оплаты для обычных пользователей (30, 60, 90 дней)
+  paymentPlansTitle:
+    '💳 *Выберите тариф*\n\nОплата подписки на VPN. После оплаты вы получите конфиг файл.',
+
+  paymentPlansKeyboard: () =>
+    new InlineKeyboard()
+      .text('30 дней — 99 ₽', 'pay_plan:30')
+      .row()
+      .text('60 дней — 179 ₽', 'pay_plan:60')
+      .row()
+      .text('90 дней — 249 ₽', 'pay_plan:90')
+      .row()
+      .text('« Назад', 'main_menu'),
+
+  paymentPlanPrices: { 30: 99, 60: 179, 90: 249 } as Record<number, number>,
+
+  paymentConfirmTitle: (days: number, price: number) =>
+    `💳 *Оплата подписки ${days} дней*\n\nСумма: *${price} ₽*\n\nНажмите «Оплатить» для завершения (тестовый режим).`,
+
+  paymentConfirmKeyboard: (days: number) =>
+    new InlineKeyboard()
+      .text('✅ Оплатить', `pay_confirm:${days}`)
+      .row()
+      .text('« Назад к тарифам', 'show_create_options'),
+
+  paymentSuccessTitle: '✅ *Оплата прошла успешно!*',
+
   backToMenuKeyboard: () => new InlineKeyboard().text('В меню', 'main_menu'),
 
   emptyConfigsKeyboard: () =>
     new InlineKeyboard()
-      .text('Создать', 'show_create_options')
+      .text('Получить ВПН', 'show_create_options')
       .row()
       .text('Назад', 'main_menu'),
 
@@ -356,7 +383,7 @@ export const BotUi = {
     const mId = member.id.slice(0, 8);
 
     // Кнопка создания конфига
-    keyboard.text('➕ Создать конфиг', `f_cc:${mId}`).row();
+    keyboard.text('➕ Получить ВПН', `f_cc:${mId}`).row();
 
     // Кнопка редактирования имени
     keyboard.text('✏️ Изменить имя', `f_en:${mId}`).row();
@@ -637,7 +664,7 @@ export const BotUi = {
     const keyboard = new InlineKeyboard();
 
     // Кнопка создания конфига
-    keyboard.text('➕ Создать конфиг', `admin_cc:${telegramId}`).row();
+    keyboard.text('➕ Получить ВПН', `admin_cc:${telegramId}`).row();
 
     if (peers.length > 0) {
       keyboard.text('📂 Конфиги', `admin_client_configs:${telegramId}`).row();

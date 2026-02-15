@@ -21,6 +21,26 @@ export class PeerCreateHandler {
     });
   }
 
+  /** Меню тарифов для обычных пользователей (оплата 30/60/90 дней) */
+  async showPaymentPlans(ctx: Context) {
+    await ctx.editMessageText(BotUi.paymentPlansTitle, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.paymentPlansKeyboard(),
+    });
+  }
+
+  /** Подтверждение оплаты (мок) перед созданием конфига */
+  async showPaymentConfirm(ctx: Context, durationDays: 30 | 60 | 90) {
+    const price = BotUi.paymentPlanPrices[durationDays];
+    await ctx.editMessageText(
+      BotUi.paymentConfirmTitle(durationDays, price),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.paymentConfirmKeyboard(durationDays),
+      },
+    );
+  }
+
   async handleCreateConfig(ctx: Context, durationDays?: SubscriptionDuration) {
     if (!ctx.from) return;
 
