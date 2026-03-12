@@ -53,4 +53,28 @@ export class PeersSchedulerService {
       );
     }
   }
+
+  /** Раз в день уведомляем пользователей о том, что конфиги скоро истекут (за 1 день) */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async handleExpiringSoonNotifications() {
+    this.logger.log(
+      'Запуск отправки уведомлений о скором истечении срока действия конфигов...',
+    );
+
+    try {
+      const notifiedCount = await this.peersService.notifyExpiringPeers(1);
+
+      if (notifiedCount > 0) {
+        this.logger.log(
+          `Отправлено уведомлений о скором истечении срока действия: ${notifiedCount}`,
+        );
+      } else {
+        this.logger.log('Конфигов, истекающих через 1 день, не найдено');
+      }
+    } catch (error) {
+      this.logger.error(
+        `Ошибка при отправке уведомлений о скором истечении: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
 }

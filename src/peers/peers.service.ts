@@ -603,6 +603,95 @@ export class PeersService {
   }
 
   /**
+   * Отправляет уведомления пользователям о том, что срок действия их конфига
+   * истекает через указанное количество дней (по умолчанию — через 1 день).
+   * Вызывается по расписанию.
+   */
+  async notifyExpiringPeers(daysBefore: number = 1): Promise<number> {
+    if (daysBefore <= 0) {
+      return 0;
+    }
+
+    const now = new Date();
+
+    // Дата "через N дней" (начало дня по локальному времени)
+    const targetDate = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + daysBefore,
+      0,
+      0,
+      0,
+      0,
+    );
+
+    // Конец целевого дня
+    const targetDateEnd = new Date(
+      targetDate.getFullYear(),
+      targetDate.getMonth(),
+      targetDate.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+
+    const peers = await this.db.query.peers.findMany({
+      where: and(
+        eq(schema.peers.paused, false),
+        isNotNull(schema.peers.expiresAt),
+        lte(schema.peers.expiresAt, targetDateEnd),
+        sql`${schema.peers.expiresAt} >= ${targetDate.getTime()}`,
+      ),
+    });
+
+    if (peers.length === 0) {
+      return 0;
+    }
+
+    let notifiedCount = 0;
+
+    for (const peer of peers) {
+      try {
+        const expiresAt = peer.expiresAt
+          ? new Date(peer.expiresAt).toLocaleDateString('ru-RU')
+          : 'скоро';
+
+        const title = 'Срок действия VPN-конфига скоро истечёт';
+        const details = [
+          `Ваш конфиг \`${peer.name}\` истекает через *${daysBefore} день*.`,
+          ``,
+          `📅 Дата окончания: *${expiresAt}*`,
+          ``,
+          `После истечения срока конфиг будет автоматически отключён.`,
+          ``,
+          `для того что бы продлить конфиг перейдите: @tunelvpnbot`,
+        ].join('\n');
+
+        const ok = await this.notificationService.notifyUser(
+          peer.telegramId,
+          title,
+          details,
+        );
+
+        if (ok) {
+          notifiedCount++;
+        }
+      } catch (error) {
+        this.logger.error(
+          `Не удалось отправить уведомление о скором истечении конфига ${peer.name} пользователю ${peer.telegramId}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Отправлено уведомлений о скором истечении срока действия конфигов (за ${daysBefore} дн.): ${notifiedCount} из ${peers.length}`,
+    );
+
+    return notifiedCount;
+  }
+
+  /**
    * Удаляет конфиги, которые находятся на паузе более месяца.
    * Вызывается ежемесячно по расписанию.
    */

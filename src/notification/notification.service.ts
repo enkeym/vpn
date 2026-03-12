@@ -182,6 +182,45 @@ export class NotificationService implements OnModuleInit {
   }
 
   /**
+   * Отправить уведомление конкретному пользователю (по Telegram ID)
+   */
+  async notifyUser(
+    telegramId: string,
+    title: string,
+    details: string,
+  ): Promise<boolean> {
+    if (!this.api) {
+      this.logger.warn(
+        `Невозможно отправить уведомление пользователю ${telegramId}: Telegram API не инициализировано`,
+      );
+      return false;
+    }
+
+    try {
+      const message = [
+        `📅 *${title}*`,
+        ``,
+        details,
+        ``,
+        `⏰ ${new Date().toLocaleString('ru-RU')}`,
+      ].join('\n');
+
+      await this.api.sendMessage(telegramId, message, {
+        parse_mode: 'Markdown',
+      });
+
+      return true;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Ошибка отправки уведомления пользователю ${telegramId}: ${errorMessage}`,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Получить статистику (для мониторинга)
    */
   getStats() {
