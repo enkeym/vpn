@@ -93,7 +93,7 @@ export const BotUi = {
       .text('📖 Инструкция', 'show_instructions');
   },
 
-  // Главное меню для админов (с кнопкой управления группой и поиском)
+  // Главное меню для админов (2 кнопки в ряд — чтобы всё было видно на мобильных)
   adminMenuKeyboard: (showTrial = false) => {
     const kb = new InlineKeyboard();
     if (showTrial) {
@@ -103,12 +103,10 @@ export const BotUi = {
     return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
-      .text('👨‍👩‍👧‍👦 Группа «Семья»', 'family_menu')
-      .row()
+      .text('👨‍👩‍👧‍👦 Семья', 'family_menu')
       .text('🔍 Поиск клиента', 'admin_search')
       .row()
       .text('📊 Статистика', 'admin_stats')
-      .row()
       .text('📈 Аналитика', 'admin_analytics')
       .row()
       .text('📖 Инструкция', 'show_instructions');
