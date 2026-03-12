@@ -212,28 +212,58 @@ export class PeersService {
 
   /**
    * Проверить, использовал ли пользователь пробный период (один раз на пользователя).
+   * С кешированием — снижает задержки при навигации по меню.
    */
   async hasUsedTrial(telegramId: string): Promise<boolean> {
+    const key = String(telegramId);
+    const cached = this.cacheService.get<boolean>(
+      CACHE_NAMESPACES.HAS_USED_TRIAL,
+      key,
+    );
+    if (cached !== null) return cached;
+
     const existing = await this.db.query.peers.findFirst({
       where: and(
-        eq(schema.peers.telegramId, String(telegramId)),
+        eq(schema.peers.telegramId, key),
         eq(schema.peers.isTrial, true),
       ),
       columns: { id: true },
     });
-    return !!existing;
+    const result = !!existing;
+    this.cacheService.set(
+      CACHE_NAMESPACES.HAS_USED_TRIAL,
+      key,
+      result,
+      CACHE_TTL.LONG,
+    );
+    return result;
   }
 
   /**
    * Проверить, использовал ли пользователь разовую скидку на 60 или 90 дней.
    * После использования одного тарифа со скидкой — второй тариф по полной цене.
+   * С кешированием — снижает задержки при показе тарифов.
    */
   async hasUsedFirstPurchaseDiscount(telegramId: string): Promise<boolean> {
+    const key = String(telegramId);
+    const cached = this.cacheService.get<boolean>(
+      CACHE_NAMESPACES.HAS_USED_DISCOUNT,
+      key,
+    );
+    if (cached !== null) return cached;
+
     const existing = await this.db.query.userPromoUsage.findFirst({
-      where: eq(schema.userPromoUsage.telegramId, String(telegramId)),
+      where: eq(schema.userPromoUsage.telegramId, key),
       columns: { id: true },
     });
-    return !!existing;
+    const result = !!existing;
+    this.cacheService.set(
+      CACHE_NAMESPACES.HAS_USED_DISCOUNT,
+      key,
+      result,
+      CACHE_TTL.LONG,
+    );
+    return result;
   }
 
   /**
@@ -244,6 +274,7 @@ export class PeersService {
       telegramId: String(telegramId),
       usedDiscountTier: tier,
     });
+    this.cacheService.delete(CACHE_NAMESPACES.HAS_USED_DISCOUNT, String(telegramId));
   }
 
   async createPeer(dto: ICreatePeer) {
@@ -335,6 +366,12 @@ export class PeersService {
 
         // Инвалидируем кеши
         this.invalidateUserPeersCache(dto.telegramId);
+        if (isTrial) {
+          this.cacheService.delete(
+            CACHE_NAMESPACES.HAS_USED_TRIAL,
+            String(dto.telegramId),
+          );
+        }
 
         return { peer: newPeer, config };
       } catch (error) {

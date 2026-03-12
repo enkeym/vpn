@@ -63,8 +63,10 @@ export class MainHandler {
     if (!ctx.from) return;
 
     const userId = String(ctx.from.id);
-    const userType = await this.getUserType(userId);
-    const hasUsedTrial = await this.peersService.hasUsedTrial(userId);
+    const [userType, hasUsedTrial] = await Promise.all([
+      this.getUserType(userId),
+      this.peersService.hasUsedTrial(userId),
+    ]);
     const showTrial = !hasUsedTrial;
     const keyboard = this.getMenuKeyboard(userType, showTrial);
     const welcomeMessage = this.getWelcomeMessage(userType);
@@ -76,15 +78,21 @@ export class MainHandler {
       });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
-      if (msg.includes('not modified') || msg.includes('message to edit not found')) return;
+      if (msg.includes('not modified')) return;
+      const cbMsg = ctx.callbackQuery?.message;
+      if (cbMsg && ctx.chat && 'message_id' in cbMsg) {
+        await ctx.api
+          .editMessageReplyMarkup(ctx.chat.id, cbMsg.message_id, {
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => {});
+      }
       await ctx.reply(welcomeMessage, {
         reply_markup: keyboard,
         parse_mode: 'MarkdownV2',
       });
     }
   }
-
-  // === Инструкции ===
 
   async showInstructions(ctx: Context) {
     try {
@@ -94,7 +102,11 @@ export class MainHandler {
       });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
-      if (msg.includes('not modified') || msg.includes('message to edit not found')) return;
+      if (
+        msg.includes('not modified') ||
+        msg.includes('message to edit not found')
+      )
+        return;
       await ctx.reply(BotUi.instructionsMenuTitle, {
         reply_markup: BotUi.instructionsMenuKeyboard(),
         parse_mode: 'Markdown',

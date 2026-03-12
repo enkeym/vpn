@@ -221,6 +221,8 @@ export const CACHE_NAMESPACES = {
   USED_IPS: 'used_ips',
   FAMILY_MEMBERS: 'family_members',
   WG_CONFIG: 'wg_config',
+  HAS_USED_TRIAL: 'has_used_trial',
+  HAS_USED_DISCOUNT: 'has_used_discount',
 } as const;
 
 /**

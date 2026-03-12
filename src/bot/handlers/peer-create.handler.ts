@@ -22,11 +22,14 @@ export class PeerCreateHandler {
   }
 
   /** Меню тарифов для обычных пользователей (оплата 30/60/90 дней) */
-  async showPaymentPlans(ctx: Context) {
+  async showPaymentPlans(ctx: Context, hasUsedDiscount?: boolean) {
     if (!ctx.from) return;
-    const hasDiscount = !(await this.peersService.hasUsedFirstPurchaseDiscount(
-      String(ctx.from.id),
-    ));
+    const hasDiscount =
+      hasUsedDiscount !== undefined
+        ? !hasUsedDiscount
+        : !(await this.peersService.hasUsedFirstPurchaseDiscount(
+            String(ctx.from.id),
+          ));
     await ctx.editMessageText(BotUi.paymentPlansTitle(hasDiscount), {
       parse_mode: 'Markdown',
       reply_markup: BotUi.paymentPlansKeyboard(hasDiscount),
@@ -86,7 +89,6 @@ export class PeerCreateHandler {
         );
       }
 
-      // Удаляем сообщение «Создаю конфигурацию» — конфиг будет главным, без меню сверху
       try {
         const msg = ctx.callbackQuery?.message;
         if (msg && 'message_id' in msg && ctx.chat) {

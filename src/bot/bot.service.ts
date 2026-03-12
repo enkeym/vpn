@@ -225,9 +225,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot.callbackQuery('show_create_options', async (ctx) => {
       await ctx.answerCallbackQuery();
       if (!ctx.from) return;
-      const userType = await this.mainHandler.getUserType(String(ctx.from.id));
+      const userId = String(ctx.from.id);
+      const [userType, hasUsedDiscount] = await Promise.all([
+        this.mainHandler.getUserType(userId),
+        this.peersService.hasUsedFirstPurchaseDiscount(userId),
+      ]);
       if (userType === 'user') {
-        await this.peerCreateHandler.showPaymentPlans(ctx);
+        await this.peerCreateHandler.showPaymentPlans(ctx, hasUsedDiscount);
       } else {
         await this.peerCreateHandler.showCreateOptions(ctx);
       }
@@ -269,9 +273,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
     });
 
-    // Список конфигов
+    // Список конфигов (подсказка «Загрузка…» — мгновенный отклик при задержке)
     this.bot.callbackQuery('list_configs', async (ctx) => {
-      await ctx.answerCallbackQuery();
+      await ctx.answerCallbackQuery({ text: 'Загрузка…' });
       await this.peerManageHandler.showConfigsList(ctx);
     });
 
