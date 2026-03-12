@@ -484,6 +484,153 @@ export class PeersService {
     };
   }
 
+  /**
+   * Расширенная аналитика по конфигам для админ-панели.
+   */
+  async getAnalytics(): Promise<{
+    stats: {
+      totalConfigs: number;
+      uniqueUsers: number;
+      activeConfigs: number;
+      pausedConfigs: number;
+      expiredConfigs: number;
+      expiringSoonConfigs: number;
+      unlimitedConfigs: number;
+      trialConfigs: number;
+      configsWithDescription: number;
+      configsCreatedToday: number;
+      configsCreatedThisWeek: number;
+    };
+    byDuration: { days: number | null; count: number }[];
+    recentConfigs: Array<{
+      name: string;
+      telegramId: string;
+      username: string | null;
+      ip: string;
+      createdAt: Date | null;
+      expiresAt: Date | null;
+      paused: boolean;
+      isTrial: boolean;
+    }>;
+    expiringSoon: Array<{
+      name: string;
+      telegramId: string;
+      ip: string;
+      expiresAt: Date | null;
+    }>;
+  }> {
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [peersRow] = await this.db
+      .select({
+        totalConfigs: sql<number>`count(*)`,
+        uniqueUsers: sql<number>`count(distinct ${schema.peers.telegramId})`,
+        activeConfigs: sql<number>`sum(case when ${schema.peers.paused} = 0 then 1 else 0 end)`,
+        pausedConfigs: sql<number>`sum(case when ${schema.peers.paused} = 1 then 1 else 0 end)`,
+        expiredConfigs: sql<number>`sum(case when ${schema.peers.expiresAt} is not null and ${schema.peers.expiresAt} <= ${now.getTime()} then 1 else 0 end)`,
+        expiringSoonConfigs: sql<number>`sum(case when ${schema.peers.paused} = 0 and ${schema.peers.expiresAt} is not null and ${schema.peers.expiresAt} > ${now.getTime()} and ${schema.peers.expiresAt} <= ${in7Days.getTime()} then 1 else 0 end)`,
+        unlimitedConfigs: sql<number>`sum(case when ${schema.peers.expiresAt} is null then 1 else 0 end)`,
+        trialConfigs: sql<number>`sum(case when ${schema.peers.isTrial} = 1 then 1 else 0 end)`,
+        configsWithDescription: sql<number>`sum(case when ${schema.peers.description} is not null and ${schema.peers.description} != '' then 1 else 0 end)`,
+        configsCreatedToday: sql<number>`sum(case when ${schema.peers.createdAt} >= ${dayStart.getTime()} then 1 else 0 end)`,
+        configsCreatedThisWeek: sql<number>`sum(case when ${schema.peers.createdAt} >= ${weekStart.getTime()} then 1 else 0 end)`,
+      })
+      .from(schema.peers);
+
+    const toNum = (v: unknown) => (v != null ? Number(v) : 0);
+    const stats = {
+      totalConfigs: toNum(peersRow?.totalConfigs),
+      uniqueUsers: toNum(peersRow?.uniqueUsers),
+      activeConfigs: toNum(peersRow?.activeConfigs),
+      pausedConfigs: toNum(peersRow?.pausedConfigs),
+      expiredConfigs: toNum(peersRow?.expiredConfigs),
+      expiringSoonConfigs: toNum(peersRow?.expiringSoonConfigs),
+      unlimitedConfigs: toNum(peersRow?.unlimitedConfigs),
+      trialConfigs: toNum(peersRow?.trialConfigs),
+      configsWithDescription: toNum(peersRow?.configsWithDescription),
+      configsCreatedToday: toNum(peersRow?.configsCreatedToday),
+      configsCreatedThisWeek: toNum(peersRow?.configsCreatedThisWeek),
+    };
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const byDurationRows = await this.db
+      .select({
+        days: sql<number | null>`case
+          when ${schema.peers.expiresAt} is null then null
+          else round((${schema.peers.expiresAt} - ${schema.peers.createdAt}) / ${DAY_MS})
+        end`,
+        count: sql<number>`count(*)`,
+      })
+      .from(schema.peers).groupBy(sql`case
+        when ${schema.peers.expiresAt} is null then null
+        else round((${schema.peers.expiresAt} - ${schema.peers.createdAt}) / ${DAY_MS})
+      end`);
+
+    const byDuration = byDurationRows.map((r) => ({
+      days: r.days != null ? Number(r.days) : null,
+      count: Number(r.count),
+    }));
+
+    const recentPeers = await this.db
+      .select({
+        name: schema.peers.name,
+        telegramId: schema.peers.telegramId,
+        username: schema.peers.username,
+        ip: schema.peers.ip,
+        createdAt: schema.peers.createdAt,
+        expiresAt: schema.peers.expiresAt,
+        paused: schema.peers.paused,
+        isTrial: schema.peers.isTrial,
+      })
+      .from(schema.peers)
+      .where(sql`${schema.peers.createdAt} >= ${weekStart.getTime()}`)
+      .orderBy(desc(schema.peers.createdAt))
+      .limit(15);
+
+    const expiringSoonPeers = await this.db
+      .select({
+        name: schema.peers.name,
+        telegramId: schema.peers.telegramId,
+        ip: schema.peers.ip,
+        expiresAt: schema.peers.expiresAt,
+      })
+      .from(schema.peers)
+      .where(
+        and(
+          eq(schema.peers.paused, false),
+          isNotNull(schema.peers.expiresAt),
+          sql`${schema.peers.expiresAt} > ${now.getTime()}`,
+          sql`${schema.peers.expiresAt} <= ${in7Days.getTime()}`,
+        ),
+      )
+      .orderBy(schema.peers.expiresAt)
+      .limit(15);
+
+    return {
+      stats,
+      byDuration,
+      recentConfigs: recentPeers.map((p) => ({
+        name: p.name,
+        telegramId: p.telegramId,
+        username: p.username ?? null,
+        ip: p.ip,
+        createdAt: p.createdAt ?? null,
+        expiresAt: p.expiresAt ?? null,
+        paused: p.paused,
+        isTrial: p.isTrial,
+      })),
+      expiringSoon: expiringSoonPeers.map((p) => ({
+        name: p.name,
+        telegramId: p.telegramId,
+        ip: p.ip,
+        expiresAt: p.expiresAt,
+      })),
+    };
+  }
+
   async getPeersByTelegramId(telegramId: string): Promise<TPeerSelect[]> {
     // Проверяем кеш
     const cached = this.cacheService.get<TPeerSelect[]>(

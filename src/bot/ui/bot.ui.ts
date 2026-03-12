@@ -109,6 +109,8 @@ export const BotUi = {
       .row()
       .text('📊 Статистика', 'admin_stats')
       .row()
+      .text('📈 Аналитика', 'admin_analytics')
+      .row()
       .text('📖 Инструкция', 'show_instructions');
   },
 
@@ -133,6 +135,123 @@ export const BotUi = {
     `🚫 Заблокировано: *${stats.blockedUsersCount}*`,
 
   adminStatsKeyboard: () => new InlineKeyboard().text('« В меню', 'main_menu'),
+
+  // === Аналитика конфигов (для админа) ===
+
+  analyticsMenuTitle: '📈 *Аналитика конфигов*\n\nВыберите раздел:',
+
+  analyticsMenuKeyboard: () =>
+    new InlineKeyboard()
+      .text('📋 Сводка', 'admin_analytics_overview')
+      .row()
+      .text('📅 По срокам', 'admin_analytics_duration')
+      .row()
+      .text('🆓 Пробные', 'admin_analytics_trial')
+      .row()
+      .text('🆕 Последние созданные', 'admin_analytics_recent')
+      .row()
+      .text('⏰ Истекают скоро', 'admin_analytics_expiring')
+      .row()
+      .text('« В меню', 'main_menu'),
+
+  analyticsOverviewText: (data: {
+    totalConfigs: number;
+    uniqueUsers: number;
+    activeConfigs: number;
+    pausedConfigs: number;
+    expiredConfigs: number;
+    expiringSoonConfigs: number;
+    unlimitedConfigs: number;
+    trialConfigs: number;
+    configsWithDescription: number;
+    configsCreatedToday: number;
+    configsCreatedThisWeek: number;
+  }) =>
+    '📋 *Сводка по конфигам*\n\n' +
+    '📄 *Общее*\n' +
+    `  Всего: *${data.totalConfigs}* | Пользователей: *${data.uniqueUsers}*\n\n` +
+    '📊 *По статусу*\n' +
+    `  🟢 Активных: *${data.activeConfigs}*\n` +
+    `  🔴 На паузе: *${data.pausedConfigs}*\n` +
+    `  🟡 Истекших: *${data.expiredConfigs}*\n` +
+    `  ⏰ Истекают в течение 7 дн.: *${data.expiringSoonConfigs}*\n\n` +
+    '📅 *По типу*\n' +
+    `  ♾️ Бессрочных: *${data.unlimitedConfigs}*\n` +
+    `  🆓 Пробных: *${data.trialConfigs}*\n` +
+    `  📝 С описанием: *${data.configsWithDescription}*\n\n` +
+    '🆕 *Создано*\n' +
+    `  Сегодня: *${data.configsCreatedToday}*\n` +
+    `  За 7 дней: *${data.configsCreatedThisWeek}*`,
+
+  analyticsByDurationText: (
+    items: { days: number | null; count: number }[],
+  ) => {
+    const lines = ['📅 *Конфиги по сроку действия*\n\n'];
+    for (const { days, count } of items) {
+      const label = days === null ? '♾️ Бессрочные' : `${days} дн.`;
+      lines.push(`  ${label}: *${count}*`);
+    }
+    return lines.join('\n');
+  },
+
+  analyticsTrialText: (count: number) =>
+    `🆓 *Пробные конфиги*\n\nВсего: *${count}*`,
+
+  analyticsRecentText: (
+    configs: Array<{
+      name: string;
+      telegramId: string;
+      username: string | null;
+      ip: string;
+      createdAt: Date | null;
+      expiresAt: Date | null;
+      paused: boolean;
+      isTrial: boolean;
+    }>,
+  ) => {
+    if (configs.length === 0) {
+      return '🆕 *Последние созданные конфиги*\n\n_За 7 дней конфигов не создано_';
+    }
+    const lines = ['🆕 *Последние созданные (7 дней)*\n'];
+    for (const c of configs) {
+      const status = c.paused ? '🔴' : '🟢';
+      const trial = c.isTrial ? ' 🆓' : '';
+      const exp = c.expiresAt
+        ? c.expiresAt.toLocaleDateString('ru-RU')
+        : '♾️';
+      const created = c.createdAt
+        ? c.createdAt.toLocaleDateString('ru-RU')
+        : '—';
+      lines.push(
+        `${status} \`${c.name}\` ${c.ip} | ${created} → ${exp}${trial}`,
+      );
+    }
+    return lines.join('\n');
+  },
+
+  analyticsExpiringText: (
+    configs: Array<{
+      name: string;
+      telegramId: string;
+      ip: string;
+      expiresAt: Date | null;
+    }>,
+  ) => {
+    if (configs.length === 0) {
+      return '⏰ *Истекают в течение 7 дней*\n\n_Нет конфигов, истекающих скоро_';
+    }
+    const lines = ['⏰ *Истекают в течение 7 дней*\n'];
+    for (const c of configs) {
+      const exp = c.expiresAt
+        ? c.expiresAt.toLocaleDateString('ru-RU')
+        : '—';
+      lines.push(`  \`${c.name}\` ${c.ip} | до ${exp} | ID: ${c.telegramId}`);
+    }
+    return lines.join('\n');
+  },
+
+  backToAnalyticsKeyboard: () =>
+    new InlineKeyboard().text('« К аналитике', 'admin_analytics'),
 
   createConfigKeyboard: () =>
     new InlineKeyboard()

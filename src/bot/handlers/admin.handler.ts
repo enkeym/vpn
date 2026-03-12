@@ -160,6 +160,110 @@ export class AdminHandler {
     }
   }
 
+  // === Аналитика конфигов ===
+
+  async showAnalytics(ctx: Context) {
+    try {
+      await ctx.editMessageText(BotUi.analyticsMenuTitle, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.analyticsMenuKeyboard(),
+      });
+    } catch {
+      await ctx.reply(BotUi.analyticsMenuTitle, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.analyticsMenuKeyboard(),
+      });
+    }
+  }
+
+  async showAnalyticsOverview(ctx: Context) {
+    try {
+      const analytics = await this.peersService.getAnalytics();
+      const text = BotUi.analyticsOverviewText(analytics.stats);
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAnalyticsKeyboard(),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка показа сводки аналитики: ${error}`);
+      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+    }
+  }
+
+  async showAnalyticsDuration(ctx: Context) {
+    try {
+      const analytics = await this.peersService.getAnalytics();
+      const text = BotUi.analyticsByDurationText(analytics.byDuration);
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAnalyticsKeyboard(),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка показа аналитики по срокам: ${error}`);
+      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+    }
+  }
+
+  async showAnalyticsTrial(ctx: Context) {
+    try {
+      const analytics = await this.peersService.getAnalytics();
+      const text = BotUi.analyticsTrialText(analytics.stats.trialConfigs);
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAnalyticsKeyboard(),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка показа пробных конфигов: ${error}`);
+      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+    }
+  }
+
+  async showAnalyticsRecent(ctx: Context) {
+    try {
+      const analytics = await this.peersService.getAnalytics();
+      const text = BotUi.analyticsRecentText(analytics.recentConfigs);
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAnalyticsKeyboard(),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка показа последних конфигов: ${error}`);
+      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+    }
+  }
+
+  async showAnalyticsExpiring(ctx: Context) {
+    try {
+      const analytics = await this.peersService.getAnalytics();
+      const text = BotUi.analyticsExpiringText(analytics.expiringSoon);
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAnalyticsKeyboard(),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка показа истекающих конфигов: ${error}`);
+      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+    }
+  }
+
+  // === Управление клиентом (дублируется для совместимости) ===
+
+  async _showStats(ctx: Context) {
+    const stats = await this.peersService.getStats();
+    const text = BotUi.adminStatsText(stats);
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.adminStatsKeyboard(),
+      });
+    } catch {
+      await ctx.reply(text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.adminStatsKeyboard(),
+      });
+    }
+  }
+
   // === Управление клиентом ===
 
   async showClientDetails(ctx: Context, telegramId: string) {

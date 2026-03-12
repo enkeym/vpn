@@ -649,6 +649,84 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.adminHandler.showStats(ctx);
     });
 
+    // Аналитика конфигов (меню)
+    this.bot.callbackQuery('admin_analytics', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAnalytics(ctx);
+    });
+
+    // Аналитика: сводка
+    this.bot.callbackQuery('admin_analytics_overview', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAnalyticsOverview(ctx);
+    });
+
+    // Аналитика: по срокам
+    this.bot.callbackQuery('admin_analytics_duration', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAnalyticsDuration(ctx);
+    });
+
+    // Аналитика: пробные конфиги
+    this.bot.callbackQuery('admin_analytics_trial', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAnalyticsTrial(ctx);
+    });
+
+    // Аналитика: последние созданные
+    this.bot.callbackQuery('admin_analytics_recent', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAnalyticsRecent(ctx);
+    });
+
+    // Аналитика: истекают скоро
+    this.bot.callbackQuery('admin_analytics_expiring', async (ctx) => {
+      if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAnalyticsExpiring(ctx);
+    });
+
     // Просмотр клиента
     this.bot.callbackQuery(/^admin_client:(.+)$/, async (ctx) => {
       if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
