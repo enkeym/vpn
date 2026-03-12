@@ -60,3 +60,6 @@ configs/*
 # Database
 /data
 src/database/vpn.db
+
+# Drizzle migrations must be tracked (override global *.sql)
+!drizzle/*.sql

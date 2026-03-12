@@ -34,7 +34,10 @@ COPY tsconfig*.json nest-cli.json drizzle.config.ts ./
 COPY src ./src
 COPY drizzle ./drizzle
 
-# Сборка (миграции должны быть уже сгенерированы локально)
+# Генерируем миграции только если их нет (drizzle-kit не трогает БД и данные)
+RUN test -n "$(find drizzle -maxdepth 1 -name '*.sql' 2>/dev/null)" || pnpm run generate
+
+# Сборка
 RUN pnpm run build
 
 # Удаляем dev-зависимости для production

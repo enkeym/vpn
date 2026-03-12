@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3d9a875b-44c7-42f0-a9f0-bab68f9924c1",
+  "id": "b534f02b-9cd4-4e8c-ad5b-d3d6998114a5",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "blocked_users": {
