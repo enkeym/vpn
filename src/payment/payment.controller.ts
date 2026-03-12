@@ -5,15 +5,30 @@ import {
   Logger,
   HttpCode,
   HttpStatus,
+  Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { PeersService } from '../peers/peers.service';
 import { BotService } from '../bot/bot.service';
 import { SubscriptionDuration } from '../peers/dto/create-peer.dto';
+import { YooKassaWebhookDto } from './dto/webhook.dto';
+import type { Request } from 'express';
+import ipRangeCheck from 'ip-range-check';
 
 @Controller('payment')
 export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
+
+  private readonly allowedIps = [
+    '185.71.76.0/27',
+    '185.71.77.0/27',
+    '77.75.153.0/25',
+    '77.75.156.11',
+    '77.75.156.35',
+    '77.75.154.128/25',
+    '2a02:5180::/32',
+  ];
 
   constructor(
     private readonly paymentService: PaymentService,
@@ -21,14 +36,48 @@ export class PaymentController {
     private readonly botService: BotService,
   ) {}
 
+  private isIpAllowed(ip: string): boolean {
+    // В dev-режиме можно пропускать localhost
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      (ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1')
+    ) {
+      return true;
+    }
+
+    try {
+      return ipRangeCheck(ip, this.allowedIps);
+    } catch (error) {
+      this.logger.error(
+        `Ошибка при проверке IP ${ip}: ${error instanceof Error ? error.message : error}`,
+      );
+      return false;
+    }
+  }
+
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() body: any) {
+  async handleWebhook(@Body() body: YooKassaWebhookDto, @Req() req: Request) {
+    const ip = req.ip || '';
+
+    if (!this.isIpAllowed(ip)) {
+      this.logger.warn(`Rejected webhook from unauthorized IP`);
+      throw new ForbiddenException('Unauthorized IP');
+    }
+
     this.logger.log(`Received webhook from YuKassa: ${body.event}`);
 
     if (body.event === 'payment.succeeded') {
-      const paymentData = body.object;
-      const yookassaId = paymentData.id;
+      const yookassaId = body.object.id;
+
+      const yookassaStatus =
+        await this.paymentService.getPaymentStatusFromYooKassa(yookassaId);
+      if (yookassaStatus !== 'succeeded') {
+        this.logger.warn(
+          `Webhook payment.succeeded ignored: status in YooKassa is "${yookassaStatus ?? 'unknown'}", not succeeded`,
+        );
+        return { status: 'ok' };
+      }
 
       const payment =
         await this.paymentService.getPaymentByYookassaId(yookassaId);
@@ -75,8 +124,7 @@ export class PaymentController {
         }
       }
     } else if (body.event === 'payment.canceled') {
-      const paymentData = body.object;
-      await this.paymentService.updatePaymentStatus(paymentData.id, 'canceled');
+      await this.paymentService.updatePaymentStatus(body.object.id, 'canceled');
     }
 
     return { status: 'ok' };

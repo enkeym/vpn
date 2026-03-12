@@ -1,4 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { InternalGuard } from './common/guards/internal.guard';
 import { AppService } from './app.service';
 import { CacheService, CacheStats } from './common/cache/cache.service';
 
@@ -15,9 +16,11 @@ export class AppController {
   }
 
   /**
-   * Эндпоинт для мониторинга здоровья и метрик приложения
+   * Эндпоинт для мониторинга здоровья и метрик приложения.
+   * Доступ: localhost или X-Internal-Key (если задан INTERNAL_METRICS_KEY)
    */
   @Get('health')
+  @UseGuards(InternalGuard)
   getHealth() {
     return {
       status: 'ok',
@@ -32,9 +35,11 @@ export class AppController {
   }
 
   /**
-   * Эндпоинт для просмотра статистики кеша
+   * Эндпоинт для просмотра статистики кеша.
+   * Доступ: localhost или X-Internal-Key (если задан INTERNAL_METRICS_KEY)
    */
   @Get('metrics/cache')
+  @UseGuards(InternalGuard)
   getCacheMetrics(): {
     timestamp: string;
     cache: Record<string, CacheStats> | CacheStats | null;

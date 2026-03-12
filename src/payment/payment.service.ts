@@ -83,6 +83,29 @@ export class PaymentService {
     return results[0];
   }
 
+  /**
+   * Получить статус платежа из API ЮKassa (для верификации вебхука)
+   */
+  async getPaymentStatusFromYooKassa(yookassaId: string): Promise<string | null> {
+    try {
+      const response = await axios.get(
+        `${this.apiUrl}/${yookassaId}`,
+        {
+          headers: {
+            Authorization: this.authHeader,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      return response.data?.status ?? null;
+    } catch (error) {
+      this.logger.error(
+        `Ошибка проверки статуса платежа ${yookassaId} в ЮKassa: ${error instanceof Error ? error.message : error}`,
+      );
+      return null;
+    }
+  }
+
   async updatePaymentStatus(yookassaId: string, status: string) {
     await this.db
       .update(payments)

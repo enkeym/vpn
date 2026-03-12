@@ -9,7 +9,7 @@ import { WgConfig } from 'wireguard-tools';
 import * as path from 'path';
 import { existsSync } from 'fs';
 import { getNextFreeIp, parseWgConfig } from './wg.utils';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { Mutex } from 'async-mutex';
 
@@ -120,7 +120,7 @@ export class WgService implements OnModuleInit {
     this.configCache = null;
   }
 
-  private async getServerPublicKey(): Promise<string> {
+  public async getServerPublicKey(): Promise<string> {
     if (this._serverPublicKeyCache) {
       return this._serverPublicKeyCache;
     }
@@ -134,9 +134,28 @@ export class WgService implements OnModuleInit {
       );
     }
 
+    const WG_KEY_REGEX = /^[A-Za-z0-9+/]{42,43}={0,2}$/;
+    if (!WG_KEY_REGEX.test(privateKey)) {
+      throw new InternalServerErrorException(
+        'Неверный формат приватного ключа',
+      );
+    }
+
     try {
-      const { stdout } = await execAsync(`echo '${privateKey}' | wg pubkey`);
-      const publicKey = stdout.toString().trim();
+      const publicKey = await new Promise<string>((resolve, reject) => {
+        const proc = spawn('wg', ['pubkey'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        proc.stdout?.on('data', (chunk) => (stdout += chunk));
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          if (code === 0) resolve(stdout.trim());
+          else reject(new Error(`wg pubkey exited with code ${code}`));
+        });
+        proc.stdin?.write(privateKey + '\n');
+        proc.stdin?.end();
+      });
       this._serverPublicKeyCache = publicKey;
       return publicKey;
     } catch (error) {
@@ -256,31 +275,37 @@ PersistentKeepalive = 25
   }
 
   async removePeer(publicKey: string) {
+    return this.removePeers([publicKey]);
+  }
+
+  async removePeers(publicKeys: string[]): Promise<void> {
+    if (publicKeys.length === 0) return;
+
     return await this.configMutex.runExclusive(async () => {
-      // Инвалидируем кеш перед изменениями
       this.invalidateConfigCache();
 
       const server = await this.getConfig();
+      const keysSet = new Set(publicKeys);
 
-      if (server.peers?.some((peer) => peer.publicKey === publicKey)) {
+      if (
+        server.peers?.some(
+          (peer) => peer.publicKey && keysSet.has(peer.publicKey),
+        )
+      ) {
         server.peers = server.peers.filter(
-          (peer) => peer.publicKey !== publicKey,
+          (peer) => !peer.publicKey || !keysSet.has(peer.publicKey),
         );
 
         await server.writeToFile();
-
-        // Инвалидируем кеш после записи
         this.invalidateConfigCache();
-
         await this.syncSystem();
-        this.logger.log(`Пир удален: ${publicKey}`);
+        this.logger.log(`Удалено пиров из WG: ${publicKeys.length}`);
       }
     });
   }
 
   async restoreConfigs(dbPeers: IDbPeer[]) {
     return await this.configMutex.runExclusive(async () => {
-      // Инвалидируем кеш перед проверкой
       this.invalidateConfigCache();
 
       const server = await this.getConfig();
@@ -317,7 +342,6 @@ PersistentKeepalive = 25
 
     await server.writeToFile();
 
-    // Инвалидируем кеш после записи
     this.invalidateConfigCache();
 
     await this.syncSystem();

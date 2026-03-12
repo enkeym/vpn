@@ -261,25 +261,13 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Проверить, что член группы принадлежит админу
-   * ОПТИМИЗАЦИЯ: Использует SQL LIKE для поиска по prefix
    */
   async isMemberOwnedByAdmin(
     memberId: string,
     adminId: string,
   ): Promise<boolean> {
-    // Сначала пробуем найти по полному ID
-    let member = await this.db.query.familyMembers.findFirst({
-      where: eq(schema.familyMembers.id, memberId),
-    });
-
-    // Если не нашли, ищем по partial ID через SQL LIKE
-    if (!member && memberId.length < 36) {
-      member = await this.db.query.familyMembers.findFirst({
-        where: like(schema.familyMembers.id, `${memberId}%`),
-      });
-    }
-
-    return member?.addedBy === adminId;
+    const member = await this.findMemberById(memberId);
+    return member.addedBy === adminId;
   }
 
   /**

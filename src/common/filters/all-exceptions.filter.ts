@@ -39,7 +39,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = response;
       }
     } else if (exception instanceof Error) {
-      message = exception.message;
+      // Не раскрываем внутренние детали клиенту в production
+      message =
+        process.env.NODE_ENV === 'production'
+          ? 'Internal server error'
+          : exception.message;
     }
 
     if (httpStatus === HttpStatus.INTERNAL_SERVER_ERROR) {

@@ -9,7 +9,16 @@ import {
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { and, desc, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  sql,
+} from 'drizzle-orm';
 import { WgService } from 'src/wg/wg.service';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
@@ -283,16 +292,18 @@ export class PeersService {
         throw new BadRequestException('telegramId обязателен');
       }
 
-      if (dto.isTrial) {
-        const used = await this.hasUsedTrial(dto.telegramId);
-        if (used) {
+      const telegramIdStr = String(dto.telegramId);
+      const isTrial = dto.isTrial === true;
+
+      if (isTrial) {
+        const usedTrial = await this.hasUsedTrial(telegramIdStr);
+        if (usedTrial) {
           throw new BadRequestException(
             'Пробный период уже был использован. Вы можете продлить конфиг в разделе «Мои конфиги».',
           );
         }
       }
 
-      const telegramIdStr = String(dto.telegramId);
       const peerName = `${telegramIdStr.slice(0, 3)}${randomBytes(3).toString('hex')}`;
 
       // Быстрая проверка через кеш
@@ -314,16 +325,6 @@ export class PeersService {
         throw new BadRequestException(
           `Конфиг с именем ${peerName} уже существует`,
         );
-      }
-
-      const isTrial = dto.isTrial === true;
-      if (isTrial) {
-        const usedTrial = await this.hasUsedTrial(telegramIdStr);
-        if (usedTrial) {
-          throw new BadRequestException(
-            'Пробный период доступен только один раз',
-          );
-        }
       }
 
       const durationDays = isTrial
@@ -773,6 +774,7 @@ export class PeersService {
     const now = new Date();
 
     const expiredPeers = await this.db.query.peers.findMany({
+      columns: { id: true, name: true, publicKey: true, telegramId: true },
       where: and(
         eq(schema.peers.paused, false),
         isNotNull(schema.peers.expiresAt),
@@ -784,28 +786,36 @@ export class PeersService {
       return 0;
     }
 
-    for (const peer of expiredPeers) {
-      try {
-        await this.db
-          .update(schema.peers)
-          .set({ paused: true, pausedAt: new Date() })
-          .where(eq(schema.peers.id, peer.id));
+    const ids = expiredPeers.map((p) => p.id);
+    const publicKeys = expiredPeers.map((p) => p.publicKey);
+    const affectedTelegramIds = new Set(expiredPeers.map((p) => p.telegramId));
 
-        await this.wgService.removePeer(peer.publicKey);
+    try {
+      await this.db
+        .update(schema.peers)
+        .set({ paused: true, pausedAt: new Date() })
+        .where(inArray(schema.peers.id, ids));
 
-        // Инвалидируем кеши
+      await this.wgService.removePeers(publicKeys);
+
+      for (const peer of expiredPeers) {
         this.invalidatePeerCache(peer.name);
-        this.invalidateUserPeersCache(peer.telegramId);
-
-        this.logger.log(`Конфиг ${peer.name} деактивирован по истечению срока`);
-      } catch (error) {
-        this.logger.error(
-          `Ошибка деактивации конфига ${peer.name}: ${error instanceof Error ? error.message : error}`,
-        );
       }
-    }
+      for (const telegramId of affectedTelegramIds) {
+        this.cacheService.delete(CACHE_NAMESPACES.PEERS_BY_USER, telegramId);
+      }
+      this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
 
-    return expiredPeers.length;
+      this.logger.log(
+        `Деактивировано по истечению срока: ${expiredPeers.length} конфигов`,
+      );
+      return expiredPeers.length;
+    } catch (error) {
+      this.logger.error(
+        `Ошибка batch-деактивации истёкших конфигов: ${error instanceof Error ? error.message : error}`,
+      );
+      throw error;
+    }
   }
 
   /**
@@ -855,40 +865,37 @@ export class PeersService {
       return 0;
     }
 
-    let notifiedCount = 0;
-
-    for (const peer of peers) {
-      try {
-        const expiresAt = peer.expiresAt
-          ? new Date(peer.expiresAt).toLocaleDateString('ru-RU')
-          : 'скоро';
-
-        const title = 'Срок действия VPN-конфига скоро истечёт';
-        const details = [
-          `Ваш конфиг \`${peer.name}\` истекает через *${daysBefore} день*.`,
-          ``,
-          `📅 Дата окончания: *${expiresAt}*`,
-          ``,
-          `После истечения срока конфиг будет автоматически отключён.`,
-          ``,
-          `для того что бы продлить конфиг перейдите: @tunelvpnbot`,
-        ].join('\n');
-
-        const ok = await this.notificationService.notifyUser(
-          peer.telegramId,
-          title,
-          details,
-        );
-
-        if (ok) {
-          notifiedCount++;
+    const title = 'Срок действия VPN-конфига скоро истечёт';
+    const results = await Promise.all(
+      peers.map(async (peer) => {
+        try {
+          const expiresAt = peer.expiresAt
+            ? new Date(peer.expiresAt).toLocaleDateString('ru-RU')
+            : 'скоро';
+          const details = [
+            `Ваш конфиг \`${peer.name}\` истекает через *${daysBefore} день*.`,
+            ``,
+            `📅 Дата окончания: *${expiresAt}*`,
+            ``,
+            `После истечения срока конфиг будет автоматически отключён.`,
+            ``,
+            `для того что бы продлить конфиг перейдите: @tunelvpnbot`,
+          ].join('\n');
+          const ok = await this.notificationService.notifyUser(
+            peer.telegramId,
+            title,
+            details,
+          );
+          return ok;
+        } catch (error) {
+          this.logger.error(
+            `Не удалось отправить уведомление о скором истечении конфига ${peer.name} пользователю ${peer.telegramId}: ${error instanceof Error ? error.message : error}`,
+          );
+          return false;
         }
-      } catch (error) {
-        this.logger.error(
-          `Не удалось отправить уведомление о скором истечении конфига ${peer.name} пользователю ${peer.telegramId}: ${error instanceof Error ? error.message : error}`,
-        );
-      }
-    }
+      }),
+    );
+    const notifiedCount = results.filter(Boolean).length;
 
     this.logger.log(
       `Отправлено уведомлений о скором истечении срока действия конфигов (за ${daysBefore} дн.): ${notifiedCount} из ${peers.length}`,
@@ -905,7 +912,7 @@ export class PeersService {
     const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
     const toDelete = await this.db.query.peers.findMany({
-      columns: { name: true },
+      columns: { name: true, ip: true, telegramId: true },
       where: and(
         eq(schema.peers.paused, true),
         isNotNull(schema.peers.pausedAt),
@@ -917,18 +924,29 @@ export class PeersService {
       return 0;
     }
 
-    for (const { name } of toDelete) {
-      try {
-        await this.deletePeer(name);
-        this.logger.log(`Конфиг ${name} удалён (на паузе более месяца)`);
-      } catch (error) {
-        this.logger.error(
-          `Ошибка удаления конфига ${name}: ${error instanceof Error ? error.message : error}`,
-        );
-      }
-    }
+    const names = toDelete.map((p) => p.name);
+    try {
+      await this.db
+        .delete(schema.peers)
+        .where(inArray(schema.peers.name, names));
 
-    return toDelete.length;
+      for (const p of toDelete) {
+        this.removeIpFromCache(p.ip);
+        this.invalidatePeerCache(p.name);
+        this.cacheService.delete(CACHE_NAMESPACES.PEERS_BY_USER, p.telegramId);
+      }
+      this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+
+      this.logger.log(
+        `Удалено конфигов (на паузе более месяца): ${toDelete.length}`,
+      );
+      return toDelete.length;
+    } catch (error) {
+      this.logger.error(
+        `Ошибка batch-удаления конфигов на паузе: ${error instanceof Error ? error.message : error}`,
+      );
+      throw error;
+    }
   }
 
   isExpired(peer: TPeerSelect): boolean {
@@ -1112,34 +1130,11 @@ export class PeersService {
   /**
    * Генерирует строку конфига WireGuard для существующего пира
    */
-  generatePeerConfig(peer: TPeerSelect): string {
-    if (!peer.presharedKey) {
-      throw new InternalServerErrorException('Отсутствует presharedKey у пира');
-    }
-
-    return `[Interface]
-PrivateKey = ${peer.privateKey}
-Address = ${peer.ip}/32
-DNS = 1.1.1.1, 8.8.8.8
-MTU = 1420
-
-[Peer]
-PublicKey = ${this.wgService.host ? '' : ''}${peer.endpoint?.split(':')[0] ? '' : ''}
-PresharedKey = ${peer.presharedKey}
-Endpoint = ${peer.endpoint}
-AllowedIPs = ${process.env.WG_ALLOWED_IPS || '0.0.0.0/0'}
-PersistentKeepalive = 25
-`;
-  }
-
-  /**
-   * Генерирует строку конфига WireGuard для существующего пира
-   */
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    // Получаем публичный ключ сервера через endpoint
-    const serverPublicKey = await this.getServerPublicKey();
+    // Получаем публичный ключ сервера через WgService (с кешированием)
+    const serverPublicKey = await this.wgService.getServerPublicKey();
 
     return `[Interface]
 PrivateKey = ${peer.privateKey}
@@ -1168,34 +1163,6 @@ PersistentKeepalive = 25
       margin: 2,
       errorCorrectionLevel: 'M',
     });
-  }
-
-  /**
-   * Получить публичный ключ сервера (кешируется в WgService)
-   */
-  private async getServerPublicKey(): Promise<string> {
-    // Используем exec для получения публичного ключа из приватного
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-
-    // Читаем конфиг сервера для получения приватного ключа
-    const fs = await import('fs/promises');
-    const path = await import('path');
-    const configPath = path.join(process.cwd(), '/configs/wg0.conf');
-    const configContent = await fs.readFile(configPath, 'utf-8');
-
-    // Извлекаем приватный ключ
-    const privateKeyMatch = configContent.match(/PrivateKey\s*=\s*(.+)/);
-    if (!privateKeyMatch) {
-      throw new InternalServerErrorException(
-        'Не удалось найти приватный ключ сервера',
-      );
-    }
-
-    const privateKey = privateKeyMatch[1].trim();
-    const { stdout } = await execAsync(`echo '${privateKey}' | wg pubkey`);
-    return stdout.trim();
   }
 
   /**

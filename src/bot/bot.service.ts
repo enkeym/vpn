@@ -298,6 +298,18 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     this.bot.callbackQuery(/^create_config:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
+      const userId = String(ctx.from?.id);
+
+      // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверка прав
+      if (!this.isAdmin(userId)) {
+        const userType = await this.mainHandler.getUserType(userId);
+        if (userType === 'user') {
+          return ctx.reply(
+            '❌ Этот метод создания доступен только администраторам. Пожалуйста, используйте меню оплаты.',
+          );
+        }
+      }
+
       const duration = ctx.match[1];
       const durationDays =
         duration === 'unlimited'
@@ -334,7 +346,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       // Сразу отвечаем, т.к. операция может занять время
       await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
-      await this.peerDeleteHandler.deletePeer(ctx, peerName);
+      const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
+      await this.peerDeleteHandler.deletePeer(ctx, peerName, isAdmin);
     });
 
     // Продление конфига (пока просто уведомление)

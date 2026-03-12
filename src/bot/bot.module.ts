@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { BotService } from './bot.service';
-import { BotController } from './bot.controller';
 import { PeersModule } from 'src/peers/peers.module';
 import { FamilyModule } from 'src/family/family.module';
 import { BlockedModule } from 'src/blocked/blocked.module';
@@ -28,7 +27,7 @@ import { PaymentModule } from 'src/payment/payment.module';
     FamilyHandler,
     AdminHandler,
   ],
-  controllers: [BotController],
+  controllers: [],
   exports: [BotService],
 })
 export class BotModule {}
