@@ -9,6 +9,7 @@ import { DatabaseModule } from './database/database.module';
 import { BotModule } from './bot/bot.module';
 import { NotificationModule } from './notification/notification.module';
 import { CacheModule } from './common/cache/cache.module';
+import { PaymentModule } from './payment/payment.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { CacheModule } from './common/cache/cache.module';
     WgModule,
     PeersModule,
     BotModule,
+    PaymentModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -104,3 +104,30 @@ export const peers = sqliteTable(
   ],
 );
 
+export const payments = sqliteTable(
+  'payments',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    telegramId: text('telegramId').notNull(),
+    yookassaId: text('yookassaId').notNull().unique(),
+    amount: integer('amount').notNull(),
+    currency: text('currency').notNull().default('RUB'),
+    status: text('status').notNull(), // 'pending', 'succeeded', 'canceled', 'waiting_for_capture'
+    durationDays: integer('durationDays').notNull(),
+    isPromo: integer('isPromo', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
+      () => new Date(),
+    ),
+    updatedAt: integer('updatedAt', { mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (table) => [
+    index('payments_telegram_id_idx').on(table.telegramId),
+    index('payments_yookassa_id_idx').on(table.yookassaId),
+    index('payments_status_idx').on(table.status),
+  ],
+);
+
