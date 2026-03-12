@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "796fc10d-4996-4be8-b298-7def349426d7",
+  "id": "a53c5766-a8c6-4c6f-9923-4ceff114de3a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "blocked_users": {
@@ -246,6 +246,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "isTrial": {
+          "name": "isTrial",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "lastReplacedAt": {
           "name": "lastReplacedAt",

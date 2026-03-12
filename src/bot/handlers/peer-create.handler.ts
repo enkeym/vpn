@@ -41,7 +41,17 @@ export class PeerCreateHandler {
     );
   }
 
-  async handleCreateConfig(ctx: Context, durationDays?: SubscriptionDuration) {
+  /** Пробный период: конфиг на 3 дня, доступен только один раз */
+  async handleCreateTrialConfig(ctx: Context) {
+    if (!ctx.from) return;
+    await this.handleCreateConfig(ctx, 3 as SubscriptionDuration, true);
+  }
+
+  async handleCreateConfig(
+    ctx: Context,
+    durationDays?: SubscriptionDuration,
+    isTrial = false,
+  ) {
     if (!ctx.from) return;
 
     try {
@@ -53,6 +63,7 @@ export class PeerCreateHandler {
         telegramId: String(ctx.from.id),
         username: ctx.from.username,
         durationDays,
+        isTrial,
       });
 
       const message = await ctx.replyWithDocument(

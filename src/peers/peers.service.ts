@@ -210,10 +210,33 @@ export class PeersService {
     );
   }
 
+  /**
+   * Проверить, использовал ли пользователь пробный период (один раз на пользователя).
+   */
+  async hasUsedTrial(telegramId: string): Promise<boolean> {
+    const existing = await this.db.query.peers.findFirst({
+      where: and(
+        eq(schema.peers.telegramId, String(telegramId)),
+        eq(schema.peers.isTrial, true),
+      ),
+      columns: { id: true },
+    });
+    return !!existing;
+  }
+
   async createPeer(dto: ICreatePeer) {
     return await this.createPeerMutex.runExclusive(async () => {
       if (!dto.telegramId || String(dto.telegramId).trim() === '') {
         throw new BadRequestException('telegramId обязателен');
+      }
+
+      if (dto.isTrial) {
+        const used = await this.hasUsedTrial(dto.telegramId);
+        if (used) {
+          throw new BadRequestException(
+            'Пробный период уже был использован. Вы можете продлить конфиг в разделе «Мои конфиги».',
+          );
+        }
       }
 
       const telegramIdStr = String(dto.telegramId);
@@ -240,15 +263,25 @@ export class PeersService {
         );
       }
 
-      // Используем кешированные IP
+      const isTrial = dto.isTrial === true;
+      if (isTrial) {
+        const usedTrial = await this.hasUsedTrial(telegramIdStr);
+        if (usedTrial) {
+          throw new BadRequestException(
+            'Пробный период доступен только один раз',
+          );
+        }
+      }
+
+      const durationDays = isTrial
+        ? (3 as SubscriptionDuration)
+        : dto.durationDays;
+
       const usedIps = await this.getUsedIps();
       const credentials =
         await this.wgService.generateClientCredentials(usedIps);
 
-      // Если durationDays не указан - конфиг бессрочный (expiresAt = null)
-      const expiresAt = dto.durationDays
-        ? calculateExpiresAt(dto.durationDays)
-        : null;
+      const expiresAt = durationDays ? calculateExpiresAt(durationDays) : null;
 
       const peerData: TPeer = {
         telegramId: dto.telegramId,
@@ -261,6 +294,7 @@ export class PeersService {
         endpoint: `${this.wgService.host}:${this.wgService.port}`,
         paused: false,
         expiresAt,
+        isTrial,
       };
 
       const [newPeer] = await this.db

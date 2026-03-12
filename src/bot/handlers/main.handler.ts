@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Context } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
+import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 
 export type UserType = 'admin' | 'family' | 'user';
@@ -13,6 +14,7 @@ export class MainHandler {
   constructor(
     private readonly configService: ConfigService,
     private readonly familyService: FamilyService,
+    private readonly peersService: PeersService,
   ) {
     const whiteList = this.configService.get<string>(
       'TELEGRAM_ALLOWED_IDS',
@@ -46,14 +48,14 @@ export class MainHandler {
     }
   }
 
-  private getMenuKeyboard(userType: UserType) {
+  private getMenuKeyboard(userType: UserType, showTrial: boolean) {
     switch (userType) {
       case 'admin':
-        return BotUi.adminMenuKeyboard();
+        return BotUi.adminMenuKeyboard(showTrial);
       case 'family':
-        return BotUi.familyMemberMenuKeyboard();
+        return BotUi.familyMemberMenuKeyboard(showTrial);
       default:
-        return BotUi.mainMenuKeyboard();
+        return BotUi.mainMenuKeyboard(showTrial);
     }
   }
 
@@ -62,7 +64,9 @@ export class MainHandler {
 
     const userId = String(ctx.from.id);
     const userType = await this.getUserType(userId);
-    const keyboard = this.getMenuKeyboard(userType);
+    const hasUsedTrial = await this.peersService.hasUsedTrial(userId);
+    const showTrial = !hasUsedTrial;
+    const keyboard = this.getMenuKeyboard(userType, showTrial);
     const welcomeMessage = this.getWelcomeMessage(userType);
 
     try {

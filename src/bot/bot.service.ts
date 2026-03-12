@@ -209,18 +209,20 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private registerCommands() {
-    // Команды
     this.bot.command('start', async (ctx) =>
       this.mainHandler.showMainMenu(ctx),
     );
 
-    // Меню и навигация
     this.bot.callbackQuery('main_menu', async (ctx) => {
       await ctx.answerCallbackQuery();
       await this.mainHandler.showMainMenu(ctx);
     });
 
-    // Показать меню создания конфига (для user — тарифы с оплатой, для admin/family — выбор срока без оплаты)
+    this.bot.callbackQuery('create_trial_config', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerCreateHandler.handleCreateTrialConfig(ctx);
+    });
+
     this.bot.callbackQuery('show_create_options', async (ctx) => {
       await ctx.answerCallbackQuery();
       if (!ctx.from) return;
@@ -232,14 +234,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Выбор тарифа (30/60/90) — показать подтверждение оплаты
     this.bot.callbackQuery(/^pay_plan:(30|60|90)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       const days = Number(ctx.match[1]) as 30 | 60 | 90;
       await this.peerCreateHandler.showPaymentConfirm(ctx, days);
     });
 
-    // Моковая оплата: после "Оплатить" создаём конфиг
     this.bot.callbackQuery(/^pay_confirm:(30|60|90)$/, async (ctx) => {
       await ctx.answerCallbackQuery({ text: 'Оплата прошла успешно!' });
       const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
@@ -249,7 +249,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
     });
 
-    // Создание конфига с выбором длительности (admin/family, без оплаты)
     this.bot.callbackQuery(/^create_config:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       const duration = ctx.match[1];

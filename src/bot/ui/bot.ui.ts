@@ -67,29 +67,40 @@ function getMemberDisplayName(member: TFamilyMember, escape = false): string {
 }
 
 export const BotUi = {
-  // Главное меню для обычных пользователей
-  mainMenuKeyboard: () =>
-    new InlineKeyboard()
-      .text('📄 Получить ВПН', 'show_create_options')
-      .row()
+  // Главное меню для обычных пользователей (showTrial — показывать кнопку пробного периода)
+  mainMenuKeyboard: (showTrial = false) => {
+    const kb = new InlineKeyboard();
+    if (showTrial) {
+      kb.text('🆓 Пробный период', 'create_trial_config').row();
+    }
+    kb.text('📄 Получить VPN', 'show_create_options').row();
+    return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
-      .text('📖 Инструкция', 'show_instructions'),
+      .text('📖 Инструкция', 'show_instructions');
+  },
 
   // Главное меню для членов семьи
-  familyMemberMenuKeyboard: () =>
-    new InlineKeyboard()
-      .text('📄 Получить ВПН', 'show_create_options')
-      .row()
+  familyMemberMenuKeyboard: (showTrial = false) => {
+    const kb = new InlineKeyboard();
+    if (showTrial) {
+      kb.text('🆓 Пробный период', 'create_trial_config').row();
+    }
+    kb.text('📄 Получить VPN', 'show_create_options').row();
+    return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
-      .text('📖 Инструкция', 'show_instructions'),
+      .text('📖 Инструкция', 'show_instructions');
+  },
 
   // Главное меню для админов (с кнопкой управления группой и поиском)
-  adminMenuKeyboard: () =>
-    new InlineKeyboard()
-      .text('📄 Получить ВПН', 'show_create_options')
-      .row()
+  adminMenuKeyboard: (showTrial = false) => {
+    const kb = new InlineKeyboard();
+    if (showTrial) {
+      kb.text('🆓 Пробный период', 'create_trial_config').row();
+    }
+    kb.text('📄 Получить VPN', 'show_create_options').row();
+    return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
       .text('👨‍👩‍👧‍👦 Группа «Семья»', 'family_menu')
@@ -98,7 +109,8 @@ export const BotUi = {
       .row()
       .text('📊 Статистика', 'admin_stats')
       .row()
-      .text('📖 Инструкция', 'show_instructions'),
+      .text('📖 Инструкция', 'show_instructions');
+  },
 
   adminStatsText: (stats: {
     totalConfigs: number;
@@ -120,34 +132,33 @@ export const BotUi = {
     `👨‍👩‍👧‍👦 В группе «Семья»: *${stats.familyMembersCount}*\n` +
     `🚫 Заблокировано: *${stats.blockedUsersCount}*`,
 
-  adminStatsKeyboard: () =>
-    new InlineKeyboard().text('« В меню', 'main_menu'),
+  adminStatsKeyboard: () => new InlineKeyboard().text('« В меню', 'main_menu'),
 
   createConfigKeyboard: () =>
     new InlineKeyboard()
       .text('♾️ Бессрочный', 'create_config:unlimited')
       .row()
-      .text('30 дней', 'create_config:30')
-      .text('60 дней', 'create_config:60')
-      .text('90 дней', 'create_config:90')
+      .text('🔥 30 дней', 'create_config:30')
+      .text('💎 60 дней', 'create_config:60')
+      .text('👑 90 дней', 'create_config:90')
       .row()
-      .text('« Назад', 'main_menu'),
+      .text('« Назад в меню', 'main_menu'),
 
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
   // Меню оплаты для обычных пользователей (30, 60, 90 дней)
   paymentPlansTitle:
-    '💳 *Выберите тариф*\n\nОплата подписки на VPN. После оплаты вы получите конфиг файл.',
+    '💳 *Тарифы TUNEL VPN*\n\nВыберите подходящий вариант. После оплаты вы получите конфиг файл.',
 
   paymentPlansKeyboard: () =>
     new InlineKeyboard()
-      .text('30 дней — 99 ₽', 'pay_plan:30')
+      .text('🔥 30 дней — 99 ₽', 'pay_plan:30')
       .row()
-      .text('60 дней — 179 ₽', 'pay_plan:60')
+      .text('💎 60 дней — 179 ₽', 'pay_plan:60')
       .row()
-      .text('90 дней — 249 ₽', 'pay_plan:90')
+      .text('👑 90 дней — 249 ₽', 'pay_plan:90')
       .row()
-      .text('« Назад', 'main_menu'),
+      .text('« Назад в меню', 'main_menu'),
 
   paymentPlanPrices: { 30: 99, 60: 179, 90: 249 } as Record<number, number>,
 
@@ -166,9 +177,9 @@ export const BotUi = {
 
   emptyConfigsKeyboard: () =>
     new InlineKeyboard()
-      .text('Получить ВПН', 'show_create_options')
+      .text('📄 Получить VPN', 'show_create_options')
       .row()
-      .text('Назад', 'main_menu'),
+      .text('« Назад в меню', 'main_menu'),
 
   configsListKeyboard: (peers: TPeer[]) => {
     const keyboard = new InlineKeyboard();
@@ -177,7 +188,7 @@ export const BotUi = {
       const status = getPeerStatusIcon(peer);
       keyboard.text(`${status} ${peer.name}`, `manage_peer:${peer.name}`).row();
     });
-    keyboard.text('Назад в меню', 'main_menu');
+    keyboard.text('« Назад в меню', 'main_menu');
     return keyboard;
   },
 
@@ -196,13 +207,11 @@ export const BotUi = {
       keyboard.text('🔄 Продлить', `extend_peer:${peer.name}`).row();
     }
 
-    // Кнопка включить/пауза только если конфиг не истёк
-    if (!expired) {
+    if (isAdmin && !expired) {
       const toggleBtnText = peer.paused ? 'Включить' : 'Пауза';
       keyboard.text(toggleBtnText, `toggle_peer:${peer.name}`);
     }
 
-    // Кнопка описания только для админов
     if (isAdmin) {
       const descriptionBtnText = peer.description
         ? '📝 Изменить описание'
@@ -210,14 +219,13 @@ export const BotUi = {
       keyboard.text(descriptionBtnText, `edit_description:${peer.name}`);
     }
 
-    // Кнопка замены конфига (раз в день)
     keyboard.row().text('🔁 Заменить конфиг', `replace_peer:${peer.name}`);
 
-    keyboard
-      .row()
-      .text('Удалить', `delete_peer:${peer.name}`)
-      .row()
-      .text('К списку', 'list_configs');
+    if (isAdmin) {
+      keyboard.row().text('Удалить', `delete_peer:${peer.name}`);
+    }
+
+    keyboard.row().text('К списку', 'list_configs');
 
     return keyboard;
   },
@@ -226,7 +234,7 @@ export const BotUi = {
 
   welcomeMessageAdmin:
     '👋 *Добро пожаловать, Администратор\\!*\n\n' +
-    '🔧 Вы имеете полный доступ к управлению VPN:\n' +
+    '🔧 Вы имеете полный доступ к управлению TUNEL VPN:\n' +
     '• Создание и управление конфигами\n' +
     '• Управление группой «Семья»\n' +
     '• Поиск и управление клиентами\n' +
@@ -234,7 +242,10 @@ export const BotUi = {
     'Выберите действие:',
 
   welcomeMessageFamily:
-    '👋 *Добро пожаловать в VPN Manager\\!*\n\n' +
+    '👋 *Добро пожаловать в TUNEL VPN\\!*\n\n' +
+    '📍 *Сервер:* Финляндия\n' +
+    '⚡ *Скорость:* до *200 Мбит/с*\n' +
+    '🛡 *Защищённый доступ* к сайтам, стримингу и сервисам\n\n' +
     '🏠 Вы являетесь членом группы «Семья»\\.\n\n' +
     'Вам доступно:\n' +
     '• 📄 Создание VPN конфигов\n' +
@@ -244,15 +255,19 @@ export const BotUi = {
     'Выберите действие:',
 
   welcomeMessageUser:
-    '👋 *Добро пожаловать в VPN Manager\\!*\n\n' +
-    'Вам доступно:\n' +
-    '• 📄 Создание VPN конфигов\n' +
-    '• 📂 Управление своими конфигами\n' +
-    '• 📖 Инструкции по установке\n\n' +
-    'Выберите действие:',
+    '👋 *Добро пожаловать в TUNEL VPN\\!*\n\n' +
+    '📍 *Сервер:* Финляндия\n' +
+    '⚡ *Скорость:* до *200 Мбит/с*\n' +
+    '🛡 *Защищённый доступ* — обход блокировок, стриминг, приватность\n\n' +
+    'С TUNEL VPN вы получаете:\n' +
+    '• 🔐 Шифрование трафика\n' +
+    '• 🌍 Свободу доступа к сайтам\n' +
+    '• 🚀 Стабильное соединение\n' +
+    '• 📱 Поддержку всех устройств\n' +
+    '• 🎁 Пробный конфиг на 3 дня — один раз для каждого пользователя\n\n' +
+    'Выберите действие 👇',
 
-  // Старое сообщение для обратной совместимости
-  welcomeMessage: '👋 *VPN Manager*\n\nВыберите действие:',
+  welcomeMessage: '👋 *TUNEL VPN*\n\nВыберите действие:',
   creatingConfig: '⏳ *Создаю конфигурацию...*',
   noConfigs: '📂 *У вас пока нет активных конфигураций.*',
 
