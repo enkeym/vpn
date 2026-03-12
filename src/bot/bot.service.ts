@@ -120,7 +120,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
 
       const userId = String(ctx.from.id);
-      const username = ctx.from.username;
 
       // Проверяем, является ли админом
       if (this.isAdmin(userId)) {
@@ -131,9 +130,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       // Проверяем, заблокирован ли пользователь
       const isBlocked = await this.blockedUsersService.isBlocked(userId);
       if (isBlocked) {
-        this.logger.warn(
-          `Заблокированный пользователь пытается получить доступ: ${userId} (${username})`,
-        );
         // Отвечаем на callback query, чтобы кнопка не зависала
         if (ctx.callbackQuery) {
           try {
@@ -282,7 +278,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
             parse_mode: 'Markdown',
             reply_markup: {
               inline_keyboard: [
-                [{ text: '💳 Оплатить', url: payment.confirmation.confirmation_url }],
+                [
+                  {
+                    text: '💳 Оплатить',
+                    url: payment.confirmation.confirmation_url,
+                  },
+                ],
                 [{ text: '❌ Отмена', callback_data: 'main_menu' }],
               ],
             },
@@ -370,7 +371,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot.callbackQuery(/^goto_peer:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
-      const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
       await this.peerManageHandler.showPeerDetailsReply(ctx, peerName);
     });
 
