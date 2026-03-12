@@ -63,7 +63,9 @@ export class BlockedUsersService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (cleaned > 0) {
-      this.logger.debug(`Очищено ${cleaned} устаревших записей кеша блокировки`);
+      this.logger.debug(
+        `Очищено ${cleaned} устаревших записей кеша блокировки`,
+      );
     }
   }
 
