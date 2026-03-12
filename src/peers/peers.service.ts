@@ -224,6 +224,28 @@ export class PeersService {
     return !!existing;
   }
 
+  /**
+   * Проверить, использовал ли пользователь разовую скидку на 60 или 90 дней.
+   * После использования одного тарифа со скидкой — второй тариф по полной цене.
+   */
+  async hasUsedFirstPurchaseDiscount(telegramId: string): Promise<boolean> {
+    const existing = await this.db.query.userPromoUsage.findFirst({
+      where: eq(schema.userPromoUsage.telegramId, String(telegramId)),
+      columns: { id: true },
+    });
+    return !!existing;
+  }
+
+  /**
+   * Записать использование скидки на тарифе 60 или 90 дней.
+   */
+  async recordPromoUsage(telegramId: string, tier: 60 | 90): Promise<void> {
+    await this.db.insert(schema.userPromoUsage).values({
+      telegramId: String(telegramId),
+      usedDiscountTier: tier,
+    });
+  }
+
   async createPeer(dto: ICreatePeer) {
     return await this.createPeerMutex.runExclusive(async () => {
       if (!dto.telegramId || String(dto.telegramId).trim() === '') {

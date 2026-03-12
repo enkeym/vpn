@@ -15,7 +15,6 @@ import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
-import { BotUi } from './ui/bot.ui';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -242,11 +241,22 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     this.bot.callbackQuery(/^pay_confirm:(30|60|90)$/, async (ctx) => {
       await ctx.answerCallbackQuery({ text: 'Оплата прошла успешно!' });
+      if (!ctx.from) return;
       const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
-      await ctx.editMessageText(BotUi.paymentSuccessTitle, {
-        parse_mode: 'Markdown',
-      });
-      await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
+      const hasUsedDiscount =
+        await this.peersService.hasUsedFirstPurchaseDiscount(
+          String(ctx.from.id),
+        );
+      const usedPromoDiscount: 60 | 90 | undefined =
+        !hasUsedDiscount && (durationDays === 60 || durationDays === 90)
+          ? durationDays
+          : undefined;
+      await this.peerCreateHandler.handleCreateConfig(
+        ctx,
+        durationDays,
+        false,
+        usedPromoDiscount,
+      );
     });
 
     this.bot.callbackQuery(/^create_config:(.+)$/, async (ctx) => {
@@ -311,7 +321,19 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
-      await this.peerManageHandler.showPeerDetailsReply(ctx, peerName, isAdmin);
+      await this.peerManageHandler.showPeerDetailsReply(ctx, peerName);
+    });
+
+    // После замены конфига — родитель удалён, нужен новый reply с деталями
+    this.bot.callbackQuery(/^goto_peer_after_replace:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      const isAdmin = ctx.from ? this.isAdmin(String(ctx.from.id)) : false;
+      await this.peerManageHandler.showPeerDetailsReplyAfterReplace(
+        ctx,
+        peerName,
+        isAdmin,
+      );
     });
 
     // Показать QR-код конфига

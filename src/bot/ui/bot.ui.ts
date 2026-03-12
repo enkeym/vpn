@@ -262,23 +262,43 @@ export const BotUi = {
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
   // Меню оплаты для обычных пользователей (30, 60, 90 дней)
-  paymentPlansTitle:
-    '💳 *Тарифы TUNEL VPN*\n\nВыберите подходящий вариант. После оплаты вы получите конфиг файл.',
+  paymentPlansTitle: (hasDiscount: boolean) =>
+    '💳 *Тарифы TUNEL VPN*\n\n' +
+    'Выберите подходящий вариант. После оплаты вы получите конфиг-файл для подключения.\n\n' +
+    '📱 _Конфиг подходит для Android, iOS, Windows, macOS, Linux_\n' +
+    '🛡 _Шифрование, обход блокировок, стриминг_\n\n' +
+    (hasDiscount
+      ? '🎁 *Разовая акция:* скидка на 60 или 90 дней при первой покупке.\n\n'
+      : ''),
 
-  paymentPlansKeyboard: () =>
-    new InlineKeyboard()
-      .text('🔥 30 дней — 99 ₽', 'pay_plan:30')
-      .row()
-      .text('💎 60 дней — 179 ₽', 'pay_plan:60')
-      .row()
-      .text('👑 90 дней — 249 ₽', 'pay_plan:90')
-      .row()
-      .text('« Назад в меню', 'main_menu'),
+  paymentPlansKeyboard: (hasDiscount: boolean) => {
+    const kb = new InlineKeyboard();
+    kb.text('🔥 30 дней — 99 ₽', 'pay_plan:30').row();
+    kb.text(
+      hasDiscount ? '💎 60 дней — 143 ₽ 🎁' : '💎 60 дней — 179 ₽',
+      'pay_plan:60',
+    ).row();
+    kb.text(
+      hasDiscount ? '👑 90 дней — 199 ₽ 🎁' : '👑 90 дней — 249 ₽',
+      'pay_plan:90',
+    ).row();
+    kb.text('« Назад в меню', 'main_menu');
+    return kb;
+  },
 
   paymentPlanPrices: { 30: 99, 60: 179, 90: 249 } as Record<number, number>,
+  /** Цены со скидкой (только 60 и 90 дней, разовая акция) */
+  paymentPlanDiscountedPrices: { 60: 143, 90: 199 } as Record<number, number>,
 
-  paymentConfirmTitle: (days: number, price: number) =>
-    `💳 *Оплата подписки ${days} дней*\n\nСумма: *${price} ₽*\n\nНажмите «Оплатить» для завершения (тестовый режим).`,
+  paymentConfirmTitle: (days: number, price: number, isDiscounted: boolean) =>
+    '💳 *Подтверждение оплаты*\n\n' +
+    `Тариф: *${days} дней*\n` +
+    `Сумма: *${price} ₽*${isDiscounted ? ' _(скидка)_' : ''}\n\n` +
+    '📄 После оплаты вы сразу получите:\n' +
+    '• Файл конфигурации \\.conf\n' +
+    '• QR\\-код для быстрой настройки на телефоне\n' +
+    '• Инструкцию в разделе «Инструкция»\n\n' +
+    '_Тестовый режим оплаты — нажмите «Оплатить» для завершения\\._',
 
   paymentConfirmKeyboard: (days: number) =>
     new InlineKeyboard()
@@ -286,7 +306,10 @@ export const BotUi = {
       .row()
       .text('« Назад к тарифам', 'show_create_options'),
 
-  paymentSuccessTitle: '✅ *Оплата прошла успешно!*',
+  paymentSuccessTitle:
+    '✅ *Оплата прошла успешно\\!*\n\n' +
+    'Создаю ваш конфиг\\... Через секунду вы получите файл\\.\n\n' +
+    '_Далее: откройте раздел «Инструкция» и выберите вашу платформу для пошаговой настройки\\._',
 
   backToMenuKeyboard: () => new InlineKeyboard().text('В меню', 'main_menu'),
 
@@ -384,13 +407,27 @@ export const BotUi = {
 
   welcomeMessage: '👋 *TUNEL VPN*\n\nВыберите действие:',
   creatingConfig: '⏳ *Создаю конфигурацию...*',
-  noConfigs: '📂 *У вас пока нет активных конфигураций.*',
+  noConfigs:
+    '📂 *У вас пока нет конфигураций*\n\n' +
+    'Нажмите «Получить VPN», чтобы:\n' +
+    '• Получить пробный конфиг на 3 дня (_бесплатно, один раз_)\n' +
+    '• Или выбрать тариф 30, 60 или 90 дней\n\n' +
+    'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
 
   configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ Конфиг *${name}* создан!\nIP: \`${ip}\``;
+    let msg = `✅ *Конфиг ${name} создан\\!*\n\n` + `🌐 IP: \`${ip}\`\n`;
     if (expiresAt) {
-      msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
+      msg += `📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}\n\n`;
+    } else {
+      msg += '\n';
     }
+    msg +=
+      '*Дальнейшие шаги:*\n' +
+      '1\\. Откройте файл в приложении WireGuard\n' +
+      '2\\. Нажмите «Подключить» в приложении\n' +
+      '3\\. Готово — VPN активен\n\n' +
+      '_Подробная инструкция для каждой платформы — в разделе «Инструкция»\\._\n\n' +
+      '_На телефоне можно использовать кнопку «QR\\-код» в карточке конфига для быстрой настройки\\._';
     return msg;
   },
 
@@ -413,7 +450,9 @@ export const BotUi = {
 
   replacingConfig: '⏳ *Заменяю конфигурацию...*',
 
-  configsListTitle: (count: number) => `📂 *Ваши конфигурации (${count}):*`,
+  configsListTitle: (count: number) =>
+    `📂 *Ваши конфигурации (${count})*\n\n` +
+    '_Нажмите на конфиг — откроется управление, QR-код и файл для скачивания_',
 
   peerDetailsText: (peer: TPeer, isAdmin: boolean = false) => {
     const expired = isExpired(peer);
@@ -435,6 +474,17 @@ export const BotUi = {
       `🌐 IP: \`${peer.ip}\`\n` +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
+
+    if (!expired && !peer.paused) {
+      text +=
+        '\n📱 *Подключение:*\n' +
+        '• Нажмите «QR\\-код» — для настройки на телефоне\n' +
+        '• «Получить файл» — для компьютера или повторной загрузки';
+    } else if (expired) {
+      text += '\n\n_Конфиг истёк. Нажмите «Продлить» для продления подписки._';
+    } else if (peer.paused) {
+      text += '\n\n_Конфиг на паузе. Администратор может включить его._';
+    }
 
     // Описание видят только админы
     if (isAdmin && peer.description) {
@@ -722,11 +772,13 @@ export const BotUi = {
   backToOwnPeerKeyboard: (peerName: string) =>
     new InlineKeyboard().text('« К конфигу', `manage_peer:${peerName}`),
 
-  // Кнопка для перехода к конфигу через новое сообщение (для использования после отправки документов)
   backToOwnPeerKeyboardReply: (peerName: string) =>
     new InlineKeyboard().text('« К конфигу', `goto_peer:${peerName}`),
-
-  // === Поиск клиентов (для админов) ===
+  backToOwnPeerKeyboardReplyAfterReplace: (peerName: string) =>
+    new InlineKeyboard().text(
+      '« К конфигу',
+      `goto_peer_after_replace:${peerName}`,
+    ),
 
   clientSearchPrompt:
     '🔍 *Поиск клиента*\n\n' +
@@ -943,8 +995,9 @@ export const BotUi = {
 
   instructionsMenuTitle:
     '📖 *Инструкция по установке WireGuard*\n\n' +
-    'Выберите платформу для пошаговой инструкции.\n\n' +
-    '🎬 _Есть видео-инструкции — нажмите кнопку ниже_',
+    'Выберите вашу платформу — откроется пошаговая инструкция с прямыми ссылками на приложение.\n\n' +
+    '⏱ _Обычно настройка занимает 2–3 минуты_\n' +
+    '🎬 _Есть видео-инструкции — кнопка ниже_',
 
   instructionsMenuKeyboard: () =>
     new InlineKeyboard()

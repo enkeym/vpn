@@ -43,6 +43,23 @@ export const blockedUsers = sqliteTable(
   ],
 );
 
+/** Разовая акция: скидка на первое продление 60 или 90 дней (взаимоисключающая) */
+export const userPromoUsage = sqliteTable(
+  'user_promo_usage',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    telegramId: text('telegramId').notNull().unique(),
+    /** Использованный тариф со скидкой: 60 или 90 (после использования второй тариф без скидки) */
+    usedDiscountTier: integer('usedDiscountTier').notNull(), // 60 | 90
+    createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
+      () => new Date(),
+    ),
+  },
+  (table) => [index('user_promo_telegram_idx').on(table.telegramId)],
+);
+
 export const peers = sqliteTable(
   'peers',
   {
@@ -86,3 +103,4 @@ export const peers = sqliteTable(
     index('peers_expiration_idx').on(table.paused, table.expiresAt),
   ],
 );
+

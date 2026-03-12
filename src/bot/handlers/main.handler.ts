@@ -74,7 +74,9 @@ export class MainHandler {
         reply_markup: keyboard,
         parse_mode: 'MarkdownV2',
       });
-    } catch {
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      if (msg.includes('not modified') || msg.includes('message to edit not found')) return;
       await ctx.reply(welcomeMessage, {
         reply_markup: keyboard,
         parse_mode: 'MarkdownV2',
@@ -90,7 +92,9 @@ export class MainHandler {
         reply_markup: BotUi.instructionsMenuKeyboard(),
         parse_mode: 'Markdown',
       });
-    } catch {
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      if (msg.includes('not modified') || msg.includes('message to edit not found')) return;
       await ctx.reply(BotUi.instructionsMenuTitle, {
         reply_markup: BotUi.instructionsMenuKeyboard(),
         parse_mode: 'Markdown',

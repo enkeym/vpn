@@ -76,8 +76,26 @@ export class PeerManageHandler {
     }
   }
 
-  // Показать детали конфига через новое сообщение (для использования после документов)
-  async showPeerDetailsReply(
+  // Возврат с документа/QR в карточку конфига (кнопка «К конфигу» на файле)
+  // Детали конфига уже выше — просто удаляем документ, без нового сообщения
+  async showPeerDetailsReply(ctx: Context, peerName: string) {
+    try {
+      await this.peersService.findPeer(peerName);
+
+      await ctx.deleteMessage().catch(() => {
+        // Игнорируем ошибку удаления
+      });
+      await ctx.answerCallbackQuery();
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: 'Конфиг не найден',
+        show_alert: true,
+      });
+    }
+  }
+
+  // Возврат после замены конфига — родитель удалён, удаляем документ и отправляем детали
+  async showPeerDetailsReplyAfterReplace(
     ctx: Context,
     peerName: string,
     isAdmin: boolean = false,
@@ -85,14 +103,8 @@ export class PeerManageHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
-      // Удаляем текущее сообщение (с документом)
-      try {
-        await ctx.deleteMessage();
-      } catch {
-        // Игнорируем ошибку удаления
-      }
+      await ctx.deleteMessage().catch(() => {});
 
-      // Отправляем новое сообщение с деталями
       await ctx.reply(BotUi.peerDetailsText(peer, isAdmin), {
         reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
         parse_mode: 'Markdown',
@@ -312,7 +324,7 @@ export class PeerManageHandler {
         // Игнорируем ошибку удаления
       }
 
-      // Отправляем новый конфиг файлом (используем ReplyKeyboard для документов)
+      // Отправляем новый конфиг файлом (родитель удалён — нужна клавиатура с goto_peer_after_replace)
       await ctx.replyWithDocument(
         new InputFile(Buffer.from(config), `${newPeer.name}.conf`),
         {
@@ -322,7 +334,7 @@ export class PeerManageHandler {
             newPeer.expiresAt,
           ),
           parse_mode: 'Markdown',
-          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+          reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
         },
       );
     } catch (error) {
