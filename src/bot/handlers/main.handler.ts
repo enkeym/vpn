@@ -13,6 +13,9 @@ function getVpnGifPath(): string | null {
   const candidates = [
     path.join(process.cwd(), 'vpn.gif'),
     path.join(process.cwd(), 'src', 'assets', 'vpn.gif'),
+    // dist/src/bot/handlers -> dist/src/assets (Docker / production)
+    path.join(__dirname, '..', '..', 'assets', 'vpn.gif'),
+    // src/bot/handlers -> src/assets (dev)
     path.join(__dirname, '..', '..', 'src', 'assets', 'vpn.gif'),
     path.join(__dirname, '..', '..', '..', 'vpn.gif'),
   ];

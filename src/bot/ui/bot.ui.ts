@@ -355,7 +355,9 @@ export const BotUi = {
       keyboard.text(descriptionBtnText, `edit_description:${peer.name}`);
     }
 
-    keyboard.row().text('🔁 Заменить конфиг', `replace_peer:${peer.name}`);
+    if (!expired) {
+      keyboard.row().text('🔁 Заменить конфиг', `replace_peer:${peer.name}`);
+    }
 
     if (isAdmin) {
       keyboard.row().text('Удалить', `delete_peer:${peer.name}`);
