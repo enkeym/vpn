@@ -105,7 +105,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     // Middleware проверки доступа: админы и члены группы "Семья"
     this.bot.use(async (ctx, next) => {
       if (!ctx.from) {
-        // Отвечаем на callback query, чтобы кнопка не зависала
         if (ctx.callbackQuery) {
           try {
             await ctx.answerCallbackQuery({
@@ -121,30 +120,26 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
       const userId = String(ctx.from.id);
 
-      // Проверяем, является ли админом
       if (this.isAdmin(userId)) {
         await next();
         return;
       }
 
-      // Проверяем, заблокирован ли пользователь
+      // Сразу отвечаем на callback, чтобы кнопка перестала «крутиться» (до isBlocked)
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.answerCallbackQuery();
+        } catch {
+          // Игнорируем
+        }
+      }
+
       const isBlocked = await this.blockedUsersService.isBlocked(userId);
       if (isBlocked) {
-        // Отвечаем на callback query, чтобы кнопка не зависала
-        if (ctx.callbackQuery) {
-          try {
-            await ctx.answerCallbackQuery({
-              text: 'Вы заблокированы',
-              show_alert: true,
-            });
-          } catch {
-            // Игнорируем
-          }
-        }
+        await ctx.reply('Вы заблокированы.').catch(() => {});
         return;
       }
 
-      // Все остальные пользователи тоже получают доступ (оплата через меню при создании конфига)
       await next();
     });
 
@@ -215,7 +210,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     );
 
     this.bot.callbackQuery('main_menu', async (ctx) => {
-      await ctx.answerCallbackQuery();
+      try {
+        await ctx.answerCallbackQuery();
+      } catch {
+        // Уже отвечено в middleware (для не-админов)
+      }
       await this.mainHandler.showMainMenu(ctx);
     });
 
