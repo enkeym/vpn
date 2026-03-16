@@ -283,7 +283,10 @@ export class PeersService {
       telegramId: String(telegramId),
       usedDiscountTier: tier,
     });
-    this.cacheService.delete(CACHE_NAMESPACES.HAS_USED_DISCOUNT, String(telegramId));
+    this.cacheService.delete(
+      CACHE_NAMESPACES.HAS_USED_DISCOUNT,
+      String(telegramId),
+    );
   }
 
   async createPeer(dto: ICreatePeer) {
@@ -977,6 +980,24 @@ export class PeersService {
     this.logger.log(
       `Обновлен срок действия конфига ${peerName}: ${expiresAt ? expiresAt.toISOString() : 'бессрочно'}`,
     );
+  }
+
+  /**
+   * Продлевает срок действия конфига на указанное количество дней.
+   * Если конфиг уже истёк — отсчёт от текущей даты, иначе — от даты истечения.
+   */
+  async extendPeerExpiration(
+    peerName: string,
+    durationDays: number,
+  ): Promise<TPeerSelect> {
+    const peer = await this.findPeer(peerName);
+    const now = new Date();
+    const base = peer.expiresAt && peer.expiresAt > now ? peer.expiresAt : now;
+    const newExpiresAt = new Date(
+      base.getTime() + durationDays * 24 * 60 * 60 * 1000,
+    );
+    await this.updatePeerExpiration(peerName, newExpiresAt);
+    return this.findPeer(peerName);
   }
 
   async updatePeerDescription(

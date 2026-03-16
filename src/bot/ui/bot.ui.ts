@@ -284,6 +284,22 @@ export const BotUi = {
     return kb;
   },
 
+  /** Клавиатура тарифов для продления существующего конфига */
+  paymentPlansKeyboardForExtend: (peerName: string, hasDiscount: boolean) => {
+    const kb = new InlineKeyboard();
+    kb.text('🔥 30 дней — 99 ₽', `extend_pay_plan:30:${peerName}`).row();
+    kb.text(
+      hasDiscount ? '💎 60 дней — 143 ₽ 🎁' : '💎 60 дней — 179 ₽',
+      `extend_pay_plan:60:${peerName}`,
+    ).row();
+    kb.text(
+      hasDiscount ? '👑 90 дней — 199 ₽ 🎁' : '👑 90 дней — 249 ₽',
+      `extend_pay_plan:90:${peerName}`,
+    ).row();
+    kb.text('« Назад в меню', 'main_menu');
+    return kb;
+  },
+
   paymentPlanPrices: { 30: 99, 60: 179, 90: 249 } as Record<number, number>,
   /** Цены со скидкой (только 60 и 90 дней, разовая акция) */
   paymentPlanDiscountedPrices: { 60: 143, 90: 199 } as Record<number, number>,
@@ -303,6 +319,13 @@ export const BotUi = {
       .text('✅ Оплатить', `pay_confirm:${days}`)
       .row()
       .text('« Назад к тарифам', 'show_create_options'),
+
+  /** Клавиатура подтверждения для продления конфига */
+  paymentConfirmKeyboardForExtend: (days: number, peerName: string) =>
+    new InlineKeyboard()
+      .text('✅ Оплатить', `extend_pay_confirm:${days}:${peerName}`)
+      .row()
+      .text('« Назад к тарифам', `extend_pay_plans:${peerName}`),
 
   paymentSuccessTitle:
     '✅ *Оплата прошла успешно!*\n\n' +

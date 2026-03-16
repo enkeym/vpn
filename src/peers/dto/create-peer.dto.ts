@@ -11,7 +11,9 @@ export class CreatePeerDto {
   username?: string;
 
   @IsOptional()
-  @IsIn([3, 30, 60, 90], { message: 'durationDays должно быть 3, 30, 60 или 90' })
+  @IsIn([3, 30, 60, 90], {
+    message: 'durationDays должно быть 3, 30, 60 или 90',
+  })
   durationDays?: SubscriptionDuration;
 
   /** Пробный конфиг на 3 дня (доступен только один раз на пользователя) */

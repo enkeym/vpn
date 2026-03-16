@@ -186,7 +186,10 @@ export class AdminHandler {
       });
     } catch (error) {
       this.logger.error(`Ошибка показа сводки аналитики: ${error}`);
-      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка загрузки',
+        show_alert: true,
+      });
     }
   }
 
@@ -200,7 +203,10 @@ export class AdminHandler {
       });
     } catch (error) {
       this.logger.error(`Ошибка показа аналитики по срокам: ${error}`);
-      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка загрузки',
+        show_alert: true,
+      });
     }
   }
 
@@ -214,7 +220,10 @@ export class AdminHandler {
       });
     } catch (error) {
       this.logger.error(`Ошибка показа пробных конфигов: ${error}`);
-      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка загрузки',
+        show_alert: true,
+      });
     }
   }
 
@@ -228,7 +237,10 @@ export class AdminHandler {
       });
     } catch (error) {
       this.logger.error(`Ошибка показа последних конфигов: ${error}`);
-      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка загрузки',
+        show_alert: true,
+      });
     }
   }
 
@@ -242,7 +254,10 @@ export class AdminHandler {
       });
     } catch (error) {
       this.logger.error(`Ошибка показа истекающих конфигов: ${error}`);
-      await ctx.answerCallbackQuery({ text: 'Ошибка загрузки', show_alert: true });
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка загрузки',
+        show_alert: true,
+      });
     }
   }
 

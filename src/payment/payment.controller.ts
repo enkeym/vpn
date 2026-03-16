@@ -91,30 +91,55 @@ export class PaymentController {
 
         const durationDays = payment.durationDays as SubscriptionDuration;
         const isPromo = payment.isPromo;
+        const peerName = payment.peerName;
 
         try {
-          // Создаем конфиг для пользователя
-          const { config, peer } = await this.peersService.createPeer({
-            telegramId: payment.telegramId,
-            durationDays,
-            isTrial: false,
-          });
-
-          if (isPromo && (durationDays === 60 || durationDays === 90)) {
-            await this.peersService.recordPromoUsage(
-              payment.telegramId,
+          if (peerName) {
+            // Продление существующего конфига
+            const peer = await this.peersService.extendPeerExpiration(
+              peerName,
               durationDays,
             );
-          }
+            const config =
+              await this.peersService.getPeerConfigString(peerName);
 
-          // Уведомляем пользователя через бота
-          await this.botService.notifyPaymentSuccess(
-            payment.telegramId,
-            config,
-            peer,
-            durationDays,
-            payment.amount,
-          );
+            if (isPromo && (durationDays === 60 || durationDays === 90)) {
+              await this.peersService.recordPromoUsage(
+                payment.telegramId,
+                durationDays,
+              );
+            }
+
+            await this.botService.notifyExtendSuccess(
+              payment.telegramId,
+              config,
+              peer,
+              durationDays,
+              payment.amount,
+            );
+          } else {
+            // Создаем новый конфиг для пользователя
+            const { config, peer } = await this.peersService.createPeer({
+              telegramId: payment.telegramId,
+              durationDays,
+              isTrial: false,
+            });
+
+            if (isPromo && (durationDays === 60 || durationDays === 90)) {
+              await this.peersService.recordPromoUsage(
+                payment.telegramId,
+                durationDays,
+              );
+            }
+
+            await this.botService.notifyPaymentSuccess(
+              payment.telegramId,
+              config,
+              peer,
+              durationDays,
+              payment.amount,
+            );
+          }
         } catch (error) {
           this.logger.error(
             `Error providing service after payment ${yookassaId}`,

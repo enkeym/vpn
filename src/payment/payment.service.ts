@@ -30,8 +30,15 @@ export class PaymentService {
     amount: number,
     durationDays: number,
     isPromo = false,
+    peerName?: string,
   ) {
     const idempotenceKey = randomUUID();
+    const metadata: Record<string, string> = {
+      telegramId,
+      durationDays: String(durationDays),
+      isPromo: String(isPromo),
+    };
+    if (peerName) metadata.peerName = peerName;
 
     try {
       const response = await axios.post(
@@ -43,8 +50,10 @@ export class PaymentService {
             type: 'redirect',
             return_url: `https://t.me/${this.configService.get('TELEGRAM_BOT_USERNAME') || 'bot'}`,
           },
-          description: `Оплата VPN TUNEL на ${durationDays} дней`,
-          metadata: { telegramId, durationDays, isPromo: String(isPromo) },
+          description: peerName
+            ? `Продление VPN TUNEL на ${durationDays} дней`
+            : `Оплата VPN TUNEL на ${durationDays} дней`,
+          metadata,
         },
         {
           headers: {
@@ -65,6 +74,7 @@ export class PaymentService {
         status: paymentData.status,
         durationDays,
         isPromo,
+        peerName: peerName ?? null,
       });
 
       return paymentData;
@@ -86,17 +96,16 @@ export class PaymentService {
   /**
    * Получить статус платежа из API ЮKassa (для верификации вебхука)
    */
-  async getPaymentStatusFromYooKassa(yookassaId: string): Promise<string | null> {
+  async getPaymentStatusFromYooKassa(
+    yookassaId: string,
+  ): Promise<string | null> {
     try {
-      const response = await axios.get(
-        `${this.apiUrl}/${yookassaId}`,
-        {
-          headers: {
-            Authorization: this.authHeader,
-            'Content-Type': 'application/json',
-          },
+      const response = await axios.get(`${this.apiUrl}/${yookassaId}`, {
+        headers: {
+          Authorization: this.authHeader,
+          'Content-Type': 'application/json',
         },
-      );
+      });
       return response.data?.status ?? null;
     } catch (error) {
       this.logger.error(

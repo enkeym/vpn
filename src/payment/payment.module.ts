@@ -6,11 +6,7 @@ import { BotModule } from '../bot/bot.module';
 import { DatabaseModule } from '../database/database.module';
 
 @Module({
-  imports: [
-    DatabaseModule,
-    PeersModule,
-    forwardRef(() => BotModule),
-  ],
+  imports: [DatabaseModule, PeersModule, forwardRef(() => BotModule)],
   providers: [PaymentService],
   controllers: [PaymentController],
   exports: [PaymentService],

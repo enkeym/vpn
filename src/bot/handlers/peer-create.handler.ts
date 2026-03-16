@@ -36,6 +36,51 @@ export class PeerCreateHandler {
     });
   }
 
+  /** Меню тарифов для продления существующего конфига */
+  async showPaymentPlansForExtend(ctx: Context, peerName: string) {
+    if (!ctx.from) return;
+    const hasDiscount = !(await this.peersService.hasUsedFirstPurchaseDiscount(
+      String(ctx.from.id),
+    ));
+    const title =
+      '🔄 *Продление конфига*\n\n' +
+      'Выберите тариф для продления подписки. После оплаты срок действия вашего конфига будет продлён.\n\n' +
+      (hasDiscount
+        ? '🎁 *Разовая акция:* скидка на 60 или 90 дней при первой покупке.\n\n'
+        : '');
+    await ctx.editMessageText(title, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.paymentPlansKeyboardForExtend(peerName, hasDiscount),
+    });
+  }
+
+  /** Подтверждение оплаты для продления конфига */
+  async showPaymentConfirmForExtend(
+    ctx: Context,
+    durationDays: 30 | 60 | 90,
+    peerName: string,
+  ) {
+    if (!ctx.from) return;
+    const hasDiscount = !(await this.peersService.hasUsedFirstPurchaseDiscount(
+      String(ctx.from.id),
+    ));
+    const isDiscounted =
+      hasDiscount && (durationDays === 60 || durationDays === 90);
+    const price = isDiscounted
+      ? BotUi.paymentPlanDiscountedPrices[durationDays]
+      : BotUi.paymentPlanPrices[durationDays];
+    await ctx.editMessageText(
+      BotUi.paymentConfirmTitle(durationDays, price, isDiscounted),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.paymentConfirmKeyboardForExtend(
+          durationDays,
+          peerName,
+        ),
+      },
+    );
+  }
+
   /** Подтверждение оплаты (мок) перед созданием конфига */
   async showPaymentConfirm(ctx: Context, durationDays: 30 | 60 | 90) {
     if (!ctx.from) return;

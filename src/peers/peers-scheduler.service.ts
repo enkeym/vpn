@@ -30,22 +30,17 @@ export class PeersSchedulerService {
   /** Раз в месяц удаляем конфиги, которые на паузе больше месяца */
   @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT)
   async handlePeersPausedOverMonth() {
-    this.logger.log(
-      'Запуск проверки конфигов на паузе более месяца...',
-    );
+    this.logger.log('Запуск проверки конфигов на паузе более месяца...');
 
     try {
-      const deletedCount =
-        await this.peersService.deletePeersPausedOverMonth();
+      const deletedCount = await this.peersService.deletePeersPausedOverMonth();
 
       if (deletedCount > 0) {
         this.logger.log(
           `Удалено конфигов (на паузе > месяца): ${deletedCount}`,
         );
       } else {
-        this.logger.log(
-          'Конфигов на паузе более месяца не найдено',
-        );
+        this.logger.log('Конфигов на паузе более месяца не найдено');
       }
     } catch (error) {
       this.logger.error(

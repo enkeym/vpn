@@ -1,0 +1,1 @@
+ALTER TABLE `payments` ADD `peerName` text;

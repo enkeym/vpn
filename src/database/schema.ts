@@ -117,6 +117,8 @@ export const payments = sqliteTable(
     status: text('status').notNull(), // 'pending', 'succeeded', 'canceled', 'waiting_for_capture'
     durationDays: integer('durationDays').notNull(),
     isPromo: integer('isPromo', { mode: 'boolean' }).notNull().default(false),
+    /** Имя конфига для продления (null = новая покупка) */
+    peerName: text('peerName'),
     createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
       () => new Date(),
     ),
@@ -130,4 +132,3 @@ export const payments = sqliteTable(
     index('payments_status_idx').on(table.status),
   ],
 );
-

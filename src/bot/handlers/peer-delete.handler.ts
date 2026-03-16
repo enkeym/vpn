@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { Context } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { PeerManageHandler } from './peer-manage.handler';
@@ -20,11 +16,7 @@ export class PeerDeleteHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
-      if (
-        !isAdmin &&
-        ctx.from &&
-        String(ctx.from.id) !== peer.telegramId
-      ) {
+      if (!isAdmin && ctx.from && String(ctx.from.id) !== peer.telegramId) {
         throw new ForbiddenException('Нет доступа к удалению чужого конфига');
       }
 

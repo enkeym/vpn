@@ -169,7 +169,10 @@ export class NotificationService implements OnModuleInit {
   /**
    * Отправить информационное уведомление
    */
-  async notifyInfo(title: string, details: string): Promise<NotificationResult[]> {
+  async notifyInfo(
+    title: string,
+    details: string,
+  ): Promise<NotificationResult[]> {
     const message = [
       `ℹ️ *${title}*`,
       ``,

@@ -350,13 +350,94 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.peerDeleteHandler.deletePeer(ctx, peerName, isAdmin);
     });
 
-    // Продление конфига (пока просто уведомление)
+    // Продление конфига — переход в меню оплаты
     this.bot.callbackQuery(/^extend_peer:(.+)$/, async (ctx) => {
-      await ctx.answerCallbackQuery({
-        text: '🚧 Функция продления скоро будет доступна',
-        show_alert: true,
-      });
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
     });
+
+    // Возврат к тарифам при продлении
+    this.bot.callbackQuery(/^extend_pay_plans:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const peerName = ctx.match[1];
+      await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
+    });
+
+    // Выбор тарифа при продлении
+    this.bot.callbackQuery(/^extend_pay_plan:(30|60|90):(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const days = Number(ctx.match[1]) as 30 | 60 | 90;
+      const peerName = ctx.match[2];
+      await this.peerCreateHandler.showPaymentConfirmForExtend(
+        ctx,
+        days,
+        peerName,
+      );
+    });
+
+    // Подтверждение оплаты при продлении
+    this.bot.callbackQuery(
+      /^extend_pay_confirm:(30|60|90):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from) return;
+        const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
+        const peerName = ctx.match[2];
+        const telegramId = String(ctx.from.id);
+
+        try {
+          await ctx.answerCallbackQuery({ text: 'Формирую счет...' });
+
+          const hasUsedDiscount =
+            await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
+          const isPromo =
+            !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
+          const price = isPromo
+            ? BotUi.paymentPlanDiscountedPrices[durationDays]
+            : BotUi.paymentPlanPrices[durationDays];
+
+          const payment = await this.paymentService.createPayment(
+            telegramId,
+            price,
+            durationDays,
+            isPromo,
+            peerName,
+          );
+
+          await ctx.editMessageText(
+            `💳 *Счёт на оплату сформирован*\n\n` +
+              `Тариф: *${durationDays} дней* (продление)\n` +
+              `Сумма к оплате: *${price} ₽*\n\n` +
+              `Нажмите кнопку ниже, чтобы перейти к безопасной оплате через ЮKassa. ` +
+              `После завершения платежа срок действия вашего конфига будет продлён автоматически.`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    {
+                      text: '💳 Оплатить',
+                      url: payment.confirmation.confirmation_url,
+                    },
+                  ],
+                  [
+                    {
+                      text: '« Назад к тарифам',
+                      callback_data: `extend_pay_plans:${peerName}`,
+                    },
+                  ],
+                ],
+              },
+            },
+          );
+        } catch (error) {
+          this.logger.error('Error in extend_pay_confirm', error);
+          await ctx.reply(
+            '❌ Произошла ошибка при формировании счета. Попробуйте позже или обратитесь в поддержку.',
+          );
+        }
+      },
+    );
 
     // Замена конфига (раз в день)
     this.bot.callbackQuery(/^replace_peer:(.+)$/, async (ctx) => {
@@ -1056,6 +1137,43 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(
         `Error notifying user ${telegramId} about payment success`,
+        error,
+      );
+    }
+  }
+
+  /** Уведомление об успешном продлении конфига */
+  async notifyExtendSuccess(
+    telegramId: string,
+    config: string,
+    peer: TPeer,
+    durationDays: number,
+    amount: number,
+  ) {
+    try {
+      await this.bot.api.sendMessage(
+        telegramId,
+        `✅ *Продление прошло успешно!* (${amount} ₽)\n\n` +
+          `Конфиг *${peer.name}* продлён на *${durationDays} дней*. ` +
+          `Новый срок действия: до ${peer.expiresAt ? new Date(peer.expiresAt).toLocaleDateString('ru-RU') : '—'}. ` +
+          `Через мгновение пришлю обновлённый файл.`,
+        { parse_mode: 'Markdown' },
+      );
+
+      const message = await this.bot.api.sendDocument(
+        telegramId,
+        new InputFile(Buffer.from(config), `${peer.name}.conf`),
+        {
+          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToMenuKeyboard(),
+        },
+      );
+
+      await this.peersService.setConfigMessageId(peer.name, message.message_id);
+    } catch (error) {
+      this.logger.error(
+        `Error notifying user ${telegramId} about extend success`,
         error,
       );
     }

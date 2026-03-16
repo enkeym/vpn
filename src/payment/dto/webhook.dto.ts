@@ -1,9 +1,4 @@
-import {
-  IsString,
-  IsOptional,
-  ValidateNested,
-  IsIn,
-} from 'class-validator';
+import { IsString, IsOptional, ValidateNested, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class YooKassaWebhookObjectDto {
