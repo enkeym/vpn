@@ -112,7 +112,7 @@ export class MainHandler {
     const sendTextAndGif = async () => {
       await ctx.reply(welcomeMessage, {
         reply_markup: keyboard,
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
       });
       await trySendGif();
     };
@@ -120,7 +120,7 @@ export class MainHandler {
     try {
       await ctx.editMessageText(welcomeMessage, {
         reply_markup: keyboard,
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
       });
       await trySendGif();
     } catch (err) {
@@ -158,7 +158,7 @@ export class MainHandler {
     try {
       await ctx.editMessageText(welcomeMessage, {
         reply_markup: keyboard,
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
       });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
@@ -173,7 +173,7 @@ export class MainHandler {
       }
       await ctx.reply(welcomeMessage, {
         reply_markup: keyboard,
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
       });
     }
   }
@@ -213,13 +213,13 @@ export class MainHandler {
     try {
       await ctx.editMessageText(text, {
         reply_markup: BotUi.backToInstructionsKeyboard(),
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
         link_preview_options: { is_disabled: true },
       });
     } catch {
       await ctx.reply(text, {
         reply_markup: BotUi.backToInstructionsKeyboard(),
-        parse_mode: 'MarkdownV2',
+        parse_mode: 'Markdown',
         link_preview_options: { is_disabled: true },
       });
     }
