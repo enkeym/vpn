@@ -143,6 +143,24 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await next();
     });
 
+    // Пересланные сообщения при добавлении в группу (в т.ч. без текста: стикер, фото и т.д.)
+    this.bot.on('message', async (ctx, next) => {
+      if (!ctx.from || !ctx.message) return next();
+      const userId = String(ctx.from.id);
+      if (
+        !this.isAdmin(userId) ||
+        !this.familyHandler.isAwaitingInput(userId)
+      ) {
+        return next();
+      }
+      const msg = ctx.message;
+      const legacyFrom = (msg as { forward_from?: { id: number } }).forward_from;
+      if (!msg.forward_origin && !legacyFrom) {
+        return next();
+      }
+      await this.familyHandler.handleAddMemberInput(ctx);
+    });
+
     // Обработка текстовых сообщений для ввода данных члена группы
     this.bot.on('message:text', async (ctx, next) => {
       if (!ctx.from) return;

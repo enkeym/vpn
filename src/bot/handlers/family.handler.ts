@@ -108,7 +108,6 @@ export class FamilyHandler {
       reply_markup: BotUi.cancelKeyboard(),
     });
 
-    // Сохраняем ID prompt-сообщения для последующего удаления
     if (result && typeof result === 'object' && 'message_id' in result) {
       this.setAwaitingInput(String(ctx.from.id), {
         promptMessageId: result.message_id,
@@ -117,18 +116,66 @@ export class FamilyHandler {
     }
   }
 
+  /**
+   * Пересланное сообщение от пользователя (не канал/чат), с учётом скрытого профиля и совпадения с админом.
+   */
+  private resolveForwardedMemberTelegramId(
+    message: NonNullable<Context['message']>,
+    adminId: string,
+  ):
+    | { kind: 'id'; telegramId: string }
+    | { kind: 'admin_self' }
+    | { kind: 'hidden' }
+    | { kind: 'not_from_user' }
+    | { kind: 'none' } {
+    const origin = message.forward_origin;
+    if (origin) {
+      if (origin.type === 'user') {
+        const id = String(origin.sender_user.id);
+        if (id === adminId) return { kind: 'admin_self' };
+        return { kind: 'id', telegramId: id };
+      }
+      if (origin.type === 'hidden_user') {
+        return { kind: 'hidden' };
+      }
+      return { kind: 'not_from_user' };
+    }
+    const legacyFrom = (message as { forward_from?: { id: number } })
+      .forward_from;
+    if (legacyFrom) {
+      const id = String(legacyFrom.id);
+      if (id === adminId) return { kind: 'admin_self' };
+      return { kind: 'id', telegramId: id };
+    }
+    return { kind: 'none' };
+  }
+
+  private async rearmAddMemberPrompt(
+    ctx: Context,
+    adminId: string,
+    text: string,
+  ) {
+    const errorMsg = await ctx.reply(text, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.cancelKeyboard(),
+    });
+    this.setAwaitingInput(adminId, {
+      promptMessageId: errorMsg.message_id,
+      chatId: ctx.chat!.id,
+    });
+  }
+
   async handleAddMemberInput(ctx: Context) {
-    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
+    if (!ctx.from || !ctx.message || !ctx.chat) return;
 
     const adminId = String(ctx.from.id);
     const state = this.getAwaitingInputState(adminId);
     this.setAwaitingInput(adminId, null);
-
-    const input = ctx.message.text.trim();
+    const message = ctx.message;
 
     // Удаляем сообщение пользователя
     try {
-      await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id);
+      await ctx.api.deleteMessage(ctx.chat.id, message.message_id);
     } catch {
       // Игнорируем ошибку удаления
     }
@@ -142,21 +189,32 @@ export class FamilyHandler {
       }
     }
 
-    // Принимаем только telegramId (числа)
-    if (!/^\d+$/.test(input)) {
-      const errorMsg = await ctx.reply(BotUi.invalidInput, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelKeyboard(),
-      });
-      // Сохраняем новое prompt-сообщение
-      this.setAwaitingInput(adminId, {
-        promptMessageId: errorMsg.message_id,
-        chatId: ctx.chat.id,
-      });
+    const forwarded = this.resolveForwardedMemberTelegramId(message, adminId);
+
+    if (forwarded.kind === 'admin_self') {
+      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.cannotAddAdminSelf);
+      return;
+    }
+    if (forwarded.kind === 'hidden') {
+      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.forwardHiddenUser);
+      return;
+    }
+    if (forwarded.kind === 'not_from_user') {
+      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.forwardNotFromUser);
       return;
     }
 
-    const telegramId = input;
+    let telegramId: string | undefined;
+    if (forwarded.kind === 'id') {
+      telegramId = forwarded.telegramId;
+    } else {
+      const input = message.text?.trim();
+      if (!input || !/^\d+$/.test(input)) {
+        await this.rearmAddMemberPrompt(ctx, adminId, BotUi.invalidInput);
+        return;
+      }
+      telegramId = input;
+    }
 
     try {
       const member = await this.familyService.addMember(adminId, telegramId);
