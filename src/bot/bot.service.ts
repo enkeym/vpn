@@ -38,6 +38,15 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private readonly unsettledPollThrottleByUser = new Map<string, number>();
   private static readonly UNSETTLED_POLL_MIN_INTERVAL_MS = 8_000;
 
+  /** Пока открыт счёт ЮKassa — опрос статуса раз в 5 с (до успеха, отмены или выхода из оплаты) */
+  private readonly invoicePaymentPollByTelegramId = new Map<
+    string,
+    ReturnType<typeof setInterval>
+  >();
+  private static readonly INVOICE_POLL_MS = 5_000;
+  /** 720 × 5 с = 1 ч — защита от вечного таймера, кнопка «Проверить оплату» остаётся */
+  private static readonly INVOICE_POLL_MAX_TICKS = 720;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly mainHandler: MainHandler,
@@ -137,6 +146,113 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     await this.syncUnsettledPayments(ctx);
   }
 
+  private stopInvoicePaymentPollingForUser(telegramId: string): void {
+    const id = this.invoicePaymentPollByTelegramId.get(telegramId);
+    if (id !== undefined) {
+      clearInterval(id);
+      this.invoicePaymentPollByTelegramId.delete(telegramId);
+    }
+  }
+
+  /**
+   * Пока счёт не в финальном состоянии — каждые 5 с дергаем ЮKassa.
+   * Конец: succeeded (конфиг ушёл через fulfill), canceled в ЮKassa, отмена пользователем (stop извне), лимит тиков.
+   */
+  private startInvoicePaymentPolling(
+    telegramId: string,
+    yookassaId: string,
+    chatId: number,
+    messageId: number,
+  ): void {
+    this.stopInvoicePaymentPollingForUser(telegramId);
+
+    let ticks = 0;
+    let busy = false;
+
+    const finish = () => {
+      this.stopInvoicePaymentPollingForUser(telegramId);
+    };
+
+    const runOnce = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const row =
+          await this.paymentService.getPaymentByYookassaId(yookassaId);
+        if (!row || row.telegramId !== telegramId) {
+          finish();
+          return;
+        }
+
+        if (row.status === 'succeeded' || row.status === 'canceled') {
+          finish();
+          return;
+        }
+
+        const apiStatus =
+          await this.paymentService.getPaymentStatusFromYooKassa(yookassaId);
+        if (apiStatus == null) {
+          ticks += 1;
+          if (ticks >= BotService.INVOICE_POLL_MAX_TICKS) finish();
+          return;
+        }
+
+        const canceled = apiStatus === 'canceled' || apiStatus === 'cancelled';
+        if (canceled) {
+          await this.paymentService.updatePaymentStatus(yookassaId, 'canceled');
+          try {
+            await this.bot.api.editMessageText(
+              chatId,
+              messageId,
+              `❌ *Оплата отменена*\n\n` +
+                `Счёт в ЮKassa закрыт без успешной оплаты. Можете выбрать тариф снова.`,
+              {
+                parse_mode: 'Markdown',
+                reply_markup: BotUi.backToMenuKeyboard(),
+                link_preview_options: { is_disabled: true },
+              },
+            );
+          } catch {
+            // Сообщение уже изменено или удалено
+          }
+          finish();
+          return;
+        }
+
+        if (apiStatus === 'succeeded') {
+          const r = await this.paymentFulfillment.fulfillByYookassaId(
+            yookassaId,
+            telegramId,
+            { trustYooKassaSucceeded: true },
+          );
+          if (r === 'fulfilled' || r === 'already_done') {
+            finish();
+            return;
+          }
+        }
+
+        ticks += 1;
+        if (ticks >= BotService.INVOICE_POLL_MAX_TICKS) {
+          finish();
+        }
+      } catch (e) {
+        this.logger.warn(
+          `invoice poll ${yookassaId}: ${e instanceof Error ? e.message : e}`,
+        );
+        ticks += 1;
+        if (ticks >= BotService.INVOICE_POLL_MAX_TICKS) finish();
+      } finally {
+        busy = false;
+      }
+    };
+
+    const intervalId = setInterval(() => {
+      void runOnce();
+    }, BotService.INVOICE_POLL_MS);
+    this.invoicePaymentPollByTelegramId.set(telegramId, intervalId);
+    void runOnce();
+  }
+
   private paymentCheckCallbackHint(result: FulfillPaymentResult): {
     text: string;
     show_alert: boolean;
@@ -231,9 +347,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       `💳 *Оплата*\n\n` +
         `Тариф: *${durationDays} дней*\n` +
         `Сумма: *${price} ₽*\n\n` +
-        `Нажмите кнопку ниже — откроется ЮKassa. ` +
-        `После оплаты откройте возврат в магазин (или чат с ботом): статус проверится автоматически. ` +
-        `Если конфиг не пришёл — нажмите *«Проверить оплату»*.`,
+        `Нажмите *«Оплатить»* — откроется ЮKassa.\n\n` +
+        `Пока счёт не отменён и не оплачен, бот *каждые 5 секунд* проверяет статус в ЮKassa. ` +
+        `После успешной оплаты придёт конфиг; при отмене в банке текст счёта обновится.\n\n` +
+        `При необходимости — *«Проверить оплату»* вручную.`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -285,6 +402,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         String(chatId),
         messageIdAfterEdit,
       );
+      this.startInvoicePaymentPolling(
+        telegramId,
+        payment.id,
+        chatId,
+        messageIdAfterEdit,
+      );
     }
   }
 
@@ -318,9 +441,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       `💳 *Оплата (продление)*\n\n` +
         `Тариф: *${durationDays} дней*\n` +
         `Сумма: *${price} ₽*\n\n` +
-        `Нажмите кнопку ниже — откроется ЮKassa. ` +
-        `После оплаты вернитесь в чат с ботом (кнопка возврата в магазин). ` +
-        `Если срок не продлился — *«Проверить оплату»*.`,
+        `Нажмите *«Оплатить»* — откроется ЮKassa.\n\n` +
+        `Пока счёт активен, бот *каждые 5 секунд* проверяет статус; после оплаты придёт обновлённый конфиг.\n\n` +
+        `*«Проверить оплату»* — вручную, если нужно.`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -377,10 +500,20 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         String(chatId),
         messageIdAfterEdit,
       );
+      this.startInvoicePaymentPolling(
+        telegramId,
+        payment.id,
+        chatId,
+        messageIdAfterEdit,
+      );
     }
   }
 
   async onModuleDestroy() {
+    for (const t of this.invoicePaymentPollByTelegramId.values()) {
+      clearInterval(t);
+    }
+    this.invoicePaymentPollByTelegramId.clear();
     if (this.bot) {
       await this.bot.stop();
     }
@@ -564,6 +697,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.bot.callbackQuery('main_menu', async (ctx) => {
+      if (ctx.from) {
+        this.stopInvoicePaymentPollingForUser(String(ctx.from.id));
+      }
       try {
         await ctx.answerCallbackQuery();
       } catch {
@@ -689,6 +825,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     // Возврат к тарифам при продлении
     this.bot.callbackQuery(/^extend_pay_plans:(.+)$/, async (ctx) => {
+      if (ctx.from) {
+        this.stopInvoicePaymentPollingForUser(String(ctx.from.id));
+      }
       await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
@@ -736,12 +875,16 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot.callbackQuery(/^payment_check:(.+)$/, async (ctx) => {
       if (!ctx.from) return;
       const yookassaId = ctx.match[1];
+      const telegramId = String(ctx.from.id);
       try {
         const result = await this.paymentFulfillment.fulfillByYookassaId(
           yookassaId,
-          String(ctx.from.id),
+          telegramId,
           { trustYooKassaSucceeded: false },
         );
+        if (result === 'fulfilled' || result === 'already_done') {
+          this.stopInvoicePaymentPollingForUser(telegramId);
+        }
         const hint = this.paymentCheckCallbackHint(result);
         await ctx.answerCallbackQuery({
           text: hint.text,
