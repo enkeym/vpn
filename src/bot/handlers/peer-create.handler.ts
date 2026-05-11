@@ -3,6 +3,7 @@ import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from './main.handler';
 import { Context, InputFile } from 'grammy';
 import { BotUi } from '../ui/bot.ui';
+import { safeEditMessageText } from '../utils/safe-edit-message';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { PaymentService } from 'src/payment/payment.service';
 
@@ -17,7 +18,7 @@ export class PeerCreateHandler {
   ) {}
 
   async showCreateOptions(ctx: Context) {
-    await ctx.editMessageText(BotUi.selectDurationTitle, {
+    await safeEditMessageText(ctx, BotUi.selectDurationTitle, {
       parse_mode: 'Markdown',
       reply_markup: BotUi.createConfigKeyboard(),
     });
@@ -33,7 +34,8 @@ export class PeerCreateHandler {
             String(ctx.from.id),
           ));
     const testPayment = this.paymentService.isTestPayment();
-    await ctx.editMessageText(
+    await safeEditMessageText(
+      ctx,
       BotUi.paymentPlansTitle(hasDiscount, testPayment),
       {
         parse_mode: 'Markdown',
@@ -54,7 +56,7 @@ export class PeerCreateHandler {
       (hasDiscount
         ? '🎁 *Разовая акция:* скидка на 60 или 90 дней при первой покупке.\n\n'
         : '');
-    await ctx.editMessageText(title, {
+    await safeEditMessageText(ctx, title, {
       parse_mode: 'Markdown',
       reply_markup: BotUi.paymentPlansKeyboardForExtend(
         peerName,
@@ -79,7 +81,7 @@ export class PeerCreateHandler {
     if (!ctx.from) return;
 
     try {
-      await ctx.editMessageText(BotUi.creatingConfig, {
+      await safeEditMessageText(ctx, BotUi.creatingConfig, {
         parse_mode: 'Markdown',
       });
 
@@ -119,7 +121,7 @@ export class PeerCreateHandler {
     } catch (error) {
       this.logger.error(error);
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.editMessageText(BotUi.configError(errorMsg), {
+      await safeEditMessageText(ctx, BotUi.configError(errorMsg), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToMenuKeyboard(),
       });

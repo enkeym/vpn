@@ -17,12 +17,16 @@ import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
-import { PaymentService } from 'src/payment/payment.service';
+import {
+  PaymentService,
+  YOOKASSA_TELEGRAM_RETURN_START_PARAM,
+} from 'src/payment/payment.service';
 import {
   PaymentFulfillmentService,
   type FulfillPaymentResult,
 } from 'src/payment/payment-fulfillment.service';
 import { BotUi } from './ui/bot.ui';
+import { safeEditMessageText } from './utils/safe-edit-message';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -96,6 +100,22 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Редирект ЮKassa с `return_url` вида t.me/bot?start=syncpay → Telegram шлёт /start syncpay.
+   * Без этого апдейта бот не узнаёт о возврате из банка.
+   */
+  private isPostYookassaReturnStart(ctx: Context): boolean {
+    const text = ctx.message?.text;
+    if (typeof text !== 'string') return false;
+    const p = YOOKASSA_TELEGRAM_RETURN_START_PARAM.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      '\\$&',
+    );
+    return new RegExp(`^\\/start(?:@[A-Za-z0-9_]+)?\\s+${p}\\s*$`, 'i').test(
+      text.trim(),
+    );
+  }
+
+  /**
    * Если у пользователя есть pending-платежи — опрашиваем ЮKassa на каждом апдейте
    * (с троттлингом). Так конфиг приходит сразу после оплаты при возврате в чат,
    * без обязательного нажатия «Отмена» / главное меню.
@@ -144,7 +164,46 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Счёт ЮKassa: новая покупка (30/60/90 дней) */
+  private async updateInvoiceSuccessMessage(
+    chatId: number,
+    messageId: number,
+    text: string,
+  ): Promise<boolean> {
+    try {
+      await this.bot.api.editMessageText(chatId, messageId, text, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMenuKeyboard(),
+        link_preview_options: { is_disabled: true },
+      });
+      return true;
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      if (errMsg.includes('there is no text in the message to edit')) {
+        try {
+          await this.bot.api.editMessageCaption(chatId, messageId, {
+            caption: text,
+            parse_mode: 'Markdown',
+            reply_markup: BotUi.backToMenuKeyboard(),
+          });
+          return true;
+        } catch (e2) {
+          this.logger.warn(
+            `Не удалось обновить сообщение со счётом: ${e2 instanceof Error ? e2.message : e2}`,
+          );
+          return false;
+        }
+      }
+      if (
+        errMsg.includes("message can't be edited") ||
+        errMsg.includes('message to edit not found')
+      ) {
+        return false;
+      }
+      this.logger.warn(`Не удалось обновить сообщение со счётом: ${errMsg}`);
+      return false;
+    }
+  }
+
   private async presentNewPurchaseInvoice(
     ctx: Context,
     durationDays: 30 | 60 | 90,
@@ -167,12 +226,14 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       isPromo,
     );
 
-    await ctx.editMessageText(
+    const messageIdAfterEdit = await safeEditMessageText(
+      ctx,
       `💳 *Оплата*\n\n` +
         `Тариф: *${durationDays} дней*\n` +
         `Сумма: *${price} ₽*\n\n` +
         `Нажмите кнопку ниже — откроется ЮKassa. ` +
-        `После успешной оплаты конфиг придёт в этот чат сам — уведомление придёт в Telegram, даже если вы ещё на странице банка.`,
+        `После оплаты откройте возврат в магазин (или чат с ботом): статус проверится автоматически. ` +
+        `Если конфиг не пришёл — нажмите *«Проверить оплату»*.`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -183,19 +244,46 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
                 url: payment.confirmation.confirmation_url,
               },
             ],
+            [
+              {
+                text: '✅ Проверить оплату',
+                callback_data: `payment_check:${payment.id}`,
+              },
+            ],
             [{ text: '❌ Отмена', callback_data: 'main_menu' }],
           ],
         },
       },
     );
 
-    const cq = ctx.callbackQuery;
-    const msg = cq?.message;
-    if (ctx.chat?.id != null && msg && 'message_id' in msg) {
+    const chatId = ctx.chat?.id;
+    const cbMsg = ctx.callbackQuery?.message;
+    const oldMessageId =
+      cbMsg && 'message_id' in cbMsg ? cbMsg.message_id : undefined;
+    if (
+      chatId != null &&
+      messageIdAfterEdit != null &&
+      oldMessageId != null &&
+      messageIdAfterEdit !== oldMessageId
+    ) {
+      await ctx.api
+        .editMessageText(
+          chatId,
+          oldMessageId,
+          '↩️ *Счёт — в сообщении ниже.*',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [] },
+          },
+        )
+        .catch(() => {});
+    }
+
+    if (chatId != null && messageIdAfterEdit != null) {
       await this.paymentService.setInvoiceUiAnchor(
         payment.id,
-        String(ctx.chat.id),
-        msg.message_id,
+        String(chatId),
+        messageIdAfterEdit,
       );
     }
   }
@@ -225,12 +313,14 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       peerName,
     );
 
-    await ctx.editMessageText(
+    const messageIdAfterEdit = await safeEditMessageText(
+      ctx,
       `💳 *Оплата (продление)*\n\n` +
         `Тариф: *${durationDays} дней*\n` +
         `Сумма: *${price} ₽*\n\n` +
         `Нажмите кнопку ниже — откроется ЮKassa. ` +
-        `После успешной оплаты срок конфига продлится автоматически, уведомление придёт в Telegram.`,
+        `После оплаты вернитесь в чат с ботом (кнопка возврата в магазин). ` +
+        `Если срок не продлился — *«Проверить оплату»*.`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -239,6 +329,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
               {
                 text: '💳 Оплатить',
                 url: payment.confirmation.confirmation_url,
+              },
+            ],
+            [
+              {
+                text: '✅ Проверить оплату',
+                callback_data: `payment_check:${payment.id}`,
               },
             ],
             [
@@ -252,13 +348,34 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       },
     );
 
-    const cq = ctx.callbackQuery;
-    const msg = cq?.message;
-    if (ctx.chat?.id != null && msg && 'message_id' in msg) {
+    const chatId = ctx.chat?.id;
+    const cbMsg = ctx.callbackQuery?.message;
+    const oldMessageId =
+      cbMsg && 'message_id' in cbMsg ? cbMsg.message_id : undefined;
+    if (
+      chatId != null &&
+      messageIdAfterEdit != null &&
+      oldMessageId != null &&
+      messageIdAfterEdit !== oldMessageId
+    ) {
+      await ctx.api
+        .editMessageText(
+          chatId,
+          oldMessageId,
+          '↩️ *Счёт — в сообщении ниже.*',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [] },
+          },
+        )
+        .catch(() => {});
+    }
+
+    if (chatId != null && messageIdAfterEdit != null) {
       await this.paymentService.setInvoiceUiAnchor(
         payment.id,
-        String(ctx.chat.id),
-        msg.message_id,
+        String(chatId),
+        messageIdAfterEdit,
       );
     }
   }
@@ -312,8 +429,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
 
       const userId = String(ctx.from.id);
+      const postPayReturn = this.isPostYookassaReturnStart(ctx);
 
       if (this.isAdmin(userId)) {
+        if (postPayReturn) {
+          this.unsettledPollThrottleByUser.delete(userId);
+          await this.syncUnsettledPayments(ctx);
+        }
         await next();
         return;
       }
@@ -342,7 +464,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      await this.maybePollUnsettledPayments(ctx);
+      if (postPayReturn) {
+        this.unsettledPollThrottleByUser.delete(userId);
+        await this.syncUnsettledPayments(ctx);
+      } else {
+        await this.maybePollUnsettledPayments(ctx);
+      }
 
       await next();
     });
@@ -429,7 +556,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   private registerCommands() {
     this.bot.command('start', async (ctx) => {
-      await this.syncUnsettledPayments(ctx);
+      // После редиректа ЮKassa (/start syncpay) синк уже выполнен в middleware — не дублируем запросы к ЮKassa.
+      if (!this.isPostYookassaReturnStart(ctx)) {
+        await this.syncUnsettledPayments(ctx);
+      }
       await this.mainHandler.showMainMenu(ctx);
     });
 
@@ -1308,8 +1438,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.bot.start({
         onStart: (botInfo) => {
-          this.logger.log(
-            `Telegram: приём обновлений активен (@${botInfo.username})`,
+          this.logger.warn(
+            `Телеграм бот успешно запущен: @${botInfo.username}`,
           );
         },
       });
@@ -1336,28 +1466,25 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
       let headerDone = false;
       if (invoiceUi) {
-        try {
-          await this.bot.api.editMessageText(
-            Number(invoiceUi.chatId),
-            invoiceUi.messageId,
-            header,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: BotUi.backToMenuKeyboard(),
-              link_preview_options: { is_disabled: true },
-            },
-          );
-          headerDone = true;
-        } catch (e) {
-          this.logger.warn(
-            `Не удалось обновить сообщение со счётом: ${e instanceof Error ? e.message : e}`,
-          );
-        }
+        headerDone = await this.updateInvoiceSuccessMessage(
+          Number(invoiceUi.chatId),
+          invoiceUi.messageId,
+          header,
+        );
       }
       if (!headerDone) {
         await this.bot.api.sendMessage(telegramId, header, {
           parse_mode: 'Markdown',
         });
+      }
+      if (!headerDone && invoiceUi) {
+        await this.bot.api
+          .editMessageReplyMarkup(
+            Number(invoiceUi.chatId),
+            invoiceUi.messageId,
+            { reply_markup: { inline_keyboard: [] } },
+          )
+          .catch(() => {});
       }
 
       const message = await this.bot.api.sendDocument(
@@ -1397,28 +1524,25 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
       let headerDone = false;
       if (invoiceUi) {
-        try {
-          await this.bot.api.editMessageText(
-            Number(invoiceUi.chatId),
-            invoiceUi.messageId,
-            header,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: BotUi.backToMenuKeyboard(),
-              link_preview_options: { is_disabled: true },
-            },
-          );
-          headerDone = true;
-        } catch (e) {
-          this.logger.warn(
-            `Не удалось обновить сообщение со счётом: ${e instanceof Error ? e.message : e}`,
-          );
-        }
+        headerDone = await this.updateInvoiceSuccessMessage(
+          Number(invoiceUi.chatId),
+          invoiceUi.messageId,
+          header,
+        );
       }
       if (!headerDone) {
         await this.bot.api.sendMessage(telegramId, header, {
           parse_mode: 'Markdown',
         });
+      }
+      if (!headerDone && invoiceUi) {
+        await this.bot.api
+          .editMessageReplyMarkup(
+            Number(invoiceUi.chatId),
+            invoiceUi.messageId,
+            { reply_markup: { inline_keyboard: [] } },
+          )
+          .catch(() => {});
       }
 
       const message = await this.bot.api.sendDocument(

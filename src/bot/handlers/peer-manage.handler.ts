@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
+import { safeEditMessageText } from '../utils/safe-edit-message';
 
 // Состояние ожидания ввода описания для своих конфигов
 // userId -> { peerName: string, promptMessageId: number, chatId: number }
@@ -43,13 +44,13 @@ export class PeerManageHandler {
     );
 
     if (peers.length === 0) {
-      return ctx.editMessageText(BotUi.noConfigs, {
+      return safeEditMessageText(ctx, BotUi.noConfigs, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.emptyConfigsKeyboard(),
       });
     }
 
-    await ctx.editMessageText(BotUi.configsListTitle(peers.length), {
+    await safeEditMessageText(ctx, BotUi.configsListTitle(peers.length), {
       reply_markup: BotUi.configsListKeyboard(peers),
       parse_mode: 'Markdown',
     });
@@ -63,7 +64,7 @@ export class PeerManageHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
-      await ctx.editMessageText(BotUi.peerDetailsText(peer, isAdmin), {
+      await safeEditMessageText(ctx, BotUi.peerDetailsText(peer, isAdmin), {
         reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
         parse_mode: 'Markdown',
       });
@@ -141,18 +142,18 @@ export class PeerManageHandler {
 
     try {
       const peer = await this.peersService.findPeer(peerName);
-      const result = await ctx.editMessageText(
+      const promptMessageId = await safeEditMessageText(
+        ctx,
         BotUi.editDescriptionPrompt(peer),
         {
           parse_mode: 'Markdown',
           reply_markup: BotUi.cancelEditOwnDescriptionKeyboard(peerName),
         },
       );
-
-      if (result && typeof result === 'object' && 'message_id' in result) {
+      if (promptMessageId != null) {
         this.setAwaitingDescriptionEdit(String(ctx.from.id), {
           peerName,
-          promptMessageId: result.message_id,
+          promptMessageId,
           chatId: ctx.chat.id,
         });
       }
@@ -300,15 +301,19 @@ export class PeerManageHandler {
       const { canReplace, hoursLeft } = this.peersService.canReplacePeer(peer);
 
       if (!canReplace) {
-        await ctx.editMessageText(BotUi.replaceNotAvailable(hoursLeft ?? 0), {
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
-        });
+        await safeEditMessageText(
+          ctx,
+          BotUi.replaceNotAvailable(hoursLeft ?? 0),
+          {
+            parse_mode: 'Markdown',
+            reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+          },
+        );
         return;
       }
 
       // Показываем сообщение о процессе
-      await ctx.editMessageText(BotUi.replacingConfig, {
+      await safeEditMessageText(ctx, BotUi.replacingConfig, {
         parse_mode: 'Markdown',
       });
 
@@ -349,7 +354,7 @@ export class PeerManageHandler {
         });
       } else {
         try {
-          await ctx.editMessageText(BotUi.configError(errorMsg), {
+          await safeEditMessageText(ctx, BotUi.configError(errorMsg), {
             parse_mode: 'Markdown',
             reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
           });

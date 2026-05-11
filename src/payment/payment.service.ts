@@ -8,6 +8,9 @@ import { and, desc, eq, ne, notInArray } from 'drizzle-orm';
 import { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../database/schema';
 
+/** Payload deep link `t.me/bot?start=…` в return_url ЮKassa — по нему бот принудительно синхронизирует платежи. */
+export const YOOKASSA_TELEGRAM_RETURN_START_PARAM = 'syncpay';
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
@@ -31,6 +34,13 @@ export class PaymentService {
 
   getBilledAmountRub(nominalRub: number): number {
     return this.isTestPayment() ? 1 : nominalRub;
+  }
+
+  getYookassaReturnUrl(): string {
+    const raw =
+      this.configService.get<string>('TELEGRAM_BOT_USERNAME')?.trim() || 'bot';
+    const user = raw.replace(/^@/, '') || 'bot';
+    return `https://t.me/${user}?start=${YOOKASSA_TELEGRAM_RETURN_START_PARAM}`;
   }
 
   async createPayment(
@@ -63,7 +73,7 @@ export class PaymentService {
           capture: true,
           confirmation: {
             type: 'redirect',
-            return_url: `https://t.me/${this.configService.get('TELEGRAM_BOT_USERNAME') || 'bot'}`,
+            return_url: this.getYookassaReturnUrl(),
           },
           description: peerName
             ? `Продление VPN TUNEL на ${durationDays} дней`
