@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Context } from 'grammy';
+import { type Api, type Context } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
-import { safeEditMessageText } from '../utils/safe-edit-message';
+import {
+  isMessageNotModifiedError,
+  safeEditMessageText,
+} from '../utils/safe-edit-message';
 
 export type UserType = 'admin' | 'family' | 'user';
 
@@ -64,18 +67,48 @@ export class MainHandler {
     ctx: Context,
     userType: 'family' | 'user',
     showTrial: boolean,
-  ) {
+  ): Promise<number | undefined> {
     const keyboard = this.getMenuKeyboard(userType, showTrial);
     const welcomeMessage = this.getWelcomeMessage(userType);
 
-    await safeEditMessageText(ctx, welcomeMessage, {
+    return safeEditMessageText(ctx, welcomeMessage, {
       reply_markup: keyboard,
       parse_mode: 'Markdown',
     });
   }
 
-  async showMainMenu(ctx: Context) {
-    if (!ctx.from) return;
+  /**
+   * Обновить уже существующее сообщение главным меню (если пользователь удалил чат — вернёт false).
+   */
+  async tryRefreshMainMenuMessage(
+    api: Api,
+    chatId: number,
+    messageId: number,
+    userId: string,
+  ): Promise<boolean> {
+    try {
+      const [userType, hasUsedTrial] = await Promise.all([
+        this.getUserType(userId),
+        this.peersService.hasUsedTrial(userId),
+      ]);
+      const showTrial = !hasUsedTrial;
+      const keyboard = this.getMenuKeyboard(userType, showTrial);
+      const welcomeMessage = this.getWelcomeMessage(userType);
+      await api.editMessageText(chatId, messageId, welcomeMessage, {
+        reply_markup: keyboard,
+        parse_mode: 'Markdown',
+        link_preview_options: { is_disabled: true },
+      });
+      return true;
+    } catch (e) {
+      if (isMessageNotModifiedError(e)) return true;
+      return false;
+    }
+  }
+
+  /** @returns message_id сообщения с меню (если удалось определить) */
+  async showMainMenu(ctx: Context): Promise<number | undefined> {
+    if (!ctx.from || !ctx.chat) return undefined;
 
     const userId = String(ctx.from.id);
     const [userType, hasUsedTrial] = await Promise.all([
@@ -87,11 +120,10 @@ export class MainHandler {
     const welcomeMessage = this.getWelcomeMessage(userType);
 
     if (userType === 'family' || userType === 'user') {
-      await this.sendWelcomeForClientUser(ctx, userType, showTrial);
-      return;
+      return this.sendWelcomeForClientUser(ctx, userType, showTrial);
     }
 
-    await safeEditMessageText(ctx, welcomeMessage, {
+    return safeEditMessageText(ctx, welcomeMessage, {
       reply_markup: keyboard,
       parse_mode: 'Markdown',
     });

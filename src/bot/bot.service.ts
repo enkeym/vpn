@@ -47,6 +47,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   /** 720 × 5 с = 1 ч — защита от вечного таймера, кнопка «Проверить оплату» остаётся */
   private static readonly INVOICE_POLL_MAX_TICKS = 720;
 
+  /** Сообщение с последним главным меню: при /start и «В меню» сначала правим его; если удалили — якорь сбрасывается. */
+  private readonly mainMenuMessageAnchor = new Map<
+    string,
+    { chatId: number; messageId: number }
+  >();
+
   constructor(
     private readonly configService: ConfigService,
     private readonly mainHandler: MainHandler,
@@ -402,6 +408,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         String(chatId),
         messageIdAfterEdit,
       );
+      this.mainMenuMessageAnchor.set(telegramId, {
+        chatId,
+        messageId: messageIdAfterEdit,
+      });
       this.startInvoicePaymentPolling(
         telegramId,
         payment.id,
@@ -500,6 +510,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         String(chatId),
         messageIdAfterEdit,
       );
+      this.mainMenuMessageAnchor.set(telegramId, {
+        chatId,
+        messageId: messageIdAfterEdit,
+      });
       this.startInvoicePaymentPolling(
         telegramId,
         payment.id,
@@ -687,13 +701,85 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  private isMainMenuFromConfigDocument(ctx: Context): boolean {
+    const q = ctx.callbackQuery;
+    if (!q || q.data !== 'main_menu') return false;
+    const m = q.message;
+    return !!(m && 'document' in m && m.document);
+  }
+
+  /**
+   * Главное меню: по возможности обновляем одно и то же сообщение (меньше дублей от /start).
+   * «В меню» с файла .conf — снова рисуем меню в том же сообщении, что счёт/успех (якорь), без нового reply.
+   */
+  private async presentMainMenuAnchored(ctx: Context): Promise<void> {
+    if (!ctx.from || !ctx.chat) {
+      await this.mainHandler.showMainMenu(ctx);
+      return;
+    }
+    const userId = String(ctx.from.id);
+    const chatId = ctx.chat.id;
+    const anchor = this.mainMenuMessageAnchor.get(userId);
+
+    const cbMsg = ctx.callbackQuery?.message;
+    const cbMid = cbMsg && 'message_id' in cbMsg ? cbMsg.message_id : undefined;
+
+    if (this.isMainMenuFromConfigDocument(ctx) && anchor?.chatId === chatId) {
+      const ok = await this.mainHandler.tryRefreshMainMenuMessage(
+        this.bot.api,
+        anchor.chatId,
+        anchor.messageId,
+        userId,
+      );
+      if (ok && cbMid != null) {
+        await ctx.api
+          .editMessageReplyMarkup(chatId, cbMid, {
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => {});
+        return;
+      }
+      this.mainMenuMessageAnchor.delete(userId);
+    }
+
+    const canRefreshAnchoredMenu =
+      anchor?.chatId === chatId &&
+      (cbMid == null || cbMid === anchor.messageId);
+
+    if (
+      cbMid != null &&
+      anchor &&
+      anchor.messageId !== cbMid &&
+      !this.isMainMenuFromConfigDocument(ctx)
+    ) {
+      this.mainMenuMessageAnchor.delete(userId);
+    }
+
+    if (canRefreshAnchoredMenu) {
+      const ok = await this.mainHandler.tryRefreshMainMenuMessage(
+        this.bot.api,
+        anchor.chatId,
+        anchor.messageId,
+        userId,
+      );
+      if (ok) {
+        return;
+      }
+      this.mainMenuMessageAnchor.delete(userId);
+    }
+
+    const messageId = await this.mainHandler.showMainMenu(ctx);
+    if (messageId != null) {
+      this.mainMenuMessageAnchor.set(userId, { chatId, messageId });
+    }
+  }
+
   private registerCommands() {
     this.bot.command('start', async (ctx) => {
-      // После редиректа ЮKassa (/start syncpay) синк уже выполнен в middleware — не дублируем запросы к ЮKassa.
       if (!this.isPostYookassaReturnStart(ctx)) {
         await this.syncUnsettledPayments(ctx);
       }
-      await this.mainHandler.showMainMenu(ctx);
+      await this.presentMainMenuAnchored(ctx);
     });
 
     this.bot.callbackQuery('main_menu', async (ctx) => {
@@ -706,7 +792,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         // Уже отвечено в middleware (для не-админов)
       }
       await this.syncUnsettledPayments(ctx);
-      await this.mainHandler.showMainMenu(ctx);
+      await this.presentMainMenuAnchored(ctx);
     });
 
     this.bot.callbackQuery('create_trial_config', async (ctx) => {
