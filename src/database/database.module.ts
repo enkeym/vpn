@@ -3,7 +3,6 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as path from 'path';
 import * as schema from './schema';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { existsSync, mkdirSync } from 'fs';
 
 export const DRIZZLE = Symbol('DRIZZLE');
@@ -39,10 +38,6 @@ export const DRIZZLE = Symbol('DRIZZLE');
         logger.log('SQLite оптимизации применены (WAL, cache, etc.)');
 
         const db = drizzle(sqlite, { schema });
-
-        logger.log('Первый запуск. Применяем миграции...');
-        migrate(db, { migrationsFolder: './drizzle' });
-        logger.log('Миграции успешно применены.');
 
         return db;
       },
