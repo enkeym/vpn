@@ -1,5 +1,10 @@
-ignoredBuiltDependencies:
-  - '@nestjs/core'
-  - better-sqlite3
-  - esbuild
-  - unrs-resolver
+# Для pnpm 11+ список разрешённых сборок перенесён сюда (package.json onlyBuiltDependencies игнорируется).
+# Для pnpm 10 этот файл задаёт один корневой пакет.
+packages:
+  - '.'
+
+allowBuilds:
+  '@nestjs/core': true
+  better-sqlite3: true
+  esbuild: true
+  unrs-resolver: true

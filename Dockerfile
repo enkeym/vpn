@@ -4,7 +4,9 @@
 FROM node:22-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# Явная версия pnpm — без поля packageManager в образ подтягивается pnpm 11,
+# где onlyBuiltDependencies из package.json отключён → ERR_PNPM_IGNORED_BUILDS.
+RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
 
 # ============================================
 # Stage 2: Install dependencies
@@ -16,7 +18,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 # Копируем только файлы зависимостей для лучшего кеширования
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # ============================================
@@ -26,7 +28,7 @@ FROM base AS build
 WORKDIR /app
 
 # Копируем зависимости из предыдущего stage
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --from=dependencies /app/node_modules ./node_modules
 
 # Копируем исходный код
