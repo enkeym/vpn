@@ -69,8 +69,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       .map((id) => id.trim())
       .filter((id) => id.length > 0);
 
-    // Подключение функционала
-    this.bot = new Bot(token);
+    // client.timeoutSeconds по умолчанию 500 — при обрыве сети getUpdates может «молчать» очень долго
+    this.bot = new Bot(token, {
+      client: { timeoutSeconds: 120 },
+    });
     this.registerMiddleware();
     this.registerCommands();
     this.registerFamilyCommands();
@@ -1280,21 +1282,41 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // Запуск бота (long polling). Ошибки до onStart не попадали в лог из-за void без .catch().
   private startBot() {
+    void this.runTelegramPolling().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Telegram: сбой запуска: ${msg}`, err);
+    });
+  }
+
+  /** Сначала getMe (быстрая проверка токена и сети), затем long polling */
+  private async runTelegramPolling() {
+    this.logger.log('Telegram: проверка Bot API (getMe)…');
+    try {
+      const me = await this.bot.api.getMe();
+      this.logger.log(`Telegram-бот подключён: @${me.username} (id ${me.id})`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Telegram: getMe не выполнен (токен, сеть или api.telegram.org): ${msg}`,
+        err,
+      );
+      return;
+    }
+
     this.logger.log('Telegram: запуск long polling…');
-    void this.bot
-      .start({
+    try {
+      await this.bot.start({
         onStart: (botInfo) => {
           this.logger.log(
-            `Telegram-бот подключён: @${botInfo.username} (id ${botInfo.id})`,
+            `Telegram: приём обновлений активен (@${botInfo.username})`,
           );
         },
-      })
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Telegram-бот не запустился: ${msg}`, err);
       });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Telegram-бот не запустился (polling): ${msg}`, err);
+    }
   }
 
   /** Уведомление об успешной оплате и отправка конфига */
