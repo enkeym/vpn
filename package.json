@@ -90,7 +90,10 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3"
+      "@nestjs/core",
+      "better-sqlite3",
+      "esbuild",
+      "unrs-resolver"
     ]
   }
 }

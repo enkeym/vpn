@@ -12,7 +12,7 @@ restart:
 build:
 	docker compose -p $(NAME) build || true
 
-rebuild: down clean build up
+rebuild: down clean build up logs
 
 logs:
 	docker compose -p $(NAME) logs -f
