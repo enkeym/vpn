@@ -4,7 +4,7 @@ import { DRIZZLE } from '../database/database.module';
 import { payments } from '../database/schema';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, ne, notInArray } from 'drizzle-orm';
 import { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../database/schema';
 
@@ -25,6 +25,14 @@ export class PaymentService {
     return `Basic ${Buffer.from(`${shopId}:${secretKey}`).toString('base64')}`;
   }
 
+  isTestPayment(): boolean {
+    return this.configService.get<string>('TEST_PAYMENT') === 'true';
+  }
+
+  getBilledAmountRub(nominalRub: number): number {
+    return this.isTestPayment() ? 1 : nominalRub;
+  }
+
   async createPayment(
     telegramId: string,
     amount: number,
@@ -32,6 +40,13 @@ export class PaymentService {
     isPromo = false,
     peerName?: string,
   ) {
+    const chargeRub = this.getBilledAmountRub(amount);
+    if (this.isTestPayment() && chargeRub !== amount) {
+      this.logger.warn(
+        `TEST_PAYMENT: тариф ${amount} ₽ → списание ${chargeRub} ₽ (ЮKassa + БД)`,
+      );
+    }
+
     const idempotenceKey = randomUUID();
     const metadata: Record<string, string> = {
       telegramId,
@@ -44,7 +59,7 @@ export class PaymentService {
       const response = await axios.post(
         this.apiUrl,
         {
-          amount: { value: amount.toFixed(2), currency: 'RUB' },
+          amount: { value: chargeRub.toFixed(2), currency: 'RUB' },
           capture: true,
           confirmation: {
             type: 'redirect',
@@ -70,7 +85,7 @@ export class PaymentService {
       await this.db.insert(payments).values({
         telegramId,
         yookassaId: paymentData.id,
-        amount: Math.round(amount),
+        amount: Math.round(chargeRub),
         status: paymentData.status,
         durationDays,
         isPromo,
@@ -93,9 +108,6 @@ export class PaymentService {
     return results[0];
   }
 
-  /**
-   * Получить статус платежа из API ЮKassa (для верификации вебхука)
-   */
   async getPaymentStatusFromYooKassa(
     yookassaId: string,
   ): Promise<string | null> {
@@ -120,5 +132,47 @@ export class PaymentService {
       .update(payments)
       .set({ status })
       .where(eq(payments.yookassaId, yookassaId));
+  }
+
+  /** Привязать inline-сообщение со счётом (для замены текста после оплаты) */
+  async setInvoiceUiAnchor(
+    yookassaId: string,
+    chatId: string,
+    messageId: number,
+  ): Promise<void> {
+    await this.db
+      .update(payments)
+      .set({ invoiceChatId: chatId, invoiceMessageId: messageId })
+      .where(eq(payments.yookassaId, yookassaId));
+  }
+
+  async tryClaimPaymentSucceeded(
+    yookassaId: string,
+  ): Promise<typeof payments.$inferSelect | null> {
+    const rows = await this.db
+      .update(payments)
+      .set({ status: 'succeeded' })
+      .where(
+        and(
+          eq(payments.yookassaId, yookassaId),
+          ne(payments.status, 'succeeded'),
+        ),
+      )
+      .returning();
+    return rows[0] ?? null;
+  }
+
+  async listRecentUnsettledPayments(telegramId: string, limit = 5) {
+    return this.db
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.telegramId, telegramId),
+          notInArray(payments.status, ['succeeded', 'canceled']),
+        ),
+      )
+      .orderBy(desc(payments.createdAt))
+      .limit(limit);
   }
 }

@@ -7,7 +7,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot, GrammyError, HttpError, InputFile } from 'grammy';
+import { Bot, GrammyError, HttpError, InputFile, type Context } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService, TPeer } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
@@ -18,6 +18,10 @@ import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
 import { PaymentService } from 'src/payment/payment.service';
+import {
+  PaymentFulfillmentService,
+  type FulfillPaymentResult,
+} from 'src/payment/payment-fulfillment.service';
 import { BotUi } from './ui/bot.ui';
 
 @Injectable()
@@ -25,6 +29,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private bot: Bot;
   private readonly logger = new Logger(BotService.name);
   private adminIds: string[] = [];
+
+  /** Повторный опрос ЮKassa не чаще (мс), пока есть незавершённые платежи */
+  private readonly unsettledPollThrottleByUser = new Map<string, number>();
+  private static readonly UNSETTLED_POLL_MIN_INTERVAL_MS = 8_000;
 
   constructor(
     private readonly configService: ConfigService,
@@ -39,12 +47,16 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly blockedUsersService: BlockedUsersService,
     @Inject(forwardRef(() => PaymentService))
     private readonly paymentService: PaymentService,
+    @Inject(forwardRef(() => PaymentFulfillmentService))
+    private readonly paymentFulfillment: PaymentFulfillmentService,
   ) {}
 
   onModuleInit() {
-    const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
+    const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN')?.trim();
     if (!token) {
-      this.logger.error('TELEGRAM_BOT_TOKEN не задан. Бот не запущен.');
+      this.logger.error(
+        'TELEGRAM_BOT_TOKEN пустой или не задан — long polling не запускается.',
+      );
       return;
     }
 
@@ -68,6 +80,185 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   private isAdmin(userId: string): boolean {
     return this.adminIds.includes(userId);
+  }
+
+  private async syncUnsettledPayments(ctx: Context): Promise<void> {
+    if (!ctx.from) return;
+    try {
+      await this.paymentFulfillment.syncUnsettledForTelegramUser(
+        String(ctx.from.id),
+      );
+    } catch (e) {
+      this.logger.error('syncUnsettledPayments', e);
+    }
+  }
+
+  /**
+   * Если у пользователя есть pending-платежи — опрашиваем ЮKassa на каждом апдейте
+   * (с троттлингом). Так конфиг приходит сразу после оплаты при возврате в чат,
+   * без обязательного нажатия «Отмена» / главное меню.
+   */
+  private async maybePollUnsettledPayments(ctx: Context): Promise<void> {
+    if (!ctx.from) return;
+    const userId = String(ctx.from.id);
+    const pending = await this.paymentService.listRecentUnsettledPayments(
+      userId,
+      1,
+    );
+    if (pending.length === 0) return;
+
+    const now = Date.now();
+    const last = this.unsettledPollThrottleByUser.get(userId) ?? 0;
+    if (now - last < BotService.UNSETTLED_POLL_MIN_INTERVAL_MS) return;
+    this.unsettledPollThrottleByUser.set(userId, now);
+
+    await this.syncUnsettledPayments(ctx);
+  }
+
+  private paymentCheckCallbackHint(result: FulfillPaymentResult): {
+    text: string;
+    show_alert: boolean;
+  } {
+    switch (result) {
+      case 'fulfilled':
+        return {
+          text: 'Готово — конфиг отправлен выше',
+          show_alert: false,
+        };
+      case 'already_done':
+        return {
+          text: 'Оплата уже учтена. Откройте «Мои конфиги» в меню.',
+          show_alert: true,
+        };
+      case 'not_found':
+        return { text: 'Платёж не найден', show_alert: true };
+      case 'wrong_user':
+        return { text: 'Это не ваш платёж', show_alert: true };
+      case 'not_succeeded_in_yookassa':
+        return {
+          text: 'ЮKassa ещё не подтвердила оплату. Подождите минуту и нажмите снова.',
+          show_alert: true,
+        };
+    }
+  }
+
+  /** Счёт ЮKassa: новая покупка (30/60/90 дней) */
+  private async presentNewPurchaseInvoice(
+    ctx: Context,
+    durationDays: 30 | 60 | 90,
+  ): Promise<void> {
+    if (!ctx.from) return;
+    const telegramId = String(ctx.from.id);
+    const hasUsedDiscount =
+      await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
+    const isPromo =
+      !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
+    const nominalPrice = isPromo
+      ? BotUi.paymentPlanDiscountedPrices[durationDays]
+      : BotUi.paymentPlanPrices[durationDays];
+    const price = this.paymentService.getBilledAmountRub(nominalPrice);
+
+    const payment = await this.paymentService.createPayment(
+      telegramId,
+      nominalPrice,
+      durationDays,
+      isPromo,
+    );
+
+    await ctx.editMessageText(
+      `💳 *Оплата*\n\n` +
+        `Тариф: *${durationDays} дней*\n` +
+        `Сумма: *${price} ₽*\n\n` +
+        `Нажмите кнопку ниже — откроется ЮKassa. ` +
+        `После успешной оплаты конфиг придёт в этот чат сам — уведомление придёт в Telegram, даже если вы ещё на странице банка.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: '💳 Оплатить',
+                url: payment.confirmation.confirmation_url,
+              },
+            ],
+            [{ text: '❌ Отмена', callback_data: 'main_menu' }],
+          ],
+        },
+      },
+    );
+
+    const cq = ctx.callbackQuery;
+    const msg = cq?.message;
+    if (ctx.chat?.id != null && msg && 'message_id' in msg) {
+      await this.paymentService.setInvoiceUiAnchor(
+        payment.id,
+        String(ctx.chat.id),
+        msg.message_id,
+      );
+    }
+  }
+
+  /** Счёт ЮKassa: продление конфига */
+  private async presentExtendInvoice(
+    ctx: Context,
+    durationDays: 30 | 60 | 90,
+    peerName: string,
+  ): Promise<void> {
+    if (!ctx.from) return;
+    const telegramId = String(ctx.from.id);
+    const hasUsedDiscount =
+      await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
+    const isPromo =
+      !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
+    const nominalPrice = isPromo
+      ? BotUi.paymentPlanDiscountedPrices[durationDays]
+      : BotUi.paymentPlanPrices[durationDays];
+    const price = this.paymentService.getBilledAmountRub(nominalPrice);
+
+    const payment = await this.paymentService.createPayment(
+      telegramId,
+      nominalPrice,
+      durationDays,
+      isPromo,
+      peerName,
+    );
+
+    await ctx.editMessageText(
+      `💳 *Оплата (продление)*\n\n` +
+        `Тариф: *${durationDays} дней*\n` +
+        `Сумма: *${price} ₽*\n\n` +
+        `Нажмите кнопку ниже — откроется ЮKassa. ` +
+        `После успешной оплаты срок конфига продлится автоматически, уведомление придёт в Telegram.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: '💳 Оплатить',
+                url: payment.confirmation.confirmation_url,
+              },
+            ],
+            [
+              {
+                text: '« Назад к тарифам',
+                callback_data: `extend_pay_plans:${peerName}`,
+              },
+            ],
+          ],
+        },
+      },
+    );
+
+    const cq = ctx.callbackQuery;
+    const msg = cq?.message;
+    if (ctx.chat?.id != null && msg && 'message_id' in msg) {
+      await this.paymentService.setInvoiceUiAnchor(
+        payment.id,
+        String(ctx.chat.id),
+        msg.message_id,
+      );
+    }
   }
 
   async onModuleDestroy() {
@@ -125,12 +316,21 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Сразу отвечаем на callback, чтобы кнопка перестала «крутиться» (до isBlocked)
+      // Сразу отвечаем на callback, чтобы кнопка перестала «крутиться» (до isBlocked).
+      // Исключения: ответ с текстом даёт сам обработчик.
       if (ctx.callbackQuery) {
-        try {
-          await ctx.answerCallbackQuery();
-        } catch {
-          // Игнорируем
+        const data = ctx.callbackQuery.data;
+        const deferAnswer =
+          typeof data === 'string' &&
+          /^(payment_check:|pay_plan:|extend_pay_plan:|pay_confirm:|extend_pay_confirm:)/.test(
+            data,
+          );
+        if (!deferAnswer) {
+          try {
+            await ctx.answerCallbackQuery();
+          } catch {
+            // Игнорируем
+          }
         }
       }
 
@@ -139,6 +339,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         await ctx.reply('Вы заблокированы.').catch(() => {});
         return;
       }
+
+      await this.maybePollUnsettledPayments(ctx);
 
       await next();
     });
@@ -154,7 +356,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return next();
       }
       const msg = ctx.message;
-      const legacyFrom = (msg as { forward_from?: { id: number } }).forward_from;
+      const legacyFrom = (msg as { forward_from?: { id: number } })
+        .forward_from;
       if (!msg.forward_origin && !legacyFrom) {
         return next();
       }
@@ -223,9 +426,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private registerCommands() {
-    this.bot.command('start', async (ctx) =>
-      this.mainHandler.showMainMenu(ctx),
-    );
+    this.bot.command('start', async (ctx) => {
+      await this.syncUnsettledPayments(ctx);
+      await this.mainHandler.showMainMenu(ctx);
+    });
 
     this.bot.callbackQuery('main_menu', async (ctx) => {
       try {
@@ -233,6 +437,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       } catch {
         // Уже отвечено в middleware (для не-админов)
       }
+      await this.syncUnsettledPayments(ctx);
       await this.mainHandler.showMainMenu(ctx);
     });
 
@@ -257,60 +462,35 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.bot.callbackQuery(/^pay_plan:(30|60|90)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
+      if (!ctx.from) return;
       const days = Number(ctx.match[1]) as 30 | 60 | 90;
-      await this.peerCreateHandler.showPaymentConfirm(ctx, days);
+      try {
+        await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+        await this.presentNewPurchaseInvoice(ctx, days);
+      } catch (error) {
+        this.logger.error('Error in pay_plan', error);
+        await ctx
+          .reply(
+            '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
+          )
+          .catch(() => {});
+      }
     });
 
+    /** Старые сообщения с экраном подтверждения */
     this.bot.callbackQuery(/^pay_confirm:(30|60|90)$/, async (ctx) => {
       if (!ctx.from) return;
       const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
-      const telegramId = String(ctx.from.id);
-
       try {
-        await ctx.answerCallbackQuery({ text: 'Формирую счет...' });
-
-        const hasUsedDiscount =
-          await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
-        const isPromo =
-          !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
-        const price = isPromo
-          ? BotUi.paymentPlanDiscountedPrices[durationDays]
-          : BotUi.paymentPlanPrices[durationDays];
-
-        const payment = await this.paymentService.createPayment(
-          telegramId,
-          price,
-          durationDays,
-          isPromo,
-        );
-
-        await ctx.editMessageText(
-          `💳 *Счёт на оплату сформирован*\n\n` +
-            `Тариф: *${durationDays} дней*\n` +
-            `Сумма к оплате: *${price} ₽*\n\n` +
-            `Нажмите кнопку ниже, чтобы перейти к безопасной оплате через ЮKassa. ` +
-            `После завершения платежа бот автоматически пришлет вам файл конфигурации.`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: '💳 Оплатить',
-                    url: payment.confirmation.confirmation_url,
-                  },
-                ],
-                [{ text: '❌ Отмена', callback_data: 'main_menu' }],
-              ],
-            },
-          },
-        );
+        await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+        await this.presentNewPurchaseInvoice(ctx, durationDays);
       } catch (error) {
         this.logger.error('Error in pay_confirm', error);
-        await ctx.reply(
-          '❌ Произошла ошибка при формировании счета. Попробуйте позже или обратитесь в поддержку.',
-        );
+        await ctx
+          .reply(
+            '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
+          )
+          .catch(() => {});
       }
     });
 
@@ -382,80 +562,67 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
     });
 
-    // Выбор тарифа при продлении
+    // Выбор тарифа при продлении — сразу счёт ЮKassa
     this.bot.callbackQuery(/^extend_pay_plan:(30|60|90):(.+)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
+      if (!ctx.from) return;
       const days = Number(ctx.match[1]) as 30 | 60 | 90;
       const peerName = ctx.match[2];
-      await this.peerCreateHandler.showPaymentConfirmForExtend(
-        ctx,
-        days,
-        peerName,
-      );
+      try {
+        await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+        await this.presentExtendInvoice(ctx, days, peerName);
+      } catch (error) {
+        this.logger.error('Error in extend_pay_plan', error);
+        await ctx
+          .reply(
+            '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
+          )
+          .catch(() => {});
+      }
     });
 
-    // Подтверждение оплаты при продлении
+    /** Старые сообщения с экраном подтверждения продления */
     this.bot.callbackQuery(
       /^extend_pay_confirm:(30|60|90):(.+)$/,
       async (ctx) => {
         if (!ctx.from) return;
         const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
         const peerName = ctx.match[2];
-        const telegramId = String(ctx.from.id);
-
         try {
-          await ctx.answerCallbackQuery({ text: 'Формирую счет...' });
-
-          const hasUsedDiscount =
-            await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
-          const isPromo =
-            !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
-          const price = isPromo
-            ? BotUi.paymentPlanDiscountedPrices[durationDays]
-            : BotUi.paymentPlanPrices[durationDays];
-
-          const payment = await this.paymentService.createPayment(
-            telegramId,
-            price,
-            durationDays,
-            isPromo,
-            peerName,
-          );
-
-          await ctx.editMessageText(
-            `💳 *Счёт на оплату сформирован*\n\n` +
-              `Тариф: *${durationDays} дней* (продление)\n` +
-              `Сумма к оплате: *${price} ₽*\n\n` +
-              `Нажмите кнопку ниже, чтобы перейти к безопасной оплате через ЮKassa. ` +
-              `После завершения платежа срок действия вашего конфига будет продлён автоматически.`,
-            {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    {
-                      text: '💳 Оплатить',
-                      url: payment.confirmation.confirmation_url,
-                    },
-                  ],
-                  [
-                    {
-                      text: '« Назад к тарифам',
-                      callback_data: `extend_pay_plans:${peerName}`,
-                    },
-                  ],
-                ],
-              },
-            },
-          );
+          await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+          await this.presentExtendInvoice(ctx, durationDays, peerName);
         } catch (error) {
           this.logger.error('Error in extend_pay_confirm', error);
-          await ctx.reply(
-            '❌ Произошла ошибка при формировании счета. Попробуйте позже или обратитесь в поддержку.',
-          );
+          await ctx
+            .reply(
+              '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
+            )
+            .catch(() => {});
         }
       },
     );
+
+    this.bot.callbackQuery(/^payment_check:(.+)$/, async (ctx) => {
+      if (!ctx.from) return;
+      const yookassaId = ctx.match[1];
+      try {
+        const result = await this.paymentFulfillment.fulfillByYookassaId(
+          yookassaId,
+          String(ctx.from.id),
+          { trustYooKassaSucceeded: false },
+        );
+        const hint = this.paymentCheckCallbackHint(result);
+        await ctx.answerCallbackQuery({
+          text: hint.text,
+          show_alert: hint.show_alert,
+        });
+      } catch (e) {
+        this.logger.error('payment_check', e);
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка проверки. Попробуйте через минуту.',
+          show_alert: true,
+        });
+      }
+    });
 
     // Замена конфига (раз в день)
     this.bot.callbackQuery(/^replace_peer:(.+)$/, async (ctx) => {
@@ -1113,13 +1280,21 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // Запуск бота
+  // Запуск бота (long polling). Ошибки до onStart не попадали в лог из-за void без .catch().
   private startBot() {
-    void this.bot.start({
-      onStart: (botInfo) => {
-        this.logger.warn(`Бот @${botInfo.username} успешно запущен!`);
-      },
-    });
+    this.logger.log('Telegram: запуск long polling…');
+    void this.bot
+      .start({
+        onStart: (botInfo) => {
+          this.logger.log(
+            `Telegram-бот подключён: @${botInfo.username} (id ${botInfo.id})`,
+          );
+        },
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Telegram-бот не запустился: ${msg}`, err);
+      });
   }
 
   /** Уведомление об успешной оплате и отправка конфига */
@@ -1129,18 +1304,40 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     peer: TPeer,
     durationDays: number,
     amount: number,
+    invoiceUi?: { chatId: string; messageId: number },
   ) {
     try {
-      // Отправляем текстовое сообщение
-      await this.bot.api.sendMessage(
-        telegramId,
+      const header =
         `✅ *Оплата прошла успешно!* (${amount} ₽)\n\n` +
-          `Ваш конфиг *${peer.name}* на *${durationDays} дней* готов. ` +
-          `Через мгновение я пришлю файл и QR-код.`,
-        { parse_mode: 'Markdown' },
-      );
+        `Ваш конфиг *${peer.name}* на *${durationDays} дней* готов. ` +
+        `Файл — ниже.`;
 
-      // Отправляем файл
+      let headerDone = false;
+      if (invoiceUi) {
+        try {
+          await this.bot.api.editMessageText(
+            Number(invoiceUi.chatId),
+            invoiceUi.messageId,
+            header,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: BotUi.backToMenuKeyboard(),
+              link_preview_options: { is_disabled: true },
+            },
+          );
+          headerDone = true;
+        } catch (e) {
+          this.logger.warn(
+            `Не удалось обновить сообщение со счётом: ${e instanceof Error ? e.message : e}`,
+          );
+        }
+      }
+      if (!headerDone) {
+        await this.bot.api.sendMessage(telegramId, header, {
+          parse_mode: 'Markdown',
+        });
+      }
+
       const message = await this.bot.api.sendDocument(
         telegramId,
         new InputFile(Buffer.from(config), `${peer.name}.conf`),
@@ -1167,16 +1364,40 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     peer: TPeer,
     durationDays: number,
     amount: number,
+    invoiceUi?: { chatId: string; messageId: number },
   ) {
     try {
-      await this.bot.api.sendMessage(
-        telegramId,
+      const header =
         `✅ *Продление прошло успешно!* (${amount} ₽)\n\n` +
-          `Конфиг *${peer.name}* продлён на *${durationDays} дней*. ` +
-          `Новый срок действия: до ${peer.expiresAt ? new Date(peer.expiresAt).toLocaleDateString('ru-RU') : '—'}. ` +
-          `Через мгновение пришлю обновлённый файл.`,
-        { parse_mode: 'Markdown' },
-      );
+        `Конфиг *${peer.name}* продлён на *${durationDays} дней*. ` +
+        `Новый срок: до ${peer.expiresAt ? new Date(peer.expiresAt).toLocaleDateString('ru-RU') : '—'}. ` +
+        `Файл — ниже.`;
+
+      let headerDone = false;
+      if (invoiceUi) {
+        try {
+          await this.bot.api.editMessageText(
+            Number(invoiceUi.chatId),
+            invoiceUi.messageId,
+            header,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: BotUi.backToMenuKeyboard(),
+              link_preview_options: { is_disabled: true },
+            },
+          );
+          headerDone = true;
+        } catch (e) {
+          this.logger.warn(
+            `Не удалось обновить сообщение со счётом: ${e instanceof Error ? e.message : e}`,
+          );
+        }
+      }
+      if (!headerDone) {
+        await this.bot.api.sendMessage(telegramId, header, {
+          parse_mode: 'Markdown',
+        });
+      }
 
       const message = await this.bot.api.sendDocument(
         telegramId,

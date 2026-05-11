@@ -119,6 +119,8 @@ export const payments = sqliteTable(
     isPromo: integer('isPromo', { mode: 'boolean' }).notNull().default(false),
     /** Имя конфига для продления (null = новая покупка) */
     peerName: text('peerName'),
+    invoiceChatId: text('invoiceChatId'),
+    invoiceMessageId: integer('invoiceMessageId'),
     createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
       () => new Date(),
     ),

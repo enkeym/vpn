@@ -4,6 +4,7 @@ import { MainHandler } from './main.handler';
 import { Context, InputFile } from 'grammy';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
+import { PaymentService } from 'src/payment/payment.service';
 
 @Injectable()
 export class PeerCreateHandler {
@@ -12,6 +13,7 @@ export class PeerCreateHandler {
   constructor(
     private readonly peersService: PeersService,
     private readonly mainHandler: MainHandler,
+    private readonly paymentService: PaymentService,
   ) {}
 
   async showCreateOptions(ctx: Context) {
@@ -30,10 +32,14 @@ export class PeerCreateHandler {
         : !(await this.peersService.hasUsedFirstPurchaseDiscount(
             String(ctx.from.id),
           ));
-    await ctx.editMessageText(BotUi.paymentPlansTitle(hasDiscount), {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.paymentPlansKeyboard(hasDiscount),
-    });
+    const testPayment = this.paymentService.isTestPayment();
+    await ctx.editMessageText(
+      BotUi.paymentPlansTitle(hasDiscount, testPayment),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.paymentPlansKeyboard(hasDiscount, testPayment),
+      },
+    );
   }
 
   /** Меню тарифов для продления существующего конфига */
@@ -50,55 +56,12 @@ export class PeerCreateHandler {
         : '');
     await ctx.editMessageText(title, {
       parse_mode: 'Markdown',
-      reply_markup: BotUi.paymentPlansKeyboardForExtend(peerName, hasDiscount),
+      reply_markup: BotUi.paymentPlansKeyboardForExtend(
+        peerName,
+        hasDiscount,
+        this.paymentService.isTestPayment(),
+      ),
     });
-  }
-
-  /** Подтверждение оплаты для продления конфига */
-  async showPaymentConfirmForExtend(
-    ctx: Context,
-    durationDays: 30 | 60 | 90,
-    peerName: string,
-  ) {
-    if (!ctx.from) return;
-    const hasDiscount = !(await this.peersService.hasUsedFirstPurchaseDiscount(
-      String(ctx.from.id),
-    ));
-    const isDiscounted =
-      hasDiscount && (durationDays === 60 || durationDays === 90);
-    const price = isDiscounted
-      ? BotUi.paymentPlanDiscountedPrices[durationDays]
-      : BotUi.paymentPlanPrices[durationDays];
-    await ctx.editMessageText(
-      BotUi.paymentConfirmTitle(durationDays, price, isDiscounted),
-      {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.paymentConfirmKeyboardForExtend(
-          durationDays,
-          peerName,
-        ),
-      },
-    );
-  }
-
-  /** Подтверждение оплаты (мок) перед созданием конфига */
-  async showPaymentConfirm(ctx: Context, durationDays: 30 | 60 | 90) {
-    if (!ctx.from) return;
-    const hasDiscount = !(await this.peersService.hasUsedFirstPurchaseDiscount(
-      String(ctx.from.id),
-    ));
-    const isDiscounted =
-      hasDiscount && (durationDays === 60 || durationDays === 90);
-    const price = isDiscounted
-      ? BotUi.paymentPlanDiscountedPrices[durationDays]
-      : BotUi.paymentPlanPrices[durationDays];
-    await ctx.editMessageText(
-      BotUi.paymentConfirmTitle(durationDays, price, isDiscounted),
-      {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.paymentConfirmKeyboard(durationDays),
-      },
-    );
   }
 
   /** Пробный период: конфиг на 3 дня, доступен только один раз */

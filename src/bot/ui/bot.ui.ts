@@ -260,24 +260,28 @@ export const BotUi = {
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
   // Меню оплаты для обычных пользователей (30, 60, 90 дней)
-  paymentPlansTitle: (hasDiscount: boolean) =>
+  paymentPlansTitle: (hasDiscount: boolean, testPayment = false) =>
     '💳 *Тарифы TUNEL VPN*\n\n' +
-    'Выберите подходящий вариант. После оплаты вы получите конфиг-файл для подключения.\n\n' +
+    'Выберите срок — сразу откроется счёт ЮKassa. После успешной оплаты конфиг придёт в этот чат автоматически.\n\n' +
     '📱 _Конфиг подходит для Android, iOS, Windows, macOS, Linux_\n' +
     '🛡 _Шифрование, обход блокировок, стриминг_\n\n' +
     (hasDiscount
       ? '🎁 *Разовая акция:* скидка на 60 или 90 дней при первой покупке.\n\n'
+      : '') +
+    (testPayment
+      ? '⚠️ TEST\\_PAYMENT: в ЮKassa списывается *1 ₽* за любой тариф.\n\n'
       : ''),
 
-  paymentPlansKeyboard: (hasDiscount: boolean) => {
+  paymentPlansKeyboard: (hasDiscount: boolean, testPayment = false) => {
     const kb = new InlineKeyboard();
-    kb.text('🔥 30 дней — 99 ₽', 'pay_plan:30').row();
+    const p = (n: number) => (testPayment ? `1 ₽ (тест)` : `${n} ₽`);
+    kb.text(`🔥 30 дней — ${p(99)}`, 'pay_plan:30').row();
     kb.text(
-      hasDiscount ? '💎 60 дней — 143 ₽ 🎁' : '💎 60 дней — 179 ₽',
+      hasDiscount ? `💎 60 дней — ${p(143)} 🎁` : `💎 60 дней — ${p(179)}`,
       'pay_plan:60',
     ).row();
     kb.text(
-      hasDiscount ? '👑 90 дней — 199 ₽ 🎁' : '👑 90 дней — 249 ₽',
+      hasDiscount ? `👑 90 дней — ${p(199)} 🎁` : `👑 90 дней — ${p(249)}`,
       'pay_plan:90',
     ).row();
     kb.text('« Назад в меню', 'main_menu');
@@ -285,15 +289,20 @@ export const BotUi = {
   },
 
   /** Клавиатура тарифов для продления существующего конфига */
-  paymentPlansKeyboardForExtend: (peerName: string, hasDiscount: boolean) => {
+  paymentPlansKeyboardForExtend: (
+    peerName: string,
+    hasDiscount: boolean,
+    testPayment = false,
+  ) => {
     const kb = new InlineKeyboard();
-    kb.text('🔥 30 дней — 99 ₽', `extend_pay_plan:30:${peerName}`).row();
+    const p = (n: number) => (testPayment ? `1 ₽ (тест)` : `${n} ₽`);
+    kb.text(`🔥 30 дней — ${p(99)}`, `extend_pay_plan:30:${peerName}`).row();
     kb.text(
-      hasDiscount ? '💎 60 дней — 143 ₽ 🎁' : '💎 60 дней — 179 ₽',
+      hasDiscount ? `💎 60 дней — ${p(143)} 🎁` : `💎 60 дней — ${p(179)}`,
       `extend_pay_plan:60:${peerName}`,
     ).row();
     kb.text(
-      hasDiscount ? '👑 90 дней — 199 ₽ 🎁' : '👑 90 дней — 249 ₽',
+      hasDiscount ? `👑 90 дней — ${p(199)} 🎁` : `👑 90 дней — ${p(249)}`,
       `extend_pay_plan:90:${peerName}`,
     ).row();
     kb.text('« Назад в меню', 'main_menu');
@@ -301,31 +310,7 @@ export const BotUi = {
   },
 
   paymentPlanPrices: { 30: 99, 60: 179, 90: 249 } as Record<number, number>,
-  /** Цены со скидкой (только 60 и 90 дней, разовая акция) */
   paymentPlanDiscountedPrices: { 60: 143, 90: 199 } as Record<number, number>,
-
-  paymentConfirmTitle: (days: number, price: number, isDiscounted: boolean) =>
-    '💳 *Подтверждение оплаты*\n\n' +
-    `Тариф: *${days} дней*\n` +
-    `Сумма: *${price} ₽*${isDiscounted ? ' _(скидка)_' : ''}\n\n` +
-    '📄 После оплаты вы сразу получите:\n' +
-    '• Файл конфигурации .conf\n' +
-    '• QR-код для быстрой настройки на телефоне\n' +
-    '• Инструкцию в разделе «Инструкция»\n\n' +
-    '_Тестовый режим оплаты — нажмите «Оплатить» для завершения._',
-
-  paymentConfirmKeyboard: (days: number) =>
-    new InlineKeyboard()
-      .text('✅ Оплатить', `pay_confirm:${days}`)
-      .row()
-      .text('« Назад к тарифам', 'show_create_options'),
-
-  /** Клавиатура подтверждения для продления конфига */
-  paymentConfirmKeyboardForExtend: (days: number, peerName: string) =>
-    new InlineKeyboard()
-      .text('✅ Оплатить', `extend_pay_confirm:${days}:${peerName}`)
-      .row()
-      .text('« Назад к тарифам', `extend_pay_plans:${peerName}`),
 
   paymentSuccessTitle:
     '✅ *Оплата прошла успешно!*\n\n' +

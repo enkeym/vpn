@@ -7,12 +7,11 @@ import {
   HttpStatus,
   Req,
   ForbiddenException,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
-import { PeersService } from '../peers/peers.service';
-import { BotService } from '../bot/bot.service';
-import { SubscriptionDuration } from '../peers/dto/create-peer.dto';
-import { YooKassaWebhookDto } from './dto/webhook.dto';
+import { PaymentFulfillmentService } from './payment-fulfillment.service';
 import type { Request } from 'express';
 import ipRangeCheck from 'ip-range-check';
 
@@ -32,12 +31,22 @@ export class PaymentController {
 
   constructor(
     private readonly paymentService: PaymentService,
-    private readonly peersService: PeersService,
-    private readonly botService: BotService,
+    private readonly paymentFulfillment: PaymentFulfillmentService,
   ) {}
 
+  /** За nginx/caddy/real_ip первый hop в X-Forwarded-For — реальный клиент (ЮKassa). */
+  private getClientIp(req: Request): string {
+    const xff = req.headers['x-forwarded-for'];
+    if (typeof xff === 'string') {
+      const first = xff.split(',')[0]?.trim();
+      if (first) return first;
+    }
+    const realIp = req.headers['x-real-ip'];
+    if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
+    return req.ip || req.socket?.remoteAddress || '';
+  }
+
   private isIpAllowed(ip: string): boolean {
-    // В dev-режиме можно пропускать localhost
     if (
       process.env.NODE_ENV !== 'production' &&
       (ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1')
@@ -55,21 +64,47 @@ export class PaymentController {
     }
   }
 
+  private parseYooKassaWebhookBody(body: Record<string, unknown>): {
+    event: string;
+    yookassaId: string;
+  } {
+    const event = body.event;
+    const obj = body.object;
+    if (typeof event !== 'string' || !obj || typeof obj !== 'object') {
+      throw new BadRequestException('Invalid webhook body');
+    }
+    const id = (obj as Record<string, unknown>).id;
+    if (typeof id !== 'string') {
+      throw new BadRequestException('Invalid webhook object.id');
+    }
+    return { event, yookassaId: id };
+  }
+
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() body: YooKassaWebhookDto, @Req() req: Request) {
-    const ip = req.ip || '';
+  async handleWebhook(
+    @Body() body: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    const ip = this.getClientIp(req);
+    const xff = req.headers['x-forwarded-for'];
+    const rawSocket = req.socket?.remoteAddress;
 
     if (!this.isIpAllowed(ip)) {
-      this.logger.warn(`Rejected webhook from unauthorized IP`);
+      this.logger.warn(
+        `Вебхук отклонён по IP: проверка=${ip} x-forwarded-for=${String(xff)} socket=${rawSocket ?? ''}`,
+      );
       throw new ForbiddenException('Unauthorized IP');
     }
 
-    this.logger.log(`Received webhook from YuKassa: ${body.event}`);
+    this.logger.log(`Вебхук ЮKassa (сырое тело): ${JSON.stringify(body)}`);
 
-    if (body.event === 'payment.succeeded') {
-      const yookassaId = body.object.id;
+    const { event, yookassaId } = this.parseYooKassaWebhookBody(body);
+    this.logger.log(
+      `Received webhook from YuKassa: ${event}, payment ${yookassaId}`,
+    );
 
+    if (event === 'payment.succeeded') {
       const yookassaStatus =
         await this.paymentService.getPaymentStatusFromYooKassa(yookassaId);
       if (yookassaStatus !== 'succeeded') {
@@ -81,77 +116,50 @@ export class PaymentController {
 
       const payment =
         await this.paymentService.getPaymentByYookassaId(yookassaId);
-
-      if (payment && payment.status !== 'succeeded') {
-        this.logger.log(
-          `Payment ${yookassaId} succeeded. Providing service to user ${payment.telegramId}`,
+      if (!payment) {
+        this.logger.warn(
+          `Webhook payment.succeeded: no local row for YooKassa id ${yookassaId}`,
         );
-
-        await this.paymentService.updatePaymentStatus(yookassaId, 'succeeded');
-
-        const durationDays = payment.durationDays as SubscriptionDuration;
-        const isPromo = payment.isPromo;
-        const peerName = payment.peerName;
-
-        try {
-          if (peerName) {
-            // Продление существующего конфига
-            const peer = await this.peersService.extendPeerExpiration(
-              peerName,
-              durationDays,
-            );
-            const config =
-              await this.peersService.getPeerConfigString(peerName);
-
-            if (isPromo && (durationDays === 60 || durationDays === 90)) {
-              await this.peersService.recordPromoUsage(
-                payment.telegramId,
-                durationDays,
-              );
-            }
-
-            await this.botService.notifyExtendSuccess(
-              payment.telegramId,
-              config,
-              peer,
-              durationDays,
-              payment.amount,
-            );
-          } else {
-            // Создаем новый конфиг для пользователя
-            const { config, peer } = await this.peersService.createPeer({
-              telegramId: payment.telegramId,
-              durationDays,
-              isTrial: false,
-            });
-
-            if (isPromo && (durationDays === 60 || durationDays === 90)) {
-              await this.peersService.recordPromoUsage(
-                payment.telegramId,
-                durationDays,
-              );
-            }
-
-            await this.botService.notifyPaymentSuccess(
-              payment.telegramId,
-              config,
-              peer,
-              durationDays,
-              payment.amount,
-            );
-          }
-        } catch (error) {
-          this.logger.error(
-            `Error providing service after payment ${yookassaId}`,
-            error,
-          );
-          // Здесь можно добавить логику ручного разбора ошибок
-        }
+      } else {
+        await this.paymentFulfillment.fulfillFromWebhookVerifiedPayment(
+          yookassaId,
+        );
       }
-    } else if (body.event === 'payment.canceled') {
-      await this.paymentService.updatePaymentStatus(body.object.id, 'canceled');
+    } else if (event === 'payment.canceled') {
+      await this.paymentService.updatePaymentStatus(yookassaId, 'canceled');
     }
 
     return { status: 'ok' };
+  }
+
+  /**
+   * Только при TEST_PAYMENT=true: имитация успешной оплаты без вебхука ЮKassa
+   */
+  @Post('test/complete-succeeded')
+  @HttpCode(HttpStatus.OK)
+  async completeSucceededForTest(@Body() body: Record<string, unknown>) {
+    if (!this.paymentService.isTestPayment()) {
+      throw new NotFoundException();
+    }
+
+    const yookassaId = body.yookassaId;
+    if (typeof yookassaId !== 'string' || yookassaId.length === 0) {
+      throw new BadRequestException('yookassaId (string) required');
+    }
+
+    const payment =
+      await this.paymentService.getPaymentByYookassaId(yookassaId);
+    if (!payment) {
+      throw new BadRequestException('payment not found in DB');
+    }
+    if (payment.status === 'succeeded') {
+      return { ok: true, message: 'already processed' };
+    }
+
+    this.logger.warn(
+      `TEST_PAYMENT: manual POST /payment/test/complete-succeeded for ${yookassaId}`,
+    );
+    await this.paymentFulfillment.fulfillFromWebhookVerifiedPayment(yookassaId);
+    return { ok: true };
   }
 }
