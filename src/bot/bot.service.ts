@@ -47,7 +47,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   /** 720 × 5 с = 1 ч — защита от вечного таймера, кнопка «Проверить оплату» остаётся */
   private static readonly INVOICE_POLL_MAX_TICKS = 720;
 
-  /** Сообщение с последним главным меню: при /start и «В меню» сначала правим его; если удалили — якорь сбрасывается. */
+ 
   private readonly mainMenuMessageAnchor = new Map<
     string,
     { chatId: number; messageId: number }
@@ -709,8 +709,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Главное меню: по возможности обновляем одно и то же сообщение (меньше дублей от /start).
-   * «В меню» с файла .conf — снова рисуем меню в том же сообщении, что счёт/успех (якорь), без нового reply.
+   * Главное меню для коллбэка «В меню»: по возможности правим то же сообщение, на котором
+   * сидит callback — меньше визуального шума. «В меню» с файла .conf рисуем в сообщении-якоре
+   * (счёт/успех), не делая новый reply. Для команды /start этот путь НЕ используется —
+   * см. `presentMainMenuFresh`.
    */
   private async presentMainMenuAnchored(ctx: Context): Promise<void> {
     if (!ctx.from || !ctx.chat) {
@@ -774,12 +776,38 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async presentMainMenuFresh(ctx: Context): Promise<void> {
+    if (!ctx.from || !ctx.chat) {
+      await this.mainHandler.sendFreshMainMenu(ctx);
+      return;
+    }
+    const userId = String(ctx.from.id);
+    const chatId = ctx.chat.id;
+
+    const anchor = this.mainMenuMessageAnchor.get(userId);
+    if (anchor && anchor.chatId === chatId) {
+      await this.bot.api
+        .editMessageReplyMarkup(anchor.chatId, anchor.messageId, {
+          reply_markup: { inline_keyboard: [] },
+        })
+        .catch(() => {
+          // Сообщение могло быть удалено пользователем — игнорируем
+        });
+      this.mainMenuMessageAnchor.delete(userId);
+    }
+
+    const messageId = await this.mainHandler.sendFreshMainMenu(ctx);
+    if (messageId != null) {
+      this.mainMenuMessageAnchor.set(userId, { chatId, messageId });
+    }
+  }
+
   private registerCommands() {
     this.bot.command('start', async (ctx) => {
       if (!this.isPostYookassaReturnStart(ctx)) {
         await this.syncUnsettledPayments(ctx);
       }
-      await this.presentMainMenuAnchored(ctx);
+      await this.presentMainMenuFresh(ctx);
     });
 
     this.bot.callbackQuery('main_menu', async (ctx) => {

@@ -129,6 +129,32 @@ export class MainHandler {
     });
   }
 
+  /**
+   * Отправить НОВОЕ сообщение с главным меню (без попыток отредактировать существующее).
+   * Нужно для /start: после «Очистить историю» Bot API всё ещё видит старые сообщения и
+   * успешно их «правит», но пользователь у себя в чате ничего не видит — поэтому при
+   * /start всегда шлём свежее сообщение.
+   */
+  async sendFreshMainMenu(ctx: Context): Promise<number | undefined> {
+    if (!ctx.from || !ctx.chat) return undefined;
+
+    const userId = String(ctx.from.id);
+    const [userType, hasUsedTrial] = await Promise.all([
+      this.getUserType(userId),
+      this.peersService.hasUsedTrial(userId),
+    ]);
+    const showTrial = !hasUsedTrial;
+    const keyboard = this.getMenuKeyboard(userType, showTrial);
+    const welcomeMessage = this.getWelcomeMessage(userType);
+
+    const sent = await ctx.reply(welcomeMessage, {
+      reply_markup: keyboard,
+      parse_mode: 'Markdown',
+      link_preview_options: { is_disabled: true },
+    });
+    return sent.message_id;
+  }
+
   async showInstructions(ctx: Context) {
     await safeEditMessageText(ctx, BotUi.instructionsMenuTitle, {
       reply_markup: BotUi.instructionsMenuKeyboard(),
