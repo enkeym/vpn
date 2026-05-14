@@ -47,7 +47,6 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   /** 720 × 5 с = 1 ч — защита от вечного таймера, кнопка «Проверить оплату» остаётся */
   private static readonly INVOICE_POLL_MAX_TICKS = 720;
 
- 
   private readonly mainMenuMessageAnchor = new Map<
     string,
     { chatId: number; messageId: number }
@@ -701,18 +700,29 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private isMainMenuFromConfigDocument(ctx: Context): boolean {
-    const q = ctx.callbackQuery;
-    if (!q || q.data !== 'main_menu') return false;
-    const m = q.message;
-    return !!(m && 'document' in m && m.document);
+  /**
+   * Коллбэк висит на сообщении без обычного `text` (документ, фото, видео и т.п.).
+   * Для таких сообщений нельзя редактировать «как текст» — caption fallback в
+   * `safeEditMessageText` приклеит текст меню к caption-у медиа.
+   */
+  private isCallbackOnNonTextMessage(ctx: Context): boolean {
+    const m = ctx.callbackQuery?.message;
+    if (!m) return false;
+    if ('text' in m && typeof m.text === 'string') return false;
+    return (
+      ('document' in m && !!m.document) ||
+      ('photo' in m && !!m.photo) ||
+      ('video' in m && !!m.video) ||
+      ('animation' in m && !!m.animation) ||
+      ('audio' in m && !!m.audio) ||
+      ('voice' in m && !!m.voice) ||
+      ('sticker' in m && !!m.sticker)
+    );
   }
 
   /**
-   * Главное меню для коллбэка «В меню»: по возможности правим то же сообщение, на котором
-   * сидит callback — меньше визуального шума. «В меню» с файла .conf рисуем в сообщении-якоре
-   * (счёт/успех), не делая новый reply. Для команды /start этот путь НЕ используется —
-   * см. `presentMainMenuFresh`.
+   * Главное меню: по возможности обновляем одно и то же сообщение (меньше дублей от /start).
+   * «В меню» с файла .conf — снова рисуем меню в том же сообщении, что счёт/успех (якорь), без нового reply.
    */
   private async presentMainMenuAnchored(ctx: Context): Promise<void> {
     if (!ctx.from || !ctx.chat) {
@@ -726,22 +736,44 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     const cbMsg = ctx.callbackQuery?.message;
     const cbMid = cbMsg && 'message_id' in cbMsg ? cbMsg.message_id : undefined;
 
-    if (this.isMainMenuFromConfigDocument(ctx) && anchor?.chatId === chatId) {
-      const ok = await this.mainHandler.tryRefreshMainMenuMessage(
-        this.bot.api,
-        anchor.chatId,
-        anchor.messageId,
-        userId,
-      );
-      if (ok && cbMid != null) {
+    // «В меню» с сообщения, у которого нет текста (документ .conf, фото QR и т.п.).
+    // Тут нельзя сваливаться в общий путь: `safeEditMessageText` fallback'нется на
+    // `editMessageCaption` и текст меню «приклеится» к caption документа/фото.
+    // Если есть якорь — пробуем обновить его, кнопки с медиа-сообщения снимаем.
+    // Если не вышло — отправляем меню НОВЫМ сообщением.
+    if (this.isCallbackOnNonTextMessage(ctx)) {
+      if (anchor && anchor.chatId === chatId && anchor.messageId !== cbMid) {
+        const ok = await this.mainHandler.tryRefreshMainMenuMessage(
+          this.bot.api,
+          anchor.chatId,
+          anchor.messageId,
+          userId,
+        );
+        if (ok) {
+          if (cbMid != null) {
+            await ctx.api
+              .editMessageReplyMarkup(chatId, cbMid, {
+                reply_markup: { inline_keyboard: [] },
+              })
+              .catch(() => {});
+          }
+          return;
+        }
+        this.mainMenuMessageAnchor.delete(userId);
+      }
+
+      if (cbMid != null) {
         await ctx.api
           .editMessageReplyMarkup(chatId, cbMid, {
             reply_markup: { inline_keyboard: [] },
           })
           .catch(() => {});
-        return;
       }
-      this.mainMenuMessageAnchor.delete(userId);
+      const newId = await this.mainHandler.sendFreshMainMenu(ctx);
+      if (newId != null) {
+        this.mainMenuMessageAnchor.set(userId, { chatId, messageId: newId });
+      }
+      return;
     }
 
     const canRefreshAnchoredMenu =
@@ -752,7 +784,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       cbMid != null &&
       anchor &&
       anchor.messageId !== cbMid &&
-      !this.isMainMenuFromConfigDocument(ctx)
+      !this.isCallbackOnNonTextMessage(ctx)
     ) {
       this.mainMenuMessageAnchor.delete(userId);
     }
