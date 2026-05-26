@@ -102,15 +102,36 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     return this.adminIds.includes(userId);
   }
 
-  private async syncUnsettledPayments(ctx: Context): Promise<void> {
-    if (!ctx.from) return;
+  private async syncUnsettledPayments(ctx: Context): Promise<number> {
+    if (!ctx.from) return 0;
     try {
-      await this.paymentFulfillment.syncUnsettledForTelegramUser(
+      return await this.paymentFulfillment.syncUnsettledForTelegramUser(
         String(ctx.from.id),
       );
     } catch (e) {
       this.logger.error('syncUnsettledPayments', e);
+      return 0;
     }
+  }
+
+  /**
+   * Снимает клавиатуру с якорного сообщения, если это ещё не сообщение со счётом/успехом.
+   */
+  private async dismissStaleMainMenuAnchor(
+    telegramId: string,
+    invoiceMessageId?: number,
+  ): Promise<void> {
+    const anchor = this.mainMenuMessageAnchor.get(telegramId);
+    if (!anchor) return;
+    if (invoiceMessageId != null && anchor.messageId === invoiceMessageId) {
+      return;
+    }
+    await this.bot.api
+      .editMessageReplyMarkup(anchor.chatId, anchor.messageId, {
+        reply_markup: { inline_keyboard: [] },
+      })
+      .catch(() => {});
+    this.mainMenuMessageAnchor.delete(telegramId);
   }
 
   /**
@@ -293,7 +314,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.bot.api.editMessageText(chatId, messageId, text, {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.backToMenuKeyboard(),
+        reply_markup: BotUi.configDeliveredKeyboard(),
         link_preview_options: { is_disabled: true },
       });
       return true;
@@ -304,7 +325,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
           await this.bot.api.editMessageCaption(chatId, messageId, {
             caption: text,
             parse_mode: 'Markdown',
-            reply_markup: BotUi.backToMenuKeyboard(),
+            reply_markup: BotUi.configDeliveredKeyboard(),
           });
           return true;
         } catch (e2) {
@@ -736,12 +757,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     const cbMsg = ctx.callbackQuery?.message;
     const cbMid = cbMsg && 'message_id' in cbMsg ? cbMsg.message_id : undefined;
 
-    // «В меню» с сообщения, у которого нет текста (документ .conf, фото QR и т.п.).
-    // Тут нельзя сваливаться в общий путь: `safeEditMessageText` fallback'нется на
-    // `editMessageCaption` и текст меню «приклеится» к caption документа/фото.
-    // Если есть якорь — пробуем обновить его, кнопки с медиа-сообщения снимаем.
-    // Если не вышло — отправляем меню НОВЫМ сообщением.
+    // «В меню» с документа .conf / QR: файл удаляем, меню — в якорном текстовом сообщении
+    // или новым reply (нельзя превратить документ в текстовое меню через edit).
     if (this.isCallbackOnNonTextMessage(ctx)) {
+      if (cbMid != null) {
+        await ctx.api.deleteMessage(chatId, cbMid).catch(() => {});
+      }
+
       if (anchor && anchor.chatId === chatId && anchor.messageId !== cbMid) {
         const ok = await this.mainHandler.tryRefreshMainMenuMessage(
           this.bot.api,
@@ -750,25 +772,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
           userId,
         );
         if (ok) {
-          if (cbMid != null) {
-            await ctx.api
-              .editMessageReplyMarkup(chatId, cbMid, {
-                reply_markup: { inline_keyboard: [] },
-              })
-              .catch(() => {});
-          }
           return;
         }
         this.mainMenuMessageAnchor.delete(userId);
       }
 
-      if (cbMid != null) {
-        await ctx.api
-          .editMessageReplyMarkup(chatId, cbMid, {
-            reply_markup: { inline_keyboard: [] },
-          })
-          .catch(() => {});
-      }
       const newId = await this.mainHandler.sendFreshMainMenu(ctx);
       if (newId != null) {
         this.mainMenuMessageAnchor.set(userId, { chatId, messageId: newId });
@@ -836,9 +844,20 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   private registerCommands() {
     this.bot.command('start', async (ctx) => {
-      if (!this.isPostYookassaReturnStart(ctx)) {
+      const postPayReturn = this.isPostYookassaReturnStart(ctx);
+
+      if (postPayReturn) {
+        // Синхронизация и выдача конфига — в middleware; не шлём главное меню (дубль).
         await this.syncUnsettledPayments(ctx);
+        if (ctx.chat?.id && ctx.message?.message_id) {
+          await ctx.api
+            .deleteMessage(ctx.chat.id, ctx.message.message_id)
+            .catch(() => {});
+        }
+        return;
       }
+
+      await this.syncUnsettledPayments(ctx);
       await this.presentMainMenuFresh(ctx);
     });
 
@@ -1738,6 +1757,34 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Один файл .conf после оплаты; сообщение со счётом убираем, чтобы не дублировать кнопки. */
+  private async sendPaidConfigDocument(
+    telegramId: string,
+    config: string,
+    peer: TPeer,
+    caption: string,
+    invoiceUi?: { chatId: string; messageId: number },
+  ): Promise<void> {
+    if (invoiceUi) {
+      await this.bot.api
+        .deleteMessage(Number(invoiceUi.chatId), invoiceUi.messageId)
+        .catch(() => {});
+    }
+    this.mainMenuMessageAnchor.delete(telegramId);
+
+    const message = await this.bot.api.sendDocument(
+      telegramId,
+      new InputFile(Buffer.from(config), `${peer.name}.conf`),
+      {
+        caption,
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.configDeliveredKeyboard(),
+      },
+    );
+
+    await this.peersService.setConfigMessageId(peer.name, message.message_id);
+  }
+
   /** Уведомление об успешной оплате и отправка конфига */
   async notifyPaymentSuccess(
     telegramId: string,
@@ -1748,45 +1795,20 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     invoiceUi?: { chatId: string; messageId: number },
   ) {
     try {
-      const header =
-        `✅ *Оплата прошла успешно!* (${amount} ₽)\n\n` +
-        `Ваш конфиг *${peer.name}* на *${durationDays} дней* готов. ` +
-        `Файл — ниже.`;
+      await this.dismissStaleMainMenuAnchor(telegramId, invoiceUi?.messageId);
 
-      let headerDone = false;
-      if (invoiceUi) {
-        headerDone = await this.updateInvoiceSuccessMessage(
-          Number(invoiceUi.chatId),
-          invoiceUi.messageId,
-          header,
-        );
-      }
-      if (!headerDone) {
-        await this.bot.api.sendMessage(telegramId, header, {
-          parse_mode: 'Markdown',
-        });
-      }
-      if (!headerDone && invoiceUi) {
-        await this.bot.api
-          .editMessageReplyMarkup(
-            Number(invoiceUi.chatId),
-            invoiceUi.messageId,
-            { reply_markup: { inline_keyboard: [] } },
-          )
-          .catch(() => {});
-      }
+      const caption =
+        `✅ *Оплата прошла успешно!* (${amount} ₽)\n` +
+        `Конфиг *${peer.name}* на *${durationDays} дн.*\n\n` +
+        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
 
-      const message = await this.bot.api.sendDocument(
+      await this.sendPaidConfigDocument(
         telegramId,
-        new InputFile(Buffer.from(config), `${peer.name}.conf`),
-        {
-          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToMenuKeyboard(),
-        },
+        config,
+        peer,
+        caption,
+        invoiceUi,
       );
-
-      await this.peersService.setConfigMessageId(peer.name, message.message_id);
     } catch (error) {
       this.logger.error(
         `Error notifying user ${telegramId} about payment success`,
@@ -1805,46 +1827,23 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     invoiceUi?: { chatId: string; messageId: number },
   ) {
     try {
-      const header =
-        `✅ *Продление прошло успешно!* (${amount} ₽)\n\n` +
-        `Конфиг *${peer.name}* продлён на *${durationDays} дней*. ` +
-        `Новый срок: до ${peer.expiresAt ? new Date(peer.expiresAt).toLocaleDateString('ru-RU') : '—'}. ` +
-        `Файл — ниже.`;
+      await this.dismissStaleMainMenuAnchor(telegramId, invoiceUi?.messageId);
 
-      let headerDone = false;
-      if (invoiceUi) {
-        headerDone = await this.updateInvoiceSuccessMessage(
-          Number(invoiceUi.chatId),
-          invoiceUi.messageId,
-          header,
-        );
-      }
-      if (!headerDone) {
-        await this.bot.api.sendMessage(telegramId, header, {
-          parse_mode: 'Markdown',
-        });
-      }
-      if (!headerDone && invoiceUi) {
-        await this.bot.api
-          .editMessageReplyMarkup(
-            Number(invoiceUi.chatId),
-            invoiceUi.messageId,
-            { reply_markup: { inline_keyboard: [] } },
-          )
-          .catch(() => {});
-      }
+      const expiresStr = peer.expiresAt
+        ? new Date(peer.expiresAt).toLocaleDateString('ru-RU')
+        : '—';
+      const caption =
+        `✅ *Продление прошло успешно!* (${amount} ₽)\n` +
+        `Конфиг *${peer.name}* — *${durationDays} дн.*, до *${expiresStr}*\n\n` +
+        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
 
-      const message = await this.bot.api.sendDocument(
+      await this.sendPaidConfigDocument(
         telegramId,
-        new InputFile(Buffer.from(config), `${peer.name}.conf`),
-        {
-          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToMenuKeyboard(),
-        },
+        config,
+        peer,
+        caption,
+        invoiceUi,
       );
-
-      await this.peersService.setConfigMessageId(peer.name, message.message_id);
     } catch (error) {
       this.logger.error(
         `Error notifying user ${telegramId} about extend success`,

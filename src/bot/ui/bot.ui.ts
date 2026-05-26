@@ -319,6 +319,13 @@ export const BotUi = {
 
   backToMenuKeyboard: () => new InlineKeyboard().text('В меню', 'main_menu'),
 
+  /** После выдачи .conf — те же действия, что в главном меню (инструкция + меню). */
+  configDeliveredKeyboard: () =>
+    new InlineKeyboard()
+      .text('📖 Инструкция', 'show_instructions')
+      .row()
+      .text('В меню', 'main_menu'),
+
   emptyConfigsKeyboard: () =>
     new InlineKeyboard()
       .text('📄 Получить VPN', 'show_create_options')
