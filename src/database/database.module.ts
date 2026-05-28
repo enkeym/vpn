@@ -1,6 +1,7 @@
 import { Global, Logger, Module } from '@nestjs/common';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import * as path from 'path';
 import * as schema from './schema';
 import { existsSync, mkdirSync } from 'fs';
@@ -38,6 +39,11 @@ export const DRIZZLE = Symbol('DRIZZLE');
         logger.log('SQLite оптимизации применены (WAL, cache, etc.)');
 
         const db = drizzle(sqlite, { schema });
+
+        migrate(db, {
+          migrationsFolder: path.join(process.cwd(), 'drizzle'),
+        });
+        logger.log('Миграции применены');
 
         return db;
       },
