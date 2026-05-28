@@ -29,17 +29,24 @@ function callbackMessageId(ctx: Context): number | undefined {
   return msg && 'message_id' in msg ? msg.message_id : undefined;
 }
 
+function shouldTryEditMessageText(ctx: Context): boolean {
+  const msg = ctx.callbackQuery?.message;
+  return !msg || ('text' in msg && typeof msg.text === 'string');
+}
+
 export async function safeEditMessageText(
   ctx: Context,
   text: string,
   extra?: EditExtra,
 ): Promise<number | undefined> {
-  try {
-    await ctx.editMessageText(text, extra);
-    return callbackMessageId(ctx);
-  } catch (err) {
-    if (isMessageNotModifiedError(err)) return callbackMessageId(ctx);
-    if (!shouldRecoverEditTextFailure(err)) throw err;
+  if (shouldTryEditMessageText(ctx)) {
+    try {
+      await ctx.editMessageText(text, extra);
+      return callbackMessageId(ctx);
+    } catch (err) {
+      if (isMessageNotModifiedError(err)) return callbackMessageId(ctx);
+      if (!shouldRecoverEditTextFailure(err)) throw err;
+    }
   }
 
   try {

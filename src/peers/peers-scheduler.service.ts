@@ -27,30 +27,65 @@ export class PeersSchedulerService {
     }
   }
 
-  /** Раз в месяц удаляем конфиги, которые на паузе больше месяца */
-  @Cron(CronExpression.EVERY_1ST_DAY_OF_MONTH_AT_MIDNIGHT)
-  async handlePeersPausedOverMonth() {
-    this.logger.log('Запуск проверки конфигов на паузе более месяца...');
+  /** Раз в день обновляем runtime-статистику WireGuard */
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handlePeerTrafficStats() {
+    this.logger.log('Запуск обновления статистики трафика конфигов...');
 
     try {
-      const deletedCount = await this.peersService.deletePeersPausedOverMonth();
+      const updatedCount = await this.peersService.refreshPeerTrafficStats();
+
+      this.logger.log(`Обновлена статистика трафика конфигов: ${updatedCount}`);
+    } catch (error) {
+      this.logger.error(
+        `Ошибка при обновлении статистики трафика: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  /** Раз в день обрабатываем активные конфиги без трафика */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async handleInactiveActivePeers() {
+    this.logger.log('Запуск проверки активных конфигов без трафика...');
+
+    try {
+      const result = await this.peersService.handleInactiveActivePeers();
+
+      this.logger.log(
+        `Неактивные активные конфиги: уведомлено платных=${result.paidNotified}, уведомлено бессрочных=${result.unlimitedNotified}, поставлено на паузу=${result.unlimitedPaused}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Ошибка при обработке активных конфигов без трафика: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  /** Раз в день удаляем паузные конфиги по retention policy */
+  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  async handlePeersRetentionCleanup() {
+    this.logger.log('Запуск удаления конфигов по retention policy...');
+
+    try {
+      const deletedCount =
+        await this.peersService.deletePeersByRetentionPolicy();
 
       if (deletedCount > 0) {
         this.logger.log(
-          `Удалено конфигов (на паузе > месяца): ${deletedCount}`,
+          `Удалено конфигов по retention policy: ${deletedCount}`,
         );
       } else {
-        this.logger.log('Конфигов на паузе более месяца не найдено');
+        this.logger.log('Конфигов для удаления по retention policy не найдено');
       }
     } catch (error) {
       this.logger.error(
-        `Ошибка при удалении конфигов на паузе: ${error instanceof Error ? error.message : error}`,
+        `Ошибка при удалении конфигов по retention policy: ${error instanceof Error ? error.message : error}`,
       );
     }
   }
 
   /** Раз в день уведомляем пользователей о том, что конфиги скоро истекут (за 1 день) */
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleExpiringSoonNotifications() {
     this.logger.log(
       'Запуск отправки уведомлений о скором истечении срока действия конфигов...',

@@ -11,9 +11,20 @@ import {
 
 export type UserType = 'admin' | 'family' | 'user';
 
+type MainMenuView = {
+  userType: UserType;
+  welcomeMessage: string;
+  keyboard: ReturnType<typeof BotUi.mainMenuKeyboard>;
+};
+
 @Injectable()
 export class MainHandler {
   private adminIds: string[] = [];
+  private readonly mainMenuCache = new Map<
+    string,
+    MainMenuView & { expiresAt: number }
+  >();
+  private static readonly MAIN_MENU_CACHE_TTL_MS = 15_000;
 
   constructor(
     private readonly configService: ConfigService,
@@ -63,18 +74,32 @@ export class MainHandler {
     }
   }
 
-  private async sendWelcomeForClientUser(
-    ctx: Context,
-    userType: 'family' | 'user',
-    showTrial: boolean,
-  ): Promise<number | undefined> {
-    const keyboard = this.getMenuKeyboard(userType, showTrial);
-    const welcomeMessage = this.getWelcomeMessage(userType);
+  invalidateMainMenuCache(userId: string): void {
+    this.mainMenuCache.delete(userId);
+  }
 
-    return safeEditMessageText(ctx, welcomeMessage, {
-      reply_markup: keyboard,
-      parse_mode: 'Markdown',
+  private async getMainMenuView(userId: string): Promise<MainMenuView> {
+    const cached = this.mainMenuCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached;
+    }
+
+    const [userType, hasUsedTrial] = await Promise.all([
+      this.getUserType(userId),
+      this.peersService.hasUsedTrial(userId),
+    ]);
+    const showTrial = !hasUsedTrial;
+    const view = {
+      userType,
+      keyboard: this.getMenuKeyboard(userType, showTrial),
+      welcomeMessage: this.getWelcomeMessage(userType),
+    };
+
+    this.mainMenuCache.set(userId, {
+      ...view,
+      expiresAt: Date.now() + MainHandler.MAIN_MENU_CACHE_TTL_MS,
     });
+    return view;
   }
 
   /**
@@ -87,13 +112,7 @@ export class MainHandler {
     userId: string,
   ): Promise<boolean> {
     try {
-      const [userType, hasUsedTrial] = await Promise.all([
-        this.getUserType(userId),
-        this.peersService.hasUsedTrial(userId),
-      ]);
-      const showTrial = !hasUsedTrial;
-      const keyboard = this.getMenuKeyboard(userType, showTrial);
-      const welcomeMessage = this.getWelcomeMessage(userType);
+      const { keyboard, welcomeMessage } = await this.getMainMenuView(userId);
       await api.editMessageText(chatId, messageId, welcomeMessage, {
         reply_markup: keyboard,
         parse_mode: 'Markdown',
@@ -111,16 +130,14 @@ export class MainHandler {
     if (!ctx.from || !ctx.chat) return undefined;
 
     const userId = String(ctx.from.id);
-    const [userType, hasUsedTrial] = await Promise.all([
-      this.getUserType(userId),
-      this.peersService.hasUsedTrial(userId),
-    ]);
-    const showTrial = !hasUsedTrial;
-    const keyboard = this.getMenuKeyboard(userType, showTrial);
-    const welcomeMessage = this.getWelcomeMessage(userType);
+    const { userType, keyboard, welcomeMessage } =
+      await this.getMainMenuView(userId);
 
     if (userType === 'family' || userType === 'user') {
-      return this.sendWelcomeForClientUser(ctx, userType, showTrial);
+      return safeEditMessageText(ctx, welcomeMessage, {
+        reply_markup: keyboard,
+        parse_mode: 'Markdown',
+      });
     }
 
     return safeEditMessageText(ctx, welcomeMessage, {
@@ -139,13 +156,7 @@ export class MainHandler {
     if (!ctx.from || !ctx.chat) return undefined;
 
     const userId = String(ctx.from.id);
-    const [userType, hasUsedTrial] = await Promise.all([
-      this.getUserType(userId),
-      this.peersService.hasUsedTrial(userId),
-    ]);
-    const showTrial = !hasUsedTrial;
-    const keyboard = this.getMenuKeyboard(userType, showTrial);
-    const welcomeMessage = this.getWelcomeMessage(userType);
+    const { keyboard, welcomeMessage } = await this.getMainMenuView(userId);
 
     const sent = await ctx.reply(welcomeMessage, {
       reply_markup: keyboard,

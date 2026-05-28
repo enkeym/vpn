@@ -29,6 +29,13 @@ export interface IDbPeer {
   ip: string;
 }
 
+export interface IWgPeerRuntimeStats {
+  publicKey: string;
+  latestHandshakeAt: Date | null;
+  rxBytes: number;
+  txBytes: number;
+}
+
 interface ParsedConfigCache {
   config: WgConfig;
   timestamp: number;
@@ -204,6 +211,39 @@ export class WgService implements OnModuleInit {
       throw new Error(
         `Не удалось поднять интерфейс: ${error instanceof Error ? error.message : error}`,
       );
+    }
+  }
+
+  async getPeerRuntimeStats(): Promise<Map<string, IWgPeerRuntimeStats>> {
+    try {
+      const { stdout } = await execAsync('wg show wg0 dump');
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      const stats = new Map<string, IWgPeerRuntimeStats>();
+
+      for (const line of lines.slice(1)) {
+        const fields = line.split('\t');
+        const publicKey = fields[0];
+        const latestHandshake = Number(fields[4] || 0);
+        const rxBytes = Number(fields[5] || 0);
+        const txBytes = Number(fields[6] || 0);
+
+        if (!publicKey) continue;
+
+        stats.set(publicKey, {
+          publicKey,
+          latestHandshakeAt:
+            latestHandshake > 0 ? new Date(latestHandshake * 1000) : null,
+          rxBytes: Number.isFinite(rxBytes) ? rxBytes : 0,
+          txBytes: Number.isFinite(txBytes) ? txBytes : 0,
+        });
+      }
+
+      return stats;
+    } catch (error) {
+      this.logger.error(
+        `Ошибка получения статистики WireGuard: ${error instanceof Error ? error.message : error}`,
+      );
+      return new Map();
     }
   }
 

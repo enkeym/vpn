@@ -47,7 +47,9 @@ export class PeersController {
   }
 
   private sanitizePeer(peer: Record<string, unknown>) {
-    const { privateKey, presharedKey, ...safe } = peer;
+    const safe = { ...peer };
+    delete safe.privateKey;
+    delete safe.presharedKey;
     return safe;
   }
 }

@@ -80,9 +80,19 @@ export const peers = sqliteTable(
     endpoint: text('endpoint').notNull(),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
     pausedAt: integer('pausedAt', { mode: 'timestamp' }),
+    pausedReason: text('pausedReason', {
+      enum: ['expired', 'manual', 'inactive'],
+    }),
     expiresAt: integer('expiresAt', { mode: 'timestamp' }),
     isTrial: integer('isTrial', { mode: 'boolean' }).notNull().default(false),
     lastReplacedAt: integer('lastReplacedAt', { mode: 'timestamp' }),
+    lastTrafficAt: integer('lastTrafficAt', { mode: 'timestamp' }),
+    lastHandshakeAt: integer('lastHandshakeAt', { mode: 'timestamp' }),
+    rxBytes: integer('rxBytes').notNull().default(0),
+    txBytes: integer('txBytes').notNull().default(0),
+    inactivityNotifiedAt: integer('inactivityNotifiedAt', {
+      mode: 'timestamp',
+    }),
     createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
       () => new Date(),
     ),
@@ -101,6 +111,8 @@ export const peers = sqliteTable(
     index('peers_paused_idx').on(table.paused),
     // Составной индекс для поиска истекающих активных конфигов
     index('peers_expiration_idx').on(table.paused, table.expiresAt),
+    index('peers_paused_reason_idx').on(table.paused, table.pausedReason),
+    index('peers_activity_idx').on(table.paused, table.lastTrafficAt),
   ],
 );
 

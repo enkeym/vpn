@@ -9,7 +9,7 @@ import {
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { desc, eq, like, sql } from 'drizzle-orm';
+import { desc, eq, like } from 'drizzle-orm';
 import {
   CacheService,
   CacheStats,

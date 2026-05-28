@@ -760,9 +760,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     // «В меню» с документа .conf / QR: файл удаляем, меню — в якорном текстовом сообщении
     // или новым reply (нельзя превратить документ в текстовое меню через edit).
     if (this.isCallbackOnNonTextMessage(ctx)) {
-      if (cbMid != null) {
-        await ctx.api.deleteMessage(chatId, cbMid).catch(() => {});
-      }
+      const deleteCurrentMessage =
+        cbMid != null
+          ? ctx.api.deleteMessage(chatId, cbMid).catch(() => {})
+          : Promise.resolve();
+      void deleteCurrentMessage;
 
       if (anchor && anchor.chatId === chatId && anchor.messageId !== cbMid) {
         const ok = await this.mainHandler.tryRefreshMainMenuMessage(
@@ -865,12 +867,15 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       if (ctx.from) {
         this.stopInvoicePaymentPollingForUser(String(ctx.from.id));
       }
+      const callbackOnNonTextMessage = this.isCallbackOnNonTextMessage(ctx);
       try {
         await ctx.answerCallbackQuery();
       } catch {
         // Уже отвечено в middleware (для не-админов)
       }
-      await this.syncUnsettledPayments(ctx);
+      if (!callbackOnNonTextMessage) {
+        await this.syncUnsettledPayments(ctx);
+      }
       await this.presentMainMenuAnchored(ctx);
     });
 
@@ -1795,6 +1800,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     invoiceUi?: { chatId: string; messageId: number },
   ) {
     try {
+      this.mainHandler.invalidateMainMenuCache(telegramId);
       await this.dismissStaleMainMenuAnchor(telegramId, invoiceUi?.messageId);
 
       const caption =
@@ -1827,6 +1833,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     invoiceUi?: { chatId: string; messageId: number },
   ) {
     try {
+      this.mainHandler.invalidateMainMenuCache(telegramId);
       await this.dismissStaleMainMenuAnchor(telegramId, invoiceUi?.messageId);
 
       const expiresStr = peer.expiresAt

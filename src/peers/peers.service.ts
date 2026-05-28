@@ -34,9 +34,18 @@ import * as QRCode from 'qrcode';
 
 export type TPeer = typeof schema.peers.$inferInsert;
 export type TPeerSelect = typeof schema.peers.$inferSelect;
+type PeerPausedReason = NonNullable<TPeerSelect['pausedReason']>;
 
 const SYNC_MAX_RETRIES = 5;
 const SYNC_RETRY_DELAY_MS = 2000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TRIAL_EXPIRED_DELETE_AFTER_DAYS = 7;
+const PAID_EXPIRED_DELETE_AFTER_DAYS = 30;
+const MANUAL_PAUSED_DELETE_AFTER_DAYS = 90;
+const ACTIVE_PAID_INACTIVITY_NOTIFY_AFTER_DAYS = 30;
+const UNLIMITED_INACTIVITY_NOTIFY_AFTER_DAYS = 45;
+const UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS = 60;
+const INACTIVE_PAUSED_DELETE_AFTER_DAYS = 30;
 
 function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
   const now = new Date();
@@ -69,6 +78,7 @@ export class PeersService {
     await this.warmUpIpsCache();
     await this.syncWgWithDb();
     await this.backfillPausedAt();
+    await this.backfillPausedReason();
   }
 
   /**
@@ -87,6 +97,47 @@ export class PeersService {
         `Проставлен pausedAt для ${result.length} конфигов на паузе`,
       );
     }
+  }
+
+  private async backfillPausedReason(): Promise<void> {
+    const pausedPeers = await this.db.query.peers.findMany({
+      columns: { id: true, expiresAt: true },
+      where: and(
+        eq(schema.peers.paused, true),
+        isNull(schema.peers.pausedReason),
+      ),
+    });
+
+    if (pausedPeers.length === 0) {
+      return;
+    }
+
+    const now = new Date();
+    const expiredIds = pausedPeers
+      .filter((peer) => peer.expiresAt && peer.expiresAt <= now)
+      .map((peer) => peer.id);
+    const manualIds = pausedPeers
+      .filter((peer) => !peer.expiresAt || peer.expiresAt > now)
+      .map((peer) => peer.id);
+
+    if (expiredIds.length > 0) {
+      await this.db
+        .update(schema.peers)
+        .set({ pausedReason: 'expired' })
+        .where(inArray(schema.peers.id, expiredIds));
+    }
+
+    if (manualIds.length > 0) {
+      await this.db
+        .update(schema.peers)
+        .set({ pausedReason: 'manual' })
+        .where(inArray(schema.peers.id, manualIds));
+    }
+
+    this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+    this.logger.log(
+      `Проставлена причина паузы для ${pausedPeers.length} конфигов`,
+    );
   }
 
   /**
@@ -350,8 +401,11 @@ export class PeersService {
         ip: credentials.ip,
         endpoint: `${this.wgService.host}:${this.wgService.port}`,
         paused: false,
+        pausedReason: null,
         expiresAt,
         isTrial,
+        rxBytes: 0,
+        txBytes: 0,
       };
 
       const [newPeer] = await this.db
@@ -432,6 +486,7 @@ export class PeersService {
       .set({
         paused: shouldPause,
         pausedAt: shouldPause ? new Date() : null,
+        pausedReason: shouldPause ? 'manual' : null,
       })
       .where(eq(schema.peers.name, peerName));
 
@@ -462,6 +517,7 @@ export class PeersService {
         .set({
           paused: !shouldPause,
           pausedAt: shouldPause ? null : new Date(),
+          pausedReason: shouldPause ? null : peer.pausedReason,
         })
         .where(eq(schema.peers.name, peerName));
 
@@ -796,7 +852,7 @@ export class PeersService {
     try {
       await this.db
         .update(schema.peers)
-        .set({ paused: true, pausedAt: new Date() })
+        .set({ paused: true, pausedAt: new Date(), pausedReason: 'expired' })
         .where(inArray(schema.peers.id, ids));
 
       await this.wgService.removePeers(publicKeys);
@@ -907,20 +963,46 @@ export class PeersService {
     return notifiedCount;
   }
 
-  /**
-   * Удаляет конфиги, которые находятся на паузе более месяца.
-   * Вызывается ежемесячно по расписанию.
-   */
-  async deletePeersPausedOverMonth(): Promise<number> {
-    const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  async deletePeersByRetentionPolicy(): Promise<number> {
+    const now = Date.now();
 
-    const toDelete = await this.db.query.peers.findMany({
-      columns: { name: true, ip: true, telegramId: true },
+    const pausedPeers = await this.db.query.peers.findMany({
+      columns: {
+        name: true,
+        ip: true,
+        telegramId: true,
+        pausedAt: true,
+        pausedReason: true,
+        isTrial: true,
+        expiresAt: true,
+      },
       where: and(
         eq(schema.peers.paused, true),
         isNotNull(schema.peers.pausedAt),
-        lte(schema.peers.pausedAt, monthAgo),
       ),
+    });
+
+    const toDelete = pausedPeers.filter((peer) => {
+      if (!peer.pausedAt) return false;
+
+      const reason = this.resolvePausedReason(
+        peer.pausedReason,
+        peer.expiresAt,
+      );
+      const pausedDays = (now - peer.pausedAt.getTime()) / DAY_MS;
+
+      if (reason === 'expired') {
+        const retentionDays = peer.isTrial
+          ? TRIAL_EXPIRED_DELETE_AFTER_DAYS
+          : PAID_EXPIRED_DELETE_AFTER_DAYS;
+        return pausedDays >= retentionDays;
+      }
+
+      if (reason === 'inactive') {
+        return pausedDays >= INACTIVE_PAUSED_DELETE_AFTER_DAYS;
+      }
+
+      return pausedDays >= MANUAL_PAUSED_DELETE_AFTER_DAYS;
     });
 
     if (toDelete.length === 0) {
@@ -941,15 +1023,210 @@ export class PeersService {
       this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
 
       this.logger.log(
-        `Удалено конфигов (на паузе более месяца): ${toDelete.length}`,
+        `Удалено конфигов по retention policy: ${toDelete.length}`,
       );
       return toDelete.length;
     } catch (error) {
       this.logger.error(
-        `Ошибка batch-удаления конфигов на паузе: ${error instanceof Error ? error.message : error}`,
+        `Ошибка batch-удаления конфигов по retention policy: ${error instanceof Error ? error.message : error}`,
       );
       throw error;
     }
+  }
+
+  async deletePeersPausedOverMonth(): Promise<number> {
+    return this.deletePeersByRetentionPolicy();
+  }
+
+  async refreshPeerTrafficStats(): Promise<number> {
+    const runtimeStats = await this.wgService.getPeerRuntimeStats();
+    if (runtimeStats.size === 0) {
+      return 0;
+    }
+
+    const activePeers = await this.db.query.peers.findMany({
+      columns: {
+        name: true,
+        publicKey: true,
+        telegramId: true,
+        rxBytes: true,
+        txBytes: true,
+        lastHandshakeAt: true,
+      },
+      where: eq(schema.peers.paused, false),
+    });
+
+    let updated = 0;
+    const affectedTelegramIds = new Set<string>();
+
+    for (const peer of activePeers) {
+      const stats = runtimeStats.get(peer.publicKey);
+      if (!stats) continue;
+
+      const previousTotal = peer.rxBytes + peer.txBytes;
+      const currentTotal = stats.rxBytes + stats.txBytes;
+      const hasNewTraffic = currentTotal > previousTotal;
+      const hasNewHandshake =
+        stats.latestHandshakeAt &&
+        (!peer.lastHandshakeAt ||
+          stats.latestHandshakeAt.getTime() > peer.lastHandshakeAt.getTime());
+
+      await this.db
+        .update(schema.peers)
+        .set({
+          rxBytes: stats.rxBytes,
+          txBytes: stats.txBytes,
+          lastHandshakeAt: stats.latestHandshakeAt,
+          lastTrafficAt:
+            hasNewTraffic || hasNewHandshake ? new Date() : undefined,
+          inactivityNotifiedAt:
+            hasNewTraffic || hasNewHandshake ? null : undefined,
+        })
+        .where(eq(schema.peers.name, peer.name));
+
+      this.invalidatePeerCache(peer.name);
+      affectedTelegramIds.add(peer.telegramId);
+      updated++;
+    }
+
+    for (const telegramId of affectedTelegramIds) {
+      this.cacheService.delete(CACHE_NAMESPACES.PEERS_BY_USER, telegramId);
+    }
+    if (updated > 0) {
+      this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+    }
+
+    this.logger.log(`Обновлена статистика трафика для ${updated} конфигов`);
+    return updated;
+  }
+
+  async handleInactiveActivePeers(): Promise<{
+    paidNotified: number;
+    unlimitedNotified: number;
+    unlimitedPaused: number;
+  }> {
+    const now = new Date();
+    const activePeers = await this.db.query.peers.findMany({
+      columns: {
+        name: true,
+        telegramId: true,
+        publicKey: true,
+        paused: true,
+        expiresAt: true,
+        createdAt: true,
+        lastTrafficAt: true,
+        inactivityNotifiedAt: true,
+      },
+      where: eq(schema.peers.paused, false),
+    });
+
+    let paidNotified = 0;
+    let unlimitedNotified = 0;
+    const unlimitedToPause = activePeers.filter((peer) => {
+      if (peer.expiresAt) return false;
+      const inactiveDays = this.getInactiveDays(peer, now);
+      return inactiveDays >= UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS;
+    });
+    const unlimitedToPauseNames = new Set(
+      unlimitedToPause.map((peer) => peer.name),
+    );
+
+    for (const peer of activePeers) {
+      const inactiveDays = this.getInactiveDays(peer, now);
+      if (peer.inactivityNotifiedAt || unlimitedToPauseNames.has(peer.name))
+        continue;
+
+      if (
+        peer.expiresAt &&
+        peer.expiresAt > now &&
+        inactiveDays >= ACTIVE_PAID_INACTIVITY_NOTIFY_AFTER_DAYS
+      ) {
+        const ok = await this.notificationService.notifyUser(
+          peer.telegramId,
+          'VPN-конфиг давно не используется',
+          [
+            `Ваш активный конфиг \`${peer.name}\` не показывает трафик около ${Math.floor(inactiveDays)} дн.`,
+            '',
+            'Мы не отключаем оплаченные активные конфиги до окончания срока, но стоит проверить подключение, если VPN нужен.',
+          ].join('\n'),
+        );
+        if (ok) {
+          await this.markInactivityNotified(peer.name);
+          paidNotified++;
+        }
+      } else if (
+        !peer.expiresAt &&
+        inactiveDays >= UNLIMITED_INACTIVITY_NOTIFY_AFTER_DAYS
+      ) {
+        const ok = await this.notificationService.notifyUser(
+          peer.telegramId,
+          'Бессрочный VPN-конфиг давно не используется',
+          [
+            `Ваш бессрочный конфиг \`${peer.name}\` не показывает трафик около ${Math.floor(inactiveDays)} дн.`,
+            '',
+            `Если трафик не появится, конфиг будет поставлен на паузу после ${UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS} дней неактивности.`,
+          ].join('\n'),
+        );
+        if (ok) {
+          await this.markInactivityNotified(peer.name);
+          unlimitedNotified++;
+        }
+      }
+    }
+
+    let unlimitedPaused = 0;
+    if (unlimitedToPause.length > 0) {
+      const names = unlimitedToPause.map((peer) => peer.name);
+      const publicKeys = unlimitedToPause.map((peer) => peer.publicKey);
+
+      await this.db
+        .update(schema.peers)
+        .set({
+          paused: true,
+          pausedAt: new Date(),
+          pausedReason: 'inactive',
+        })
+        .where(inArray(schema.peers.name, names));
+
+      await this.wgService.removePeers(publicKeys);
+
+      for (const peer of unlimitedToPause) {
+        this.invalidatePeerCache(peer.name);
+        this.cacheService.delete(
+          CACHE_NAMESPACES.PEERS_BY_USER,
+          peer.telegramId,
+        );
+      }
+      this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+      unlimitedPaused = unlimitedToPause.length;
+    }
+
+    return { paidNotified, unlimitedNotified, unlimitedPaused };
+  }
+
+  private resolvePausedReason(
+    pausedReason: TPeerSelect['pausedReason'],
+    expiresAt: Date | null,
+  ): PeerPausedReason {
+    if (pausedReason) return pausedReason;
+    return expiresAt && expiresAt <= new Date() ? 'expired' : 'manual';
+  }
+
+  private getInactiveDays(
+    peer: Pick<TPeerSelect, 'createdAt' | 'lastTrafficAt'>,
+    now: Date,
+  ): number {
+    const activityBase = peer.lastTrafficAt ?? peer.createdAt ?? now;
+    return (now.getTime() - activityBase.getTime()) / DAY_MS;
+  }
+
+  private async markInactivityNotified(peerName: string): Promise<void> {
+    await this.db
+      .update(schema.peers)
+      .set({ inactivityNotifiedAt: new Date() })
+      .where(eq(schema.peers.name, peerName));
+
+    this.invalidatePeerCache(peerName);
   }
 
   isExpired(peer: TPeerSelect): boolean {
@@ -1095,8 +1372,14 @@ export class PeersService {
           endpoint: `${this.wgService.host}:${this.wgService.port}`,
           paused: false, // Активируем конфиг при замене
           pausedAt: null,
+          pausedReason: null,
           expiresAt: currentExpiresAt, // Сохраняем тот же срок!
           lastReplacedAt: new Date(),
+          lastTrafficAt: null,
+          lastHandshakeAt: null,
+          rxBytes: 0,
+          txBytes: 0,
+          inactivityNotifiedAt: null,
         })
         .where(eq(schema.peers.name, peerName))
         .returning();
@@ -1131,7 +1414,13 @@ export class PeersService {
             endpoint: oldPeer.endpoint,
             paused: oldPeer.paused,
             pausedAt: oldPeer.pausedAt,
+            pausedReason: oldPeer.pausedReason,
             lastReplacedAt: oldPeer.lastReplacedAt,
+            lastTrafficAt: oldPeer.lastTrafficAt,
+            lastHandshakeAt: oldPeer.lastHandshakeAt,
+            rxBytes: oldPeer.rxBytes,
+            txBytes: oldPeer.txBytes,
+            inactivityNotifiedAt: oldPeer.inactivityNotifiedAt,
           })
           .where(eq(schema.peers.name, peerName));
 
