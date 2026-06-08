@@ -1783,7 +1783,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       {
         caption,
         parse_mode: 'Markdown',
-        reply_markup: BotUi.configDeliveredKeyboard(),
+        reply_markup: BotUi.configDeliveredKeyboard(peer.name),
       },
     );
 

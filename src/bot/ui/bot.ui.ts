@@ -320,11 +320,16 @@ export const BotUi = {
   backToMenuKeyboard: () => new InlineKeyboard().text('В меню', 'main_menu'),
 
   /** После выдачи .conf — те же действия, что в главном меню (инструкция + меню). */
-  configDeliveredKeyboard: () =>
-    new InlineKeyboard()
+  configDeliveredKeyboard: (peerName?: string) => {
+    const kb = new InlineKeyboard();
+    if (peerName) {
+      kb.text('📂 Меню конфига', `manage_peer:${peerName}`).row();
+    }
+    return kb
       .text('📖 Инструкция', 'show_instructions')
       .row()
-      .text('В меню', 'main_menu'),
+      .text('В меню', 'main_menu');
+  },
 
   emptyConfigsKeyboard: () =>
     new InlineKeyboard()

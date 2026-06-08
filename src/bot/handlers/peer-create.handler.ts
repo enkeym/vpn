@@ -113,7 +113,7 @@ export class PeerCreateHandler {
         {
           caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
           parse_mode: 'Markdown',
-          reply_markup: BotUi.configDeliveredKeyboard(),
+          reply_markup: BotUi.configDeliveredKeyboard(peer.name),
         },
       );
 
