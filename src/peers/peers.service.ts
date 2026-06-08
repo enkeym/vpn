@@ -998,9 +998,10 @@ export class PeersService {
         return pausedDays >= retentionDays;
       }
 
-      if (reason === 'inactive') {
-        return pausedDays >= INACTIVE_PAUSED_DELETE_AFTER_DAYS;
-      }
+      // // [ВРЕМЕННО ОТКЛЮЧЕНО] Удаление бессрочных конфигов по причине неактивности
+      // if (reason === 'inactive') {
+      //   return pausedDays >= INACTIVE_PAUSED_DELETE_AFTER_DAYS;
+      // }
 
       return pausedDays >= MANUAL_PAUSED_DELETE_AFTER_DAYS;
     });
@@ -1122,19 +1123,20 @@ export class PeersService {
 
     let paidNotified = 0;
     let unlimitedNotified = 0;
-    const unlimitedToPause = activePeers.filter((peer) => {
-      if (peer.expiresAt) return false;
-      const inactiveDays = this.getInactiveDays(peer, now);
-      return inactiveDays >= UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS;
-    });
-    const unlimitedToPauseNames = new Set(
-      unlimitedToPause.map((peer) => peer.name),
-    );
+
+    // // [ВРЕМЕННО ОТКЛЮЧЕНО] Паузa бессрочных конфигов за неактивность
+    // const unlimitedToPause = activePeers.filter((peer) => {
+    //   if (peer.expiresAt) return false;
+    //   const inactiveDays = this.getInactiveDays(peer, now);
+    //   return inactiveDays >= UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS;
+    // });
+    // const unlimitedToPauseNames = new Set(
+    //   unlimitedToPause.map((peer) => peer.name),
+    // );
 
     for (const peer of activePeers) {
       const inactiveDays = this.getInactiveDays(peer, now);
-      if (peer.inactivityNotifiedAt || unlimitedToPauseNames.has(peer.name))
-        continue;
+      if (peer.inactivityNotifiedAt) continue;
 
       if (
         peer.expiresAt &&
@@ -1154,54 +1156,57 @@ export class PeersService {
           await this.markInactivityNotified(peer.name);
           paidNotified++;
         }
-      } else if (
-        !peer.expiresAt &&
-        inactiveDays >= UNLIMITED_INACTIVITY_NOTIFY_AFTER_DAYS
-      ) {
-        const ok = await this.notificationService.notifyUser(
-          peer.telegramId,
-          'Бессрочный VPN-конфиг давно не используется',
-          [
-            `Ваш бессрочный конфиг \`${peer.name}\` не показывает трафик около ${Math.floor(inactiveDays)} дн.`,
-            '',
-            `Если трафик не появится, конфиг будет поставлен на паузу после ${UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS} дней неактивности.`,
-          ].join('\n'),
-        );
-        if (ok) {
-          await this.markInactivityNotified(peer.name);
-          unlimitedNotified++;
-        }
       }
+      // // [ВРЕМЕННО ОТКЛЮЧЕНО] Уведомление бессрочных об неактивности
+      // else if (
+      //   !peer.expiresAt &&
+      //   inactiveDays >= UNLIMITED_INACTIVITY_NOTIFY_AFTER_DAYS
+      // ) {
+      //   const ok = await this.notificationService.notifyUser(
+      //     peer.telegramId,
+      //     'Бессрочный VPN-конфиг давно не используется',
+      //     [
+      //       `Ваш бессрочный конфиг \`${peer.name}\` не показывает трафик около ${Math.floor(inactiveDays)} дн.`,
+      //       '',
+      //       `Если трафик не появится, конфиг будет поставлен на паузу после ${UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS} дней неактивности.`,
+      //     ].join('\n'),
+      //   );
+      //   if (ok) {
+      //     await this.markInactivityNotified(peer.name);
+      //     unlimitedNotified++;
+      //   }
+      // }
     }
 
-    let unlimitedPaused = 0;
-    if (unlimitedToPause.length > 0) {
-      const names = unlimitedToPause.map((peer) => peer.name);
-      const publicKeys = unlimitedToPause.map((peer) => peer.publicKey);
+    // // [ВРЕМЕННО ОТКЛЮЧЕНО] Постановка бессрочных на паузу за неактивность
+    // let unlimitedPaused = 0;
+    // if (unlimitedToPause.length > 0) {
+    //   const names = unlimitedToPause.map((peer) => peer.name);
+    //   const publicKeys = unlimitedToPause.map((peer) => peer.publicKey);
+    //
+    //   await this.db
+    //     .update(schema.peers)
+    //     .set({
+    //       paused: true,
+    //       pausedAt: new Date(),
+    //       pausedReason: 'inactive',
+    //     })
+    //     .where(inArray(schema.peers.name, names));
+    //
+    //   await this.wgService.removePeers(publicKeys);
+    //
+    //   for (const peer of unlimitedToPause) {
+    //     this.invalidatePeerCache(peer.name);
+    //     this.cacheService.delete(
+    //       CACHE_NAMESPACES.PEERS_BY_USER,
+    //       peer.telegramId,
+    //     );
+    //   }
+    //   this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+    //   unlimitedPaused = unlimitedToPause.length;
+    // }
 
-      await this.db
-        .update(schema.peers)
-        .set({
-          paused: true,
-          pausedAt: new Date(),
-          pausedReason: 'inactive',
-        })
-        .where(inArray(schema.peers.name, names));
-
-      await this.wgService.removePeers(publicKeys);
-
-      for (const peer of unlimitedToPause) {
-        this.invalidatePeerCache(peer.name);
-        this.cacheService.delete(
-          CACHE_NAMESPACES.PEERS_BY_USER,
-          peer.telegramId,
-        );
-      }
-      this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
-      unlimitedPaused = unlimitedToPause.length;
-    }
-
-    return { paidNotified, unlimitedNotified, unlimitedPaused };
+    return { paidNotified, unlimitedNotified, unlimitedPaused: 0 };
   }
 
   private resolvePausedReason(
