@@ -4,6 +4,7 @@ import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
+import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 
 // Состояние ожидания ввода для добавления члена группы
 // userId -> { promptMessageId: number, chatId: number }
@@ -398,22 +399,13 @@ export class FamilyHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
-      const chatId = peer.telegramId;
-      for (const messageId of [
+      // Связанные сообщения удаляем в фоне (не блокируя отрисовку меню):
+      // часть из них может быть старше 48 ч и боту недоступна для удаления.
+      void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
         peer.configMessageId,
         peer.qrMessageId,
         peer.fileMessageId,
-      ]) {
-        if (messageId != null) {
-          try {
-            await ctx.api.deleteMessage(chatId, messageId);
-          } catch (error) {
-            this.logger.warn(
-              `Не удалось удалить связанное сообщение (${messageId}): ${error}`,
-            );
-          }
-        }
-      }
+      ]);
 
       await this.peersService.deletePeer(peerName);
       await this.showMemberDetails(ctx, memberId);
@@ -440,28 +432,19 @@ export class FamilyHandler {
       const peers = await this.peersService.getPeersByTelegramId(
         member.telegramId,
       );
+
+      // Связанные сообщения удаляем в фоне (часть может быть старше 48 ч).
       for (const peer of peers) {
-        try {
-          const chatId = peer.telegramId;
-          for (const messageId of [
-            peer.configMessageId,
-            peer.qrMessageId,
-            peer.fileMessageId,
-          ]) {
-            if (messageId != null) {
-              try {
-                await ctx.api.deleteMessage(chatId, messageId);
-              } catch (err) {
-                this.logger.warn(
-                  `Не удалось удалить связанное сообщение конфига ${peer.name}: ${err}`,
-                );
-              }
-            }
-          }
-          await this.peersService.deletePeer(peer.name);
-        } catch (error) {
-          this.logger.warn(`Ошибка удаления конфига ${peer.name}: ${error}`);
-        }
+        void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
+          peer.configMessageId,
+          peer.qrMessageId,
+          peer.fileMessageId,
+        ]);
+      }
+
+      // Батч-удаление: один DELETE в БД и один `wg syncconf` на все конфиги.
+      if (peers.length > 0) {
+        await this.peersService.deletePeersByNames(peers.map((p) => p.name));
       }
 
       await this.familyService.removeMemberById(memberId);

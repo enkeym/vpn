@@ -550,6 +550,48 @@ export class PeersService {
     return { message: `Конфиг ${peerName} успешно удален` };
   }
 
+  /**
+   * Батч-удаление нескольких конфигов: один DELETE в БД и один `wg syncconf`
+   * (вместо N последовательных `deletePeer` с N-кратным `syncSystem`).
+   */
+  async deletePeersByNames(peerNames: string[]): Promise<void> {
+    if (peerNames.length === 0) return;
+
+    const peers = await this.db.query.peers.findMany({
+      columns: {
+        name: true,
+        ip: true,
+        telegramId: true,
+        publicKey: true,
+        paused: true,
+      },
+      where: inArray(schema.peers.name, peerNames),
+    });
+    if (peers.length === 0) return;
+
+    await this.db.delete(schema.peers).where(
+      inArray(
+        schema.peers.name,
+        peers.map((p) => p.name),
+      ),
+    );
+
+    for (const p of peers) {
+      this.removeIpFromCache(p.ip);
+      this.invalidatePeerCache(p.name);
+      this.invalidateUserPeersCache(p.telegramId);
+    }
+
+    const activeKeys = peers.filter((p) => !p.paused).map((p) => p.publicKey);
+    if (activeKeys.length > 0) {
+      try {
+        await this.wgService.removePeers(activeKeys);
+      } catch (error) {
+        this.logger.error(`Не удалось удалить пиры из WG: ${error}`);
+      }
+    }
+  }
+
   /** Расширенная статистика для админ-панели. */
   async getStats(): Promise<{
     totalConfigs: number;

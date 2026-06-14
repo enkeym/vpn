@@ -5,6 +5,7 @@ import { PeersService } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
+import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 
 // Состояние ожидания ввода telegramId для поиска клиента
 // adminId -> { promptMessageId: number, chatId: number }
@@ -446,22 +447,13 @@ export class AdminHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
 
-      const chatId = peer.telegramId;
-      for (const messageId of [
+      // Связанные сообщения удаляем в фоне (не блокируя отрисовку меню):
+      // часть из них может быть старше 48 ч и боту недоступна для удаления.
+      void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
         peer.configMessageId,
         peer.qrMessageId,
         peer.fileMessageId,
-      ]) {
-        if (messageId != null) {
-          try {
-            await ctx.api.deleteMessage(chatId, messageId);
-          } catch (error) {
-            this.logger.warn(
-              `Не удалось удалить связанное сообщение (${messageId}): ${error}`,
-            );
-          }
-        }
-      }
+      ]);
 
       await this.peersService.deletePeer(peerName);
       await this.showClientDetails(ctx, telegramId);

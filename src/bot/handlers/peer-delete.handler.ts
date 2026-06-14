@@ -2,6 +2,7 @@ import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { Context } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { PeerManageHandler } from './peer-manage.handler';
+import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 
 @Injectable()
 export class PeerDeleteHandler {
@@ -20,22 +21,13 @@ export class PeerDeleteHandler {
         throw new ForbiddenException('Нет доступа к удалению чужого конфига');
       }
 
-      const chatId = peer.telegramId;
-      for (const messageId of [
+      // Связанные сообщения удаляем в фоне (не блокируя отрисовку меню):
+      // часть из них может быть старше 48 ч и боту недоступна для удаления.
+      void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
         peer.configMessageId,
         peer.qrMessageId,
         peer.fileMessageId,
-      ]) {
-        if (messageId != null) {
-          try {
-            await ctx.api.deleteMessage(chatId, messageId);
-          } catch (error) {
-            this.logger.warn(
-              `Не удалось удалить связанное сообщение (${messageId}): ${error}`,
-            );
-          }
-        }
-      }
+      ]);
 
       await this.peersService.deletePeer(peerName);
       await this.peerManageHandler.showConfigsList(ctx);
