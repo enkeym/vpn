@@ -27,6 +27,7 @@ import {
 } from 'src/payment/payment-fulfillment.service';
 import { BotUi } from './ui/bot.ui';
 import { safeEditMessageText } from './utils/safe-edit-message';
+import { isForwardedMessage } from './utils/forwarded-message';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -645,19 +646,27 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.bot.on('message', async (ctx, next) => {
       if (!ctx.from || !ctx.message) return next();
       const userId = String(ctx.from.id);
+
+      // Проверка добавления в группу семьи
+      if (this.isAdmin(userId) && this.familyHandler.isAwaitingInput(userId)) {
+        if (isForwardedMessage(ctx.message)) {
+          await this.familyHandler.handleAddMemberInput(ctx);
+          return;
+        }
+      }
+
+      // Проверка поиска клиента
       if (
-        !this.isAdmin(userId) ||
-        !this.familyHandler.isAwaitingInput(userId)
+        this.isAdmin(userId) &&
+        this.adminHandler.isAwaitingClientSearch(userId)
       ) {
-        return next();
+        if (isForwardedMessage(ctx.message)) {
+          await this.adminHandler.handleSearchInput(ctx);
+          return;
+        }
       }
-      const msg = ctx.message;
-      const legacyFrom = (msg as { forward_from?: { id: number } })
-        .forward_from;
-      if (!msg.forward_origin && !legacyFrom) {
-        return next();
-      }
-      await this.familyHandler.handleAddMemberInput(ctx);
+
+      return next();
     });
 
     // Обработка текстовых сообщений для ввода данных члена группы

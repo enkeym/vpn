@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
+import { Message } from 'grammy/types';
 import { PeersService } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
 import { BotUi } from '../ui/bot.ui';
@@ -54,6 +55,33 @@ export class AdminHandler {
     }
   }
 
+  /**
+   * Извлекает ID клиента из пересланного сообщения либо из текста.
+   * Возвращает ID или null, если не удалось его получить.
+   */
+  private resolveClientSearchInput(message: Message): string | null {
+    const origin = message.forward_origin;
+    if (origin) {
+      if (origin.type === 'user') {
+        return String(origin.sender_user.id);
+      }
+      return null;
+    }
+
+    const legacyFrom = (message as { forward_from?: { id: number } })
+      .forward_from;
+    if (legacyFrom) {
+      return String(legacyFrom.id);
+    }
+
+    const text = message.text?.trim();
+    if (text && /^\d+$/.test(text)) {
+      return text;
+    }
+
+    return null;
+  }
+
   async showSearchPrompt(ctx: Context) {
     if (!ctx.from || !ctx.chat) return;
 
@@ -71,13 +99,13 @@ export class AdminHandler {
   }
 
   async handleSearchInput(ctx: Context) {
-    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
+    if (!ctx.from || !ctx.message || !ctx.chat) return;
 
     const adminId = String(ctx.from.id);
     const state = this.getAwaitingClientSearchState(adminId);
     this.setAwaitingClientSearch(adminId, null);
 
-    const input = ctx.message.text.trim();
+    const telegramId = this.resolveClientSearchInput(ctx.message);
 
     // Удаляем сообщение пользователя
     try {
@@ -95,8 +123,8 @@ export class AdminHandler {
       }
     }
 
-    // Проверяем что введен числовой ID
-    if (!/^\d+$/.test(input)) {
+    // Проверяем что получен числовой ID
+    if (!telegramId) {
       const errorMsg = await ctx.reply(BotUi.invalidClientIdInput, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.cancelClientSearchKeyboard(),
@@ -107,8 +135,6 @@ export class AdminHandler {
       });
       return;
     }
-
-    const telegramId = input;
 
     // Ищем конфиги клиента (может быть 0)
     const peers = await this.peersService.getPeersByTelegramId(telegramId);
