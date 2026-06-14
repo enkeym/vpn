@@ -10,6 +10,12 @@ import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
 import { PaymentModule } from 'src/payment/payment.module';
+import { InvoiceService } from './invoice/invoice.service';
+import { MainMenuService } from './menu/main-menu.service';
+import { MainMenuAnchorStore } from './menu/main-menu-anchor.store';
+import { UserCommandsRegistrar } from './registrars/user-commands.registrar';
+import { FamilyCommandsRegistrar } from './registrars/family-commands.registrar';
+import { AdminCommandsRegistrar } from './registrars/admin-commands.registrar';
 
 @Module({
   imports: [
@@ -26,6 +32,12 @@ import { PaymentModule } from 'src/payment/payment.module';
     PeerManageHandler,
     FamilyHandler,
     AdminHandler,
+    InvoiceService,
+    MainMenuService,
+    MainMenuAnchorStore,
+    UserCommandsRegistrar,
+    FamilyCommandsRegistrar,
+    AdminCommandsRegistrar,
   ],
   controllers: [],
   exports: [BotService],
