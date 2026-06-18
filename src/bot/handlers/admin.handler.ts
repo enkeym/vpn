@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
-import { Message } from 'grammy/types';
+import { resolveTelegramIdInput } from '../utils/resolve-telegram-id';
 import { PeersService } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
 import { BotUi } from '../ui/bot.ui';
@@ -56,33 +56,6 @@ export class AdminHandler {
     }
   }
 
-  /**
-   * Извлекает ID клиента из пересланного сообщения либо из текста.
-   * Возвращает ID или null, если не удалось его получить.
-   */
-  private resolveClientSearchInput(message: Message): string | null {
-    const origin = message.forward_origin;
-    if (origin) {
-      if (origin.type === 'user') {
-        return String(origin.sender_user.id);
-      }
-      return null;
-    }
-
-    const legacyFrom = (message as { forward_from?: { id: number } })
-      .forward_from;
-    if (legacyFrom) {
-      return String(legacyFrom.id);
-    }
-
-    const text = message.text?.trim();
-    if (text && /^\d+$/.test(text)) {
-      return text;
-    }
-
-    return null;
-  }
-
   async showSearchPrompt(ctx: Context) {
     if (!ctx.from || !ctx.chat) return;
 
@@ -106,7 +79,7 @@ export class AdminHandler {
     const state = this.getAwaitingClientSearchState(adminId);
     this.setAwaitingClientSearch(adminId, null);
 
-    const telegramId = this.resolveClientSearchInput(ctx.message);
+    const resolved = resolveTelegramIdInput(ctx.message);
 
     // Удаляем сообщение пользователя
     try {
@@ -124,9 +97,14 @@ export class AdminHandler {
       }
     }
 
-    // Проверяем что получен числовой ID
-    if (!telegramId) {
-      const errorMsg = await ctx.reply(BotUi.invalidClientIdInput, {
+    if (resolved.kind !== 'id') {
+      const text =
+        resolved.kind === 'hidden'
+          ? BotUi.forwardHiddenUser
+          : resolved.kind === 'not_from_user'
+            ? BotUi.forwardNotFromUser
+            : BotUi.invalidClientIdInput;
+      const errorMsg = await ctx.reply(text, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.cancelClientSearchKeyboard(),
       });
@@ -137,6 +115,7 @@ export class AdminHandler {
       return;
     }
 
+    const { telegramId } = resolved;
     // Ищем конфиги клиента (может быть 0)
     const peers = await this.peersService.getPeersByTelegramId(telegramId);
     const isBlocked = await this.blockedUsersService.isBlocked(telegramId);

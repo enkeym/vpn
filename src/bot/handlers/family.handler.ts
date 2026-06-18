@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
+import { resolveTelegramIdInput } from '../utils/resolve-telegram-id';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
@@ -117,40 +118,6 @@ export class FamilyHandler {
     }
   }
 
-  /**
-   * Пересланное сообщение от пользователя (не канал/чат), с учётом скрытого профиля и совпадения с админом.
-   */
-  private resolveForwardedMemberTelegramId(
-    message: NonNullable<Context['message']>,
-    adminId: string,
-  ):
-    | { kind: 'id'; telegramId: string }
-    | { kind: 'admin_self' }
-    | { kind: 'hidden' }
-    | { kind: 'not_from_user' }
-    | { kind: 'none' } {
-    const origin = message.forward_origin;
-    if (origin) {
-      if (origin.type === 'user') {
-        const id = String(origin.sender_user.id);
-        if (id === adminId) return { kind: 'admin_self' };
-        return { kind: 'id', telegramId: id };
-      }
-      if (origin.type === 'hidden_user') {
-        return { kind: 'hidden' };
-      }
-      return { kind: 'not_from_user' };
-    }
-    const legacyFrom = (message as { forward_from?: { id: number } })
-      .forward_from;
-    if (legacyFrom) {
-      const id = String(legacyFrom.id);
-      if (id === adminId) return { kind: 'admin_self' };
-      return { kind: 'id', telegramId: id };
-    }
-    return { kind: 'none' };
-  }
-
   private async rearmAddMemberPrompt(
     ctx: Context,
     adminId: string,
@@ -190,32 +157,26 @@ export class FamilyHandler {
       }
     }
 
-    const forwarded = this.resolveForwardedMemberTelegramId(message, adminId);
+    const resolved = resolveTelegramIdInput(message, adminId);
 
-    if (forwarded.kind === 'admin_self') {
+    if (resolved.kind === 'admin_self') {
       await this.rearmAddMemberPrompt(ctx, adminId, BotUi.cannotAddAdminSelf);
       return;
     }
-    if (forwarded.kind === 'hidden') {
+    if (resolved.kind === 'hidden') {
       await this.rearmAddMemberPrompt(ctx, adminId, BotUi.forwardHiddenUser);
       return;
     }
-    if (forwarded.kind === 'not_from_user') {
+    if (resolved.kind === 'not_from_user') {
       await this.rearmAddMemberPrompt(ctx, adminId, BotUi.forwardNotFromUser);
       return;
     }
-
-    let telegramId: string | undefined;
-    if (forwarded.kind === 'id') {
-      telegramId = forwarded.telegramId;
-    } else {
-      const input = message.text?.trim();
-      if (!input || !/^\d+$/.test(input)) {
-        await this.rearmAddMemberPrompt(ctx, adminId, BotUi.invalidInput);
-        return;
-      }
-      telegramId = input;
+    if (resolved.kind === 'none') {
+      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.invalidInput);
+      return;
     }
+
+    const telegramId = resolved.telegramId;
 
     try {
       const member = await this.familyService.addMember(adminId, telegramId);
