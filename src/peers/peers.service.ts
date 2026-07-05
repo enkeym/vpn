@@ -512,11 +512,10 @@ export class PeersService {
         // Регистрируем пир в WG (интерфейс ещё поднят; будет убрано в Фазе 4).
         await this.wgService.createClientConfig(newPeer.name, credentials);
 
-        // Клиенту отдаём Hysteria2-ссылку (VLESS+Reality нестабильно рвётся
-        // на некоторых сетях клиентов — временно основной протокол).
-        const config = this.hysteriaService.buildClientLink(
+        // VLESS+WS+TLS за Cloudflare CDN — клиент не видит реальный IP сервера.
+        const config = this.xrayService.buildClientLink(
           newPeer.name,
-          hysteriaPassword,
+          vlessUuid,
         );
 
         // Инвалидируем кеши
@@ -1586,15 +1585,15 @@ export class PeersService {
         // Регистрируем обновлённый пир в WG (интерфейс ещё поднят; уйдёт в Фазе 4).
         await this.wgService.createClientConfig(peerName, credentials);
 
-        // hysteriaPassword при замене не меняется — ссылка остаётся прежней
-        if (!oldPeer.hysteriaPassword) {
+        // vlessUuid при замене не меняется — ссылка остаётся прежней
+        if (!oldPeer.vlessUuid) {
           throw new InternalServerErrorException(
-            `У конфига ${peerName} отсутствует hysteriaPassword`,
+            `У конфига ${peerName} отсутствует vlessUuid`,
           );
         }
-        const config = this.hysteriaService.buildClientLink(
+        const config = this.xrayService.buildClientLink(
           peerName,
-          oldPeer.hysteriaPassword,
+          oldPeer.vlessUuid,
         );
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
