@@ -826,11 +826,7 @@ export class AdminHandler {
           telegramId,
           new InputFile(Buffer.from(config), `${peer.name}.conf`),
           {
-            caption: BotUi.memberConfigCreated(
-              peer.name,
-              peer.ip,
-              peer.expiresAt,
-            ),
+            caption: BotUi.memberConfigCreated(peer.name, peer.expiresAt),
             parse_mode: 'Markdown',
           },
         );
@@ -848,7 +844,6 @@ export class AdminHandler {
       await ctx.editMessageText(
         `✅ *Конфиг создан для клиента* \`${telegramId}\`\n\n` +
           `🏷 Имя: \`${peer.name}\`\n` +
-          `🌐 IP: \`${peer.ip}\`\n` +
           (peer.expiresAt
             ? `📅 Действует до: ${peer.expiresAt.toLocaleDateString('ru-RU')}`
             : '⏳ Срок: ♾️ Бессрочно'),

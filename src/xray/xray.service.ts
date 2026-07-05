@@ -23,6 +23,8 @@ export interface IXrayClient {
 
 interface IXrayInboundClient {
   id: string;
+  /** Ключ статистики трафика в StatsService (user>>>{email}>>>traffic>>>...). */
+  email: string;
 }
 
 /**
@@ -80,6 +82,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     process.env.XRAY_INTERNAL_WS_PORT || 8880,
   );
   public readonly realityPort = Number(process.env.REALITY_PORT || 8443);
+  /** Внутренний порт StatsService API — только localhost, наружу не публикуется. */
+  private readonly statsApiPort = Number(
+    process.env.XRAY_STATS_API_PORT || 8881,
+  );
   private readonly domain = process.env.XRAY_DOMAIN;
   private readonly host = process.env.HOST;
   private readonly realityDest =
@@ -236,6 +242,47 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     )}`;
   }
 
+  /**
+   * Кумулятивный per-user трафик через StatsService (растёт с момента
+   * старта процесса, как счётчики WireGuard — не дельта). Ключ Map — email
+   * клиента в конфиге, у нас это peer.name. Ошибка не должна ронять вызов —
+   * просто возвращаем пустую карту (пока Xray не запущен/API не отвечает).
+   */
+  async getTrafficStats(): Promise<
+    Map<string, { uplink: number; downlink: number }>
+  > {
+    const result = new Map<string, { uplink: number; downlink: number }>();
+
+    try {
+      const { stdout } = await execAsync(
+        `xray api statsquery --server=127.0.0.1:${this.statsApiPort}`,
+      );
+      const parsed = JSON.parse(stdout) as {
+        stat?: Array<{ name: string; value: string | number }>;
+      };
+
+      for (const entry of parsed.stat ?? []) {
+        const match = entry.name.match(
+          /^user>>>(.+)>>>traffic>>>(uplink|downlink)$/,
+        );
+        if (!match) continue;
+
+        const [, email, direction] = match;
+        const stats = result.get(email) ?? { uplink: 0, downlink: 0 };
+        stats[direction as 'uplink' | 'downlink'] = Number(entry.value);
+        result.set(email, stats);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось получить статистику Xray: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+
+    return result;
+  }
+
   private async loadOrGenerateWsParams(): Promise<void> {
     if (existsSync(this.wsParamsPath)) {
       const raw = await readFile(this.wsParamsPath, 'utf-8');
@@ -296,6 +343,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private buildServerConfig(): Record<string, unknown> {
     const inboundClients: IXrayInboundClient[] = this.clients.map((client) => ({
       id: client.uuid,
+      // "email" — это просто ключ статистики в StatsService
+      // (user>>>{email}>>>traffic>>>...), не настоящий адрес почты.
+      email: client.name,
     }));
 
     return {
@@ -306,7 +356,29 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
         servers: ['1.1.1.1', '8.8.8.8'],
         queryStrategy: 'UseIPv4',
       },
+      // StatsService — per-user трафик (см. getTrafficStats). API-инбаунд
+      // только на localhost, наружу не публикуется.
+      api: {
+        tag: 'api',
+        services: ['StatsService'],
+      },
+      stats: {},
+      policy: {
+        levels: {
+          '0': { statsUserUplink: true, statsUserDownlink: true },
+        },
+      },
+      routing: {
+        rules: [{ type: 'field', inboundTag: ['api'], outboundTag: 'api' }],
+      },
       inbounds: [
+        {
+          tag: 'api',
+          listen: '127.0.0.1',
+          port: this.statsApiPort,
+          protocol: 'dokodemo-door',
+          settings: { address: '127.0.0.1' },
+        },
         {
           tag: 'ws-cdn',
           // Только localhost — снаружи этот порт слушает nginx, он же

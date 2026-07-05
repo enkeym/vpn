@@ -20,7 +20,6 @@ import {
   lte,
   sql,
 } from 'drizzle-orm';
-import { WgService } from 'src/wg/wg.service';
 import { XrayService } from 'src/xray/xray.service';
 import type { IXrayClient } from 'src/xray/xray.service';
 import { HysteriaService } from 'src/hysteria/hysteria.service';
@@ -41,8 +40,6 @@ export type TPeer = typeof schema.peers.$inferInsert;
 export type TPeerSelect = typeof schema.peers.$inferSelect;
 type PeerPausedReason = NonNullable<TPeerSelect['pausedReason']>;
 
-const SYNC_MAX_RETRIES = 5;
-const SYNC_RETRY_DELAY_MS = 2000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TRIAL_EXPIRED_DELETE_AFTER_DAYS = 7;
 const PAID_EXPIRED_DELETE_AFTER_DAYS = 30;
@@ -57,23 +54,13 @@ function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
   return new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 @Injectable()
 export class PeersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(PeersService.name);
   private readonly createPeerMutex = new Mutex();
 
-  // Локальный кеш использованных IP для быстрого доступа (критичная оптимизация)
-  private usedIpsCache: Set<string> | null = null;
-  private usedIpsCacheTime = 0;
-  private readonly USED_IPS_CACHE_TTL = 60 * 1000; // 1 минута
-
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
-    private readonly wgService: WgService,
     private readonly xrayService: XrayService,
     private readonly hysteriaService: HysteriaService,
     private readonly notificationService: NotificationService,
@@ -82,16 +69,13 @@ export class PeersService implements OnApplicationBootstrap {
 
   /**
    * onApplicationBootstrap (а не onModuleInit) — гарантирует, что onModuleInit
-   * у WgService/XrayService/HysteriaService уже отработал и их процессы
+   * у XrayService/HysteriaService уже отработал и их процессы
    * инициализированы. Иначе была гонка: syncXrayWithDb/syncHysteriaWithDb
    * вызывались раньше, чем сервис успевал загрузить параметры, syncClients
    * молча выходил по guard'у (`!this.wsParams`), и xray.json/hysteria.yaml
    * оставались с пустым списком клиентов до ручного пересоздания конфига.
    */
   async onApplicationBootstrap() {
-    // Прогреваем кеш IP адресов при старте
-    await this.warmUpIpsCache();
-    await this.syncWgWithDb();
     await this.syncXrayWithDb();
     await this.backfillHysteriaPasswords();
     await this.syncHysteriaWithDb();
@@ -159,60 +143,6 @@ export class PeersService implements OnApplicationBootstrap {
   }
 
   /**
-   * Прогрев кеша IP адресов при старте
-   */
-  private async warmUpIpsCache(): Promise<void> {
-    const usedPeers = await this.db.query.peers.findMany({
-      columns: { ip: true },
-    });
-    this.usedIpsCache = new Set(usedPeers.map((peer) => peer.ip));
-    this.usedIpsCacheTime = Date.now();
-    this.logger.log(`Кеш IP прогрет: ${this.usedIpsCache.size} адресов`);
-  }
-
-  /**
-   * Получить использованные IP адреса (с кешированием)
-   */
-  private async getUsedIps(): Promise<Set<string>> {
-    const now = Date.now();
-
-    // Проверяем актуальность локального кеша
-    if (
-      this.usedIpsCache &&
-      now - this.usedIpsCacheTime < this.USED_IPS_CACHE_TTL
-    ) {
-      return new Set(this.usedIpsCache);
-    }
-
-    // Обновляем кеш
-    const usedPeers = await this.db.query.peers.findMany({
-      columns: { ip: true },
-    });
-    this.usedIpsCache = new Set(usedPeers.map((peer) => peer.ip));
-    this.usedIpsCacheTime = now;
-
-    return new Set(this.usedIpsCache);
-  }
-
-  /**
-   * Добавить IP в локальный кеш
-   */
-  private addIpToCache(ip: string): void {
-    if (this.usedIpsCache) {
-      this.usedIpsCache.add(ip);
-    }
-  }
-
-  /**
-   * Удалить IP из локального кеша
-   */
-  private removeIpFromCache(ip: string): void {
-    if (this.usedIpsCache) {
-      this.usedIpsCache.delete(ip);
-    }
-  }
-
-  /**
    * Инвалидировать кеш пиров пользователя
    */
   private invalidateUserPeersCache(telegramId: string): void {
@@ -225,67 +155,6 @@ export class PeersService implements OnApplicationBootstrap {
    */
   private invalidatePeerCache(peerName: string): void {
     this.cacheService.delete(CACHE_NAMESPACES.PEER_BY_NAME, peerName);
-  }
-
-  private async syncWgWithDb() {
-    let lastError: Error | null = null;
-
-    for (let attempt = 1; attempt <= SYNC_MAX_RETRIES; attempt++) {
-      try {
-        const activePeers = await this.db.query.peers.findMany({
-          where: eq(schema.peers.paused, false),
-        });
-
-        if (!activePeers) return;
-
-        const peers = activePeers.map((peer) => ({
-          name: peer.name,
-          publicKey: peer.publicKey,
-          presharedKey: peer.presharedKey!,
-          ip: peer.ip,
-        }));
-
-        await this.wgService.restoreConfigs(peers);
-
-        // Успешная синхронизация
-        if (attempt > 1) {
-          this.logger.log(
-            `Синхронизация WG с БД успешна с ${attempt}-й попытки`,
-          );
-        }
-        return;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        this.logger.error(
-          `Ошибка синхронизации WG с БД (попытка ${attempt}/${SYNC_MAX_RETRIES}): ${lastError.message}`,
-        );
-
-        if (attempt < SYNC_MAX_RETRIES) {
-          const delay = SYNC_RETRY_DELAY_MS * attempt; // Экспоненциальная задержка
-          this.logger.warn(`Повторная попытка через ${delay}мс...`);
-          await sleep(delay);
-        }
-      }
-    }
-
-    // Все попытки исчерпаны - отправляем уведомление админам
-    const errorDetails = [
-      `Не удалось синхронизировать конфигурацию WireGuard с базой данных после ${SYNC_MAX_RETRIES} попыток.`,
-      ``,
-      `*Ошибка:* \`${lastError?.message || 'Неизвестная ошибка'}\``,
-      ``,
-      `Требуется ручное вмешательство для восстановления работы VPN.`,
-    ].join('\n');
-
-    await this.notificationService.notifyCriticalError(
-      'Сбой синхронизации WireGuard',
-      errorDetails,
-      SYNC_MAX_RETRIES,
-    );
-
-    this.logger.error(
-      `КРИТИЧЕСКАЯ ОШИБКА: Синхронизация WG с БД провалена после ${SYNC_MAX_RETRIES} попыток. Уведомление отправлено админам.`,
-    );
   }
 
   /**
@@ -482,10 +351,6 @@ export class PeersService implements OnApplicationBootstrap {
         ? (3 as SubscriptionDuration)
         : dto.durationDays;
 
-      const usedIps = await this.getUsedIps();
-      const credentials =
-        await this.wgService.generateClientCredentials(usedIps);
-
       const expiresAt = durationDays ? calculateExpiresAt(durationDays) : null;
       const vlessUuid = randomUUID();
       const hysteriaPassword = randomBytes(16).toString('hex');
@@ -494,13 +359,8 @@ export class PeersService implements OnApplicationBootstrap {
         telegramId: dto.telegramId,
         username: dto.username || null,
         name: peerName,
-        publicKey: credentials.publicKey,
-        privateKey: credentials.privateKey,
-        presharedKey: credentials.presharedKey,
         vlessUuid,
         hysteriaPassword,
-        ip: credentials.ip,
-        endpoint: `${this.wgService.host}:${this.wgService.port}`,
         paused: false,
         pausedReason: null,
         expiresAt,
@@ -514,13 +374,7 @@ export class PeersService implements OnApplicationBootstrap {
         .values(peerData)
         .returning();
 
-      // Обновляем кеш IP
-      this.addIpToCache(credentials.ip);
-
       try {
-        // Регистрируем пир в WG (интерфейс ещё поднят; будет убрано в Фазе 4).
-        await this.wgService.createClientConfig(newPeer.name, credentials);
-
         const config = this.buildCombinedConfigText(newPeer);
 
         // Инвалидируем кеши
@@ -532,8 +386,8 @@ export class PeersService implements OnApplicationBootstrap {
           );
         }
 
-        // Добавляем нового клиента в Xray/Reality и Hysteria2 (не блокирует
-        // выдачу WG-конфига — ошибки проглатываются внутри sync*WithDb).
+        // Добавляем нового клиента в Xray и Hysteria2 (ошибки проглатываются
+        // внутри sync*WithDb).
         await this.syncXrayWithDb();
         await this.syncHysteriaWithDb();
 
@@ -547,7 +401,6 @@ export class PeersService implements OnApplicationBootstrap {
         await this.db
           .delete(schema.peers)
           .where(eq(schema.peers.id, newPeer.id));
-        this.removeIpFromCache(credentials.ip);
 
         throw error;
       }
@@ -614,26 +467,13 @@ export class PeersService implements OnApplicationBootstrap {
     this.invalidateUserPeersCache(peer.telegramId);
 
     try {
-      if (shouldPause) {
-        await this.wgService.removePeer(peer.publicKey);
-      } else {
-        if (!peer.presharedKey)
-          throw new InternalServerErrorException('Нет presharedKey');
-
-        await this.wgService.createClientConfig(peer.name, {
-          publicKey: peer.publicKey,
-          privateKey: peer.privateKey,
-          presharedKey: peer.presharedKey,
-          ip: peer.ip,
-        });
-      }
-
-      // Синхронизируем Reality и Hysteria2 (пауза/возобновление конфига)
+      // Синхронизируем Xray и Hysteria2 (пауза/возобновление конфига —
+      // paused=false уже исключает/включает пира в syncXrayWithDb/syncHysteriaWithDb).
       await this.syncXrayWithDb();
       await this.syncHysteriaWithDb();
     } catch (error) {
       this.logger.error(
-        `Ошибка обновления WG Для ${peerName}, отмена изменений`,
+        `Ошибка обновления конфига для ${peerName}, отмена изменений`,
       );
       await this.db
         .update(schema.peers)
@@ -658,19 +498,10 @@ export class PeersService implements OnApplicationBootstrap {
     await this.db.delete(schema.peers).where(eq(schema.peers.name, peerName));
 
     // Обновляем кеши
-    this.removeIpFromCache(peer.ip);
     this.invalidatePeerCache(peerName);
     this.invalidateUserPeersCache(peer.telegramId);
 
-    if (!peer.paused) {
-      try {
-        await this.wgService.removePeer(peer.publicKey);
-      } catch (error) {
-        this.logger.error(`Не удалось удалить пир из WG: ${error}`);
-      }
-    }
-
-    // Убираем клиента из Xray/Reality и Hysteria2
+    // Убираем клиента из Xray и Hysteria2
     await this.syncXrayWithDb();
     await this.syncHysteriaWithDb();
 
@@ -685,13 +516,7 @@ export class PeersService implements OnApplicationBootstrap {
     if (peerNames.length === 0) return;
 
     const peers = await this.db.query.peers.findMany({
-      columns: {
-        name: true,
-        ip: true,
-        telegramId: true,
-        publicKey: true,
-        paused: true,
-      },
+      columns: { name: true, telegramId: true },
       where: inArray(schema.peers.name, peerNames),
     });
     if (peers.length === 0) return;
@@ -704,21 +529,11 @@ export class PeersService implements OnApplicationBootstrap {
     );
 
     for (const p of peers) {
-      this.removeIpFromCache(p.ip);
       this.invalidatePeerCache(p.name);
       this.invalidateUserPeersCache(p.telegramId);
     }
 
-    const activeKeys = peers.filter((p) => !p.paused).map((p) => p.publicKey);
-    if (activeKeys.length > 0) {
-      try {
-        await this.wgService.removePeers(activeKeys);
-      } catch (error) {
-        this.logger.error(`Не удалось удалить пиры из WG: ${error}`);
-      }
-    }
-
-    // Убираем удалённые конфиги из Reality и Hysteria2
+    // Убираем удалённые конфиги из Xray и Hysteria2
     await this.syncXrayWithDb();
     await this.syncHysteriaWithDb();
   }
@@ -809,7 +624,6 @@ export class PeersService implements OnApplicationBootstrap {
       name: string;
       telegramId: string;
       username: string | null;
-      ip: string;
       createdAt: Date | null;
       expiresAt: Date | null;
       paused: boolean;
@@ -818,7 +632,6 @@ export class PeersService implements OnApplicationBootstrap {
     expiringSoon: Array<{
       name: string;
       telegramId: string;
-      ip: string;
       expiresAt: Date | null;
     }>;
   }> {
@@ -882,7 +695,6 @@ export class PeersService implements OnApplicationBootstrap {
         name: schema.peers.name,
         telegramId: schema.peers.telegramId,
         username: schema.peers.username,
-        ip: schema.peers.ip,
         createdAt: schema.peers.createdAt,
         expiresAt: schema.peers.expiresAt,
         paused: schema.peers.paused,
@@ -897,7 +709,6 @@ export class PeersService implements OnApplicationBootstrap {
       .select({
         name: schema.peers.name,
         telegramId: schema.peers.telegramId,
-        ip: schema.peers.ip,
         expiresAt: schema.peers.expiresAt,
       })
       .from(schema.peers)
@@ -919,7 +730,6 @@ export class PeersService implements OnApplicationBootstrap {
         name: p.name,
         telegramId: p.telegramId,
         username: p.username ?? null,
-        ip: p.ip,
         createdAt: p.createdAt ?? null,
         expiresAt: p.expiresAt ?? null,
         paused: p.paused,
@@ -928,7 +738,6 @@ export class PeersService implements OnApplicationBootstrap {
       expiringSoon: expiringSoonPeers.map((p) => ({
         name: p.name,
         telegramId: p.telegramId,
-        ip: p.ip,
         expiresAt: p.expiresAt,
       })),
     };
@@ -1017,7 +826,7 @@ export class PeersService implements OnApplicationBootstrap {
     const now = new Date();
 
     const expiredPeers = await this.db.query.peers.findMany({
-      columns: { id: true, name: true, publicKey: true, telegramId: true },
+      columns: { id: true, name: true, telegramId: true },
       where: and(
         eq(schema.peers.paused, false),
         isNotNull(schema.peers.expiresAt),
@@ -1030,7 +839,6 @@ export class PeersService implements OnApplicationBootstrap {
     }
 
     const ids = expiredPeers.map((p) => p.id);
-    const publicKeys = expiredPeers.map((p) => p.publicKey);
     const affectedTelegramIds = new Set(expiredPeers.map((p) => p.telegramId));
 
     try {
@@ -1039,9 +847,7 @@ export class PeersService implements OnApplicationBootstrap {
         .set({ paused: true, pausedAt: new Date(), pausedReason: 'expired' })
         .where(inArray(schema.peers.id, ids));
 
-      await this.wgService.removePeers(publicKeys);
-
-      // Убираем истёкшие конфиги из Reality и Hysteria2
+      // Убираем истёкшие конфиги из Xray и Hysteria2
       await this.syncXrayWithDb();
       await this.syncHysteriaWithDb();
 
@@ -1205,7 +1011,6 @@ export class PeersService implements OnApplicationBootstrap {
         .where(inArray(schema.peers.name, names));
 
       for (const p of toDelete) {
-        this.removeIpFromCache(p.ip);
         this.invalidatePeerCache(p.name);
         this.cacheService.delete(CACHE_NAMESPACES.PEERS_BY_USER, p.telegramId);
       }
@@ -1227,16 +1032,25 @@ export class PeersService implements OnApplicationBootstrap {
     return this.deletePeersByRetentionPolicy();
   }
 
+  /**
+   * Кумулятивная per-user статистика из Xray (StatsService) и Hysteria2
+   * (trafficStats) — счётчики растут с момента старта процесса, как раньше
+   * у WG (`wg show dump`). Пир может быть активен через любой из двух
+   * протоколов (или оба) — суммируем. Ключ в обоих источниках — peer.name.
+   */
   async refreshPeerTrafficStats(): Promise<number> {
-    const runtimeStats = await this.wgService.getPeerRuntimeStats();
-    if (runtimeStats.size === 0) {
+    const [xrayStats, hysteriaStats] = await Promise.all([
+      this.xrayService.getTrafficStats(),
+      this.hysteriaService.getTrafficStats(),
+    ]);
+
+    if (xrayStats.size === 0 && hysteriaStats.size === 0) {
       return 0;
     }
 
     const activePeers = await this.db.query.peers.findMany({
       columns: {
         name: true,
-        publicKey: true,
         telegramId: true,
         rxBytes: true,
         txBytes: true,
@@ -1249,27 +1063,25 @@ export class PeersService implements OnApplicationBootstrap {
     const affectedTelegramIds = new Set<string>();
 
     for (const peer of activePeers) {
-      const stats = runtimeStats.get(peer.publicKey);
-      if (!stats) continue;
+      const xray = xrayStats.get(peer.name);
+      const hysteria = hysteriaStats.get(peer.name);
+      if (!xray && !hysteria) continue;
+
+      const rxBytes = (xray?.uplink ?? 0) + (hysteria?.rx ?? 0);
+      const txBytes = (xray?.downlink ?? 0) + (hysteria?.tx ?? 0);
 
       const previousTotal = peer.rxBytes + peer.txBytes;
-      const currentTotal = stats.rxBytes + stats.txBytes;
+      const currentTotal = rxBytes + txBytes;
       const hasNewTraffic = currentTotal > previousTotal;
-      const hasNewHandshake =
-        stats.latestHandshakeAt &&
-        (!peer.lastHandshakeAt ||
-          stats.latestHandshakeAt.getTime() > peer.lastHandshakeAt.getTime());
 
       await this.db
         .update(schema.peers)
         .set({
-          rxBytes: stats.rxBytes,
-          txBytes: stats.txBytes,
-          lastHandshakeAt: stats.latestHandshakeAt,
-          lastTrafficAt:
-            hasNewTraffic || hasNewHandshake ? new Date() : undefined,
-          inactivityNotifiedAt:
-            hasNewTraffic || hasNewHandshake ? null : undefined,
+          rxBytes,
+          txBytes,
+          lastHandshakeAt: hasNewTraffic ? new Date() : peer.lastHandshakeAt,
+          lastTrafficAt: hasNewTraffic ? new Date() : undefined,
+          inactivityNotifiedAt: hasNewTraffic ? null : undefined,
         })
         .where(eq(schema.peers.name, peer.name));
 
@@ -1550,33 +1362,13 @@ export class PeersService implements OnApplicationBootstrap {
       // Сохраняем текущий срок действия (expiresAt) - это важно!
       const currentExpiresAt = oldPeer.expiresAt;
 
-      // Удаляем старый пир из WireGuard (если не на паузе)
-      if (!oldPeer.paused) {
-        try {
-          await this.wgService.removePeer(oldPeer.publicKey);
-        } catch (error) {
-          this.logger.error(`Ошибка удаления старого пира из WG: ${error}`);
-        }
-      }
-
-      // Генерируем новые ключи
-      const usedIps = await this.getUsedIps();
-      // Исключаем старый IP из списка занятых
-      usedIps.delete(oldPeer.ip);
-
-      const credentials =
-        await this.wgService.generateClientCredentials(usedIps);
-
-      // Обновляем запись в БД с новыми ключами, но сохраняем срок
+      // Реактивируем конфиг и сбрасываем счётчики трафика/активности.
+      // vlessUuid/hysteriaPassword не меняются — ссылки остаются прежними,
+      // менять здесь больше нечего (WireGuard-идентификатор упразднён).
       const [updatedPeer] = await this.db
         .update(schema.peers)
         .set({
-          publicKey: credentials.publicKey,
-          privateKey: credentials.privateKey,
-          presharedKey: credentials.presharedKey,
-          ip: credentials.ip,
-          endpoint: `${this.wgService.host}:${this.wgService.port}`,
-          paused: false, // Активируем конфиг при замене
+          paused: false,
           pausedAt: null,
           pausedReason: null,
           expiresAt: currentExpiresAt, // Сохраняем тот же срок!
@@ -1590,40 +1382,25 @@ export class PeersService implements OnApplicationBootstrap {
         .where(eq(schema.peers.name, peerName))
         .returning();
 
-      // Обновляем кеш IP
-      this.removeIpFromCache(oldPeer.ip);
-      this.addIpToCache(credentials.ip);
-
       // Инвалидируем кеши
       this.invalidatePeerCache(peerName);
       this.invalidateUserPeersCache(oldPeer.telegramId);
 
-      // Создаём новый конфиг в WireGuard
       try {
-        // Регистрируем обновлённый пир в WG (интерфейс ещё поднят; уйдёт в Фазе 4).
-        await this.wgService.createClientConfig(peerName, credentials);
-
-        // vlessUuid/hysteriaPassword при замене не меняются — ссылки остаются прежними
         const config = this.buildCombinedConfigText(oldPeer);
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
 
-        // Конфиг снова активен — синхронизируем Reality и Hysteria2
+        // Конфиг снова активен — синхронизируем Xray и Hysteria2
         await this.syncXrayWithDb();
         await this.syncHysteriaWithDb();
 
         return { peer: updatedPeer, config };
       } catch (error) {
-        // Если не удалось создать конфиг в WG, откатываем изменения
-        this.logger.error(`Ошибка создания нового конфига в WG: ${error}`);
+        this.logger.error(`Ошибка активации конфига: ${error}`);
         await this.db
           .update(schema.peers)
           .set({
-            publicKey: oldPeer.publicKey,
-            privateKey: oldPeer.privateKey,
-            presharedKey: oldPeer.presharedKey,
-            ip: oldPeer.ip,
-            endpoint: oldPeer.endpoint,
             paused: oldPeer.paused,
             pausedAt: oldPeer.pausedAt,
             pausedReason: oldPeer.pausedReason,
@@ -1635,10 +1412,6 @@ export class PeersService implements OnApplicationBootstrap {
             inactivityNotifiedAt: oldPeer.inactivityNotifiedAt,
           })
           .where(eq(schema.peers.name, peerName));
-
-        // Откатываем кеш IP
-        this.removeIpFromCache(credentials.ip);
-        this.addIpToCache(oldPeer.ip);
 
         // Инвалидируем кеши после отката
         this.invalidatePeerCache(peerName);
@@ -1681,9 +1454,10 @@ export class PeersService implements OnApplicationBootstrap {
   }
 
   private buildSubscriptionUrl(vlessUuid: string): string {
-    const { domain } = this.xrayService.getPublicParams();
-    const subPort = process.env.SUB_PORT || '2053';
-    return `https://${domain}:${subPort}/sub/${vlessUuid}`;
+    // Тот же порт, что и у CDN-канала (443) — nginx перед Xray разводит
+    // /sub на NestJS и всё остальное на Xray по пути, см. docker/nginx.conf.
+    const { domain, port } = this.xrayService.getPublicParams();
+    return `https://${domain}:${port}/sub/${vlessUuid}`;
   }
 
   /**
@@ -1722,15 +1496,9 @@ export class PeersService implements OnApplicationBootstrap {
    * Получить статистику кеша (для мониторинга)
    */
   getCacheStats(): {
-    usedIpsCache: number;
-    usedIpsCacheAge: number | null;
     globalCache: Record<string, CacheStats> | CacheStats | null;
   } {
     return {
-      usedIpsCache: this.usedIpsCache?.size ?? 0,
-      usedIpsCacheAge: this.usedIpsCacheTime
-        ? Date.now() - this.usedIpsCacheTime
-        : null,
       globalCache: this.cacheService.getStats(),
     };
   }

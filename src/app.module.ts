@@ -3,7 +3,6 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { WgModule } from './wg/wg.module';
 import { XrayModule } from './xray/xray.module';
 import { HysteriaModule } from './hysteria/hysteria.module';
 import { ConfigModule } from '@nestjs/config';
@@ -31,7 +30,6 @@ import { InternalGuard } from './common/guards/internal.guard';
     CacheModule,
     NotificationModule,
     DatabaseModule,
-    WgModule,
     XrayModule,
     HysteriaModule,
     PeersModule,

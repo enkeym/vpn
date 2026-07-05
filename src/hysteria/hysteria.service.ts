@@ -22,6 +22,8 @@ export interface IHysteriaClient {
 
 interface IHysteriaParams {
   obfsPassword: string;
+  /** Секрет для локального trafficStats API (см. getTrafficStats). */
+  trafficStatsSecret: string;
 }
 
 /**
@@ -57,6 +59,10 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private readonly host = process.env.HOST;
   private readonly masqueradeUrl =
     process.env.HYSTERIA_MASQUERADE_URL || 'https://www.wikipedia.org';
+  /** Внутренний порт trafficStats API — только localhost, наружу не публикуется. */
+  private readonly trafficStatsPort = Number(
+    process.env.HYSTERIA_STATS_PORT || 8899,
+  );
 
   private readonly mutex = new Mutex();
 
@@ -161,13 +167,32 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       const raw = await readFile(this.paramsPath, 'utf-8');
       const parsed = JSON.parse(raw) as Partial<IHysteriaParams>;
 
+      if (parsed.obfsPassword && parsed.trafficStatsSecret) {
+        this.params = {
+          obfsPassword: parsed.obfsPassword,
+          trafficStatsSecret: parsed.trafficStatsSecret,
+        };
+        return;
+      }
+
       if (parsed.obfsPassword) {
-        this.params = { obfsPassword: parsed.obfsPassword };
+        // Миграция со старого params-файла без trafficStatsSecret.
+        this.params = {
+          obfsPassword: parsed.obfsPassword,
+          trafficStatsSecret: randomBytes(16).toString('hex'),
+        };
+        await writeFile(
+          this.paramsPath,
+          JSON.stringify(this.params, null, 2),
+        );
         return;
       }
     }
 
-    this.params = { obfsPassword: randomBytes(16).toString('hex') };
+    this.params = {
+      obfsPassword: randomBytes(16).toString('hex'),
+      trafficStatsSecret: randomBytes(16).toString('hex'),
+    };
     await writeFile(this.paramsPath, JSON.stringify(this.params, null, 2));
     this.logger.log('Сгенерирован новый obfs-пароль Hysteria2');
   }
@@ -218,9 +243,52 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       `    url: ${this.masqueradeUrl}`,
       '    rewriteHost: true',
       '',
+      'trafficStats:',
+      `  listen: 127.0.0.1:${this.trafficStatsPort}`,
+      `  secret: ${this.params.trafficStatsSecret}`,
+      '',
     );
 
     return lines.join('\n');
+  }
+
+  /**
+   * Кумулятивный per-user трафик (растёт с момента старта процесса — не
+   * дельта). Ключ Map — имя клиента (peer.name), как в auth.userpass.
+   * Ошибка не должна ронять вызов — просто возвращаем пустую карту.
+   */
+  async getTrafficStats(): Promise<Map<string, { tx: number; rx: number }>> {
+    const result = new Map<string, { tx: number; rx: number }>();
+
+    if (!this.params) return result;
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${this.trafficStatsPort}/traffic`,
+        { headers: { Authorization: this.params.trafficStatsSecret } },
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const parsed = (await response.json()) as Record<
+        string,
+        { tx: number; rx: number }
+      >;
+
+      for (const [name, stats] of Object.entries(parsed)) {
+        result.set(name, stats);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось получить статистику Hysteria2: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+
+    return result;
   }
 
   private async writeConfig(): Promise<void> {

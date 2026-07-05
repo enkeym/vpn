@@ -73,17 +73,19 @@ export const peers = sqliteTable(
     fileMessageId: integer('fileMessageId'),
     name: text('name').notNull().unique(),
     description: text('description'),
-    publicKey: text('publicKey').notNull(),
-    privateKey: text('privateKey').notNull(),
+    // WireGuard/AmneziaWG упразднён — поля остаются nullable ради обратной
+    // совместимости со старыми записями, новые пиры их не заполняют.
+    publicKey: text('publicKey'),
+    privateKey: text('privateKey'),
     presharedKey: text('presharedKey'),
-    // VLESS UUID для Xray (VLESS + Reality). Nullable — старые WG-пиры
-    // получают его бэкфиллом в PeersService.syncXrayWithDb при старте.
+    // VLESS UUID для Xray. Nullable — старые WG-пиры получают его бэкфиллом
+    // в PeersService.syncXrayWithDb при старте.
     vlessUuid: text('vlessUuid').unique(),
     // Пароль для Hysteria2 (QUIC/UDP, самоподписанный сертификат, без домена).
     // Nullable — старые пиры получают его бэкфиллом аналогично vlessUuid.
     hysteriaPassword: text('hysteriaPassword').unique(),
-    ip: text('ip').notNull().unique(),
-    endpoint: text('endpoint').notNull(),
+    ip: text('ip').unique(),
+    endpoint: text('endpoint'),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
     pausedAt: integer('pausedAt', { mode: 'timestamp' }),
     pausedReason: text('pausedReason', {

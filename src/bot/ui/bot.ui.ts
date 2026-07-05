@@ -201,7 +201,6 @@ export const BotUi = {
       name: string;
       telegramId: string;
       username: string | null;
-      ip: string;
       createdAt: Date | null;
       expiresAt: Date | null;
       paused: boolean;
@@ -219,9 +218,7 @@ export const BotUi = {
       const created = c.createdAt
         ? c.createdAt.toLocaleDateString('ru-RU')
         : '—';
-      lines.push(
-        `${status} \`${c.name}\` ${c.ip} | ${created} → ${exp}${trial}`,
-      );
+      lines.push(`${status} \`${c.name}\` | ${created} → ${exp}${trial}`);
     }
     return lines.join('\n');
   },
@@ -230,7 +227,6 @@ export const BotUi = {
     configs: Array<{
       name: string;
       telegramId: string;
-      ip: string;
       expiresAt: Date | null;
     }>,
   ) => {
@@ -240,7 +236,7 @@ export const BotUi = {
     const lines = ['⏰ *Истекают в течение 7 дней*\n'];
     for (const c of configs) {
       const exp = c.expiresAt ? c.expiresAt.toLocaleDateString('ru-RU') : '—';
-      lines.push(`  \`${c.name}\` ${c.ip} | до ${exp} | ID: ${c.telegramId}`);
+      lines.push(`  \`${c.name}\` | до ${exp} | ID: ${c.telegramId}`);
     }
     return lines.join('\n');
   },
@@ -435,7 +431,7 @@ export const BotUi = {
     '• Или выбрать тариф 30, 60 или 90 дней\n\n' +
     'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
 
-  configCreated: (name: string, _ip: string, expiresAt?: Date | null) => {
+  configCreated: (name: string, expiresAt?: Date | null) => {
     let msg = `✅ *Конфиг ${name} создан!*\n\n`;
     if (expiresAt) {
       msg += `📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}\n\n`;
@@ -452,14 +448,14 @@ export const BotUi = {
   configError: (msg: string) => `❌ *Ошибка:* ${msg}`,
 
   // Замена конфига
-  configReplaced: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ Конфиг *${name}* успешно заменён!\n\n🌐 Новый IP: \`${ip}\``;
+  configReplaced: (name: string, expiresAt?: Date | null) => {
+    let msg = `✅ Конфиг *${name}* успешно обновлён!`;
     if (expiresAt) {
       msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
     } else {
       msg += '\n⏳ Срок: ♾️ Бессрочно';
     }
-    msg += '\n\n_Добавьте новую ссылку/QR в Hiddify и удалите старый профиль._';
+    msg += '\n\n_Ссылка и QR остаются прежними — заново добавлять в Hiddify не нужно._';
     return msg;
   },
 
@@ -489,7 +485,6 @@ export const BotUi = {
     let text =
       `⚙️ *Управление конфигом*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
-      `🌐 IP: \`${peer.ip}\`\n` +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
 
@@ -644,7 +639,6 @@ export const BotUi = {
     let text =
       `⚙️ *Конфиг члена группы*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
-      `🌐 IP: \`${peer.ip}\`\n` +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
 
@@ -701,8 +695,8 @@ export const BotUi = {
       .text('« Назад', `f_m:${mId}`);
   },
 
-  memberConfigCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\nIP: \`${ip}\``;
+  memberConfigCreated: (name: string, expiresAt?: Date | null) => {
+    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\``;
     if (expiresAt) {
       msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
     } else {
@@ -981,7 +975,6 @@ export const BotUi = {
     let text =
       `⚙️ *Конфиг клиента*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
-      `🌐 IP: \`${peer.ip}\`\n` +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
 

@@ -509,7 +509,7 @@ export class InvoiceService {
       const caption =
         `✅ *Оплата прошла успешно!* (${amount} ₽)\n` +
         `Конфиг *${peer.name}* на *${durationDays} дн.*\n\n` +
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
+        BotUi.configCreated(peer.name, peer.expiresAt);
 
       await this.sendPaidConfigDocument(
         telegramId,
@@ -548,7 +548,7 @@ export class InvoiceService {
       const caption =
         `✅ *Продление прошло успешно!* (${amount} ₽)\n` +
         `Конфиг *${peer.name}* — *${durationDays} дн.*, до *${expiresStr}*\n\n` +
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
+        BotUi.configCreated(peer.name, peer.expiresAt);
 
       await this.sendPaidConfigDocument(
         telegramId,

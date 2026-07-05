@@ -46,24 +46,7 @@ RUN pnpm run build
 RUN CI=true pnpm prune --prod
 
 # ============================================
-# Stage 4: Build AmneziaWG (awg, awg-quick, amneziawg-go)
-# ============================================
-# Кернел-модуля AmneziaWG в Alpine нет, поэтому собираем userspace-реализацию
-# (amneziawg-go) — она не требует модуля ядра хоста, только /dev/net/tun.
-FROM base AS awg-build
-WORKDIR /awg
-RUN apk add --no-cache build-base linux-headers git go
-
-RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git tools && \
-    make -C tools/src WITH_WGQUICK=yes && \
-    make -C tools/src install DESTDIR=/awg/out WITH_WGQUICK=yes
-
-RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git go-impl && \
-    make -C go-impl && \
-    make -C go-impl install DESTDIR=/awg/out
-
-# ============================================
-# Stage 5: Fetch Xray-core (VLESS + WS + TLS через Cloudflare CDN)
+# Stage 4: Fetch Xray-core (VLESS + WS + TLS через Cloudflare CDN)
 # ============================================
 # Xray-core — чистый Go, статически слинкован, работает на Alpine без glibc.
 # Версия закреплена (ARG) — при необходимости бампнуть тегом из релизов
@@ -78,7 +61,7 @@ RUN apk add --no-cache curl unzip && \
     chmod +x /xray/out/xray
 
 # ============================================
-# Stage 6: Fetch Hysteria2 (QUIC/UDP, резервный протокол против DPI)
+# Stage 5: Fetch Hysteria2 (QUIC/UDP, резервный протокол против DPI)
 # ============================================
 # Hysteria2 — чистый Go, статически слинкован, работает на Alpine без glibc.
 # Релизы монорепо тегируются как "app/vX.Y.Z" (в URL — "app%2FvX.Y.Z").
@@ -93,33 +76,22 @@ RUN apk add --no-cache curl && \
     chmod +x /hysteria/hysteria
 
 # ============================================
-# Stage 7: Production image
+# Stage 6: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
 
-# Установка runtime-зависимостей
-# --no-cache уменьшает размер образа
-# wireguard-tools оставлен только ради `wg genkey/pubkey/genpsk` — их использует
-# npm-пакет wireguard-tools и WgService.getServerPublicKey(); поднятие и
-# управление интерфейсом идёт через awg/awg-quick (см. ниже).
+# Установка runtime-зависимостей (--no-cache уменьшает размер образа)
+# nginx — терминирует TLS на 443 и разводит трафик между Xray (WS) и
+# NestJS (/sub), см. docker/nginx.conf и docker-entrypoint.sh.
 RUN apk add --no-cache \
-    wireguard-tools \
-    iptables \
-    iproute2 \
-    openresolv \
-    sudo \
+    nginx \
     # Для healthcheck
     wget \
     # Для генерации самоподписанного сертификата Hysteria2 (HysteriaService)
     openssl \
     # Для отладки (опционально, можно убрать)
     curl
-
-# Бинарники AmneziaWG
-COPY --from=awg-build /awg/out/usr/bin/awg /usr/bin/awg
-COPY --from=awg-build /awg/out/usr/bin/awg-quick /usr/bin/awg-quick
-COPY --from=awg-build /awg/out/usr/bin/amneziawg-go /usr/bin/amneziawg-go
 
 # Бинарник Xray-core + geo-данные (VLESS + WS + TLS через Cloudflare CDN)
 COPY --from=xray-build /xray/out/xray /usr/bin/xray
@@ -136,6 +108,12 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/drizzle ./drizzle
 
+# nginx: терминирует TLS на 443, разводит /sub и остальные NestJS-пути на
+# localhost:3000, всё остальное (VLESS+WS) — на Xray localhost:8880.
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 # Создаём директории для данных
 RUN mkdir -p configs data
 
@@ -144,8 +122,8 @@ LABEL maintainer="vpn-bot"
 LABEL version="1.0"
 
 # Порты
-EXPOSE 443/udp
 EXPOSE 443/tcp
+EXPOSE 443/udp
 EXPOSE 8443/udp
 EXPOSE 3000
 
@@ -153,5 +131,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD wget -q --spider http://localhost:3000/health || exit 1
 
-# Запуск приложения
-CMD ["node", "dist/src/main.js"]
+# Запуск: nginx (443, TLS) + NestJS (см. docker-entrypoint.sh)
+CMD ["/docker-entrypoint.sh"]

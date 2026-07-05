@@ -335,7 +335,7 @@ export class PeerManageHandler {
 
       await ctx.replyWithPhoto(new InputFile(qr, `${newPeer.name}_qr.png`), {
         caption:
-          `${BotUi.configReplaced(newPeer.name, newPeer.ip, newPeer.expiresAt)}\n\n` +
+          `${BotUi.configReplaced(newPeer.name, newPeer.expiresAt)}\n\n` +
           `\`${config}\`\n\n` +
           `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
         parse_mode: 'Markdown',

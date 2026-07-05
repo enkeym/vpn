@@ -114,7 +114,7 @@ export class PeerCreateHandler {
         new InputFile(qr, `${peer.name}_qr.png`),
         {
           caption:
-            `${BotUi.configCreated(peer.name, peer.ip, peer.expiresAt)}\n\n` +
+            `${BotUi.configCreated(peer.name, peer.expiresAt)}\n\n` +
             `\`${config}\`\n\n` +
             `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
           parse_mode: 'Markdown',
