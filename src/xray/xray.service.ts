@@ -69,6 +69,13 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private currentProc: ChildProcess | null = null;
   /** true во время намеренной остановки — чтобы обработчик exit не перезапускал. */
   private shuttingDown = false;
+  /**
+   * Промис инициализации onModuleInit. syncClients() дожидается его перед
+   * проверкой this.params — Nest не гарантирует, что XrayService.onModuleInit()
+   * завершится раньше PeersService.onModuleInit(), который вызывает syncClients
+   * на старте (без этого клиенты иногда пропадали из xray.json при рестарте).
+   */
+  private initPromise: Promise<void> = Promise.resolve();
 
   async onModuleInit(): Promise<void> {
     if (!this.host) throw new Error('WG_HOST в .env не задан');
@@ -76,19 +83,21 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     // Ошибка инициализации Xray не должна ронять весь бот (AWG и остальное
     // продолжают работать) — логируем и продолжаем, Reality поднимется после
     // исправления окружения.
-    try {
-      await this.mutex.runExclusive(async () => {
+    this.initPromise = this.mutex
+      .runExclusive(async () => {
         await this.loadOrGenerateRealityParams();
         await this.writeConfig();
         this.startProcess();
+      })
+      .catch((error) => {
+        this.logger.error(
+          `Не удалось инициализировать Xray/Reality: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
       });
-    } catch (error) {
-      this.logger.error(
-        `Не удалось инициализировать Xray/Reality: ${
-          error instanceof Error ? error.message : error
-        }`,
-      );
-    }
+
+    await this.initPromise;
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -100,6 +109,8 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * Вызывается PeersService при старте и при добавлении/удалении пира.
    */
   async syncClients(clients: IXrayClient[]): Promise<void> {
+    await this.initPromise;
+
     if (!this.params) {
       this.logger.warn(
         'Reality не инициализирован (нет ключей) — пропускаю синхронизацию клиентов',
