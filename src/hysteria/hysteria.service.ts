@@ -146,7 +146,12 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       sni: p.host,
     });
 
-    return `hysteria2://${encodeURIComponent(password)}@${p.host}:${p.port}/?${query.toString()}#${encodeURIComponent(
+    // auth.type: userpass на сервере требует "имя:пароль" в userinfo —
+    // один пароль без имени пользователя сервер сопоставить не может
+    // (аутентификация тихо падает и уходит в masquerade-фолбэк).
+    const userinfo = `${encodeURIComponent(name)}:${encodeURIComponent(password)}`;
+
+    return `hysteria2://${userinfo}@${p.host}:${p.port}/?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
@@ -225,7 +230,6 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private startProcess(): void {
     const proc = spawn('hysteria', ['server', '-c', this.configPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, HYSTERIA_LOG_LEVEL: 'debug' },
     });
     this.currentProc = proc;
 
