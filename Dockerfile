@@ -63,12 +63,11 @@ RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git go-impl 
     make -C go-impl install DESTDIR=/awg/out
 
 # ============================================
-# Stage 5: Fetch Xray-core (VLESS + XTLS-Reality)
+# Stage 5: Fetch Xray-core (VLESS + WS + TLS через Cloudflare CDN)
 # ============================================
 # Xray-core — чистый Go, статически слинкован, работает на Alpine без glibc.
 # Версия закреплена (ARG) — при необходимости бампнуть тегом из релизов
-# https://github.com/XTLS/Xray-core/releases. Reality + xtls-rprx-vision
-# доступны с v1.8.0, здесь — проверенный стабильный релиз.
+# https://github.com/XTLS/Xray-core/releases.
 FROM base AS xray-build
 ARG XRAY_VERSION=v1.8.24
 WORKDIR /xray
@@ -122,7 +121,7 @@ COPY --from=awg-build /awg/out/usr/bin/awg /usr/bin/awg
 COPY --from=awg-build /awg/out/usr/bin/awg-quick /usr/bin/awg-quick
 COPY --from=awg-build /awg/out/usr/bin/amneziawg-go /usr/bin/amneziawg-go
 
-# Бинарник Xray-core + geo-данные (VLESS + Reality)
+# Бинарник Xray-core + geo-данные (VLESS + WS + TLS через Cloudflare CDN)
 COPY --from=xray-build /xray/out/xray /usr/bin/xray
 COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
 COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat

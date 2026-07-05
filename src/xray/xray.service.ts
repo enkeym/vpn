@@ -9,25 +9,10 @@ import * as path from 'path';
 import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { randomBytes } from 'crypto';
-import { exec, spawn, ChildProcess } from 'child_process';
-import { promisify } from 'util';
+import { spawn, ChildProcess } from 'child_process';
 import { Mutex } from 'async-mutex';
 
-const execAsync = promisify(exec);
-
-/**
- * Постоянные параметры Reality-сервера. Приватный ключ x25519 живёт только на
- * сервере, публичный (pbk) и shortId раздаются клиентам в vless://-ссылке.
- * Генерируются один раз и хранятся в configs/xray-reality.json, чтобы
- * переживать рестарт (как H1-H4/I1-I5 у AmneziaWG).
- */
-export interface IXrayRealityParams {
-  privateKey: string;
-  publicKey: string;
-  shortId: string;
-}
-
-/** Клиент Reality: имя пира и его VLESS-UUID (id из БД). */
+/** Клиент VLESS: имя пира и его UUID (id из БД). */
 export interface IXrayClient {
   name: string;
   uuid: string;
@@ -38,31 +23,46 @@ interface IXrayInboundClient {
 }
 
 /**
- * Управляет процессом Xray-core (VLESS + XTLS-Reality) по образцу WgService:
- * генерирует/читает Reality-ключи, собирает configs/xray.json из списка
- * клиентов и надзирает за дочерним процессом `xray`, перезапуская его при
- * падении или изменении списка пиров.
+ * Путь WS-эндпоинта — генерируется один раз и хранится в
+ * configs/xray-ws.json, чтобы переживать рестарт (как obfsPassword у Hysteria).
+ */
+interface IXrayWsParams {
+  wsPath: string;
+}
+
+/**
+ * Управляет процессом Xray-core (VLESS + WebSocket + TLS за Cloudflare CDN).
+ * Клиент подключается к домену на Cloudflare (проксируемая A-запись, оранжевое
+ * облако), Cloudflare терминирует внешний TLS и поднимает новое TLS-соединение
+ * до этого сервера, аутентифицируясь сертификатом Cloudflare Origin CA —
+ * поэтому блокировка по IP этого VPS тут не работает: клиент никогда не видит
+ * реальный IP сервера, только IP Cloudflare. Пришёл на замену VLESS+Reality,
+ * который на некоторых сетях клиентов резался DPI по IP сервера напрямую.
  */
 @Injectable()
 export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(XrayService.name);
 
-  private readonly paramsPath = path.join(
+  private readonly wsParamsPath = path.join(
     process.cwd(),
-    '/configs/xray-reality.json',
+    '/configs/xray-ws.json',
   );
   private readonly configPath = path.join(process.cwd(), '/configs/xray.json');
+  private readonly certPath = path.join(
+    process.cwd(),
+    '/configs/cloudflare-cert.pem',
+  );
+  private readonly keyPath = path.join(
+    process.cwd(),
+    '/configs/cloudflare-key.pem',
+  );
 
   public readonly port = Number(process.env.XRAY_PORT || 443);
-  private readonly host = process.env.WG_HOST;
-  private readonly realityDest =
-    process.env.XRAY_REALITY_DEST || 'www.microsoft.com:443';
-  private readonly realitySni =
-    process.env.XRAY_REALITY_SNI || 'www.microsoft.com';
+  private readonly domain = process.env.XRAY_DOMAIN;
 
   private readonly mutex = new Mutex();
 
-  private params!: IXrayRealityParams;
+  private wsParams!: IXrayWsParams;
   private clients: IXrayClient[] = [];
 
   private currentProc: ChildProcess | null = null;
@@ -77,20 +77,24 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private initPromise: Promise<void> = Promise.resolve();
 
   async onModuleInit(): Promise<void> {
-    if (!this.host) throw new Error('WG_HOST в .env не задан');
+    if (!this.domain) throw new Error('XRAY_DOMAIN в .env не задан');
+    if (!existsSync(this.certPath) || !existsSync(this.keyPath)) {
+      throw new Error(
+        `Не найден сертификат Cloudflare Origin CA: ${this.certPath} / ${this.keyPath}`,
+      );
+    }
 
     // Ошибка инициализации Xray не должна ронять весь бот (AWG и остальное
-    // продолжают работать) — логируем и продолжаем, Reality поднимется после
-    // исправления окружения.
+    // продолжают работать) — логируем и продолжаем.
     this.initPromise = this.mutex
       .runExclusive(async () => {
-        await this.loadOrGenerateRealityParams();
+        await this.loadOrGenerateWsParams();
         await this.writeConfig();
         this.startProcess();
       })
       .catch((error) => {
         this.logger.error(
-          `Не удалось инициализировать Xray/Reality: ${
+          `Не удалось инициализировать Xray: ${
             error instanceof Error ? error.message : error
           }`,
         );
@@ -110,9 +114,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   async syncClients(clients: IXrayClient[]): Promise<void> {
     await this.initPromise;
 
-    if (!this.params) {
+    if (!this.wsParams) {
       this.logger.warn(
-        'Reality не инициализирован (нет ключей) — пропускаю синхронизацию клиентов',
+        'Xray не инициализирован (нет параметров) — пропускаю синхронизацию клиентов',
       );
       return;
     }
@@ -126,92 +130,45 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Xray синхронизирован: ${clients.length} клиент(ов)`);
   }
 
-  /** Публичные параметры для сборки клиентской ссылки. */
-  getPublicParams(): {
-    host: string;
-    port: number;
-    publicKey: string;
-    shortId: string;
-    sni: string;
-  } {
-    return {
-      host: this.host as string,
-      port: this.port,
-      publicKey: this.params.publicKey,
-      shortId: this.params.shortId,
-      sni: this.realitySni,
-    };
-  }
-
   /**
-   * vless://-ссылка для клиента (v2rayNG / Hiddify / NekoBox / sing-box).
-   * Без flow (xtls-rprx-vision убран) — на sing-box-ядре (Hiddify) Vision
-   * приводил к нестабильным обрывам соединения; обычный VLESS+Reality
-   * камуфляж хендшейка сохраняет.
+   * vless://-ссылка для клиента через Cloudflare CDN (WS+TLS). Реальный
+   * сертификат домена, поэтому insecure не нужен.
    */
   buildClientLink(name: string, uuid: string): string {
-    if (!this.params) {
+    if (!this.wsParams) {
       throw new InternalServerErrorException(
-        'Reality не инициализирован — невозможно собрать vless-ссылку',
+        'Xray не инициализирован — невозможно собрать vless-ссылку',
       );
     }
 
-    const p = this.getPublicParams();
     const query = new URLSearchParams({
-      type: 'tcp',
-      security: 'reality',
+      type: 'ws',
+      security: 'tls',
       encryption: 'none',
-      pbk: p.publicKey,
-      fp: 'random',
-      sni: p.sni,
-      sid: p.shortId,
+      path: this.wsParams.wsPath,
+      host: this.domain as string,
+      sni: this.domain as string,
     });
 
-    return `vless://${uuid}@${p.host}:${p.port}?${query.toString()}#${encodeURIComponent(
+    return `vless://${uuid}@${this.domain}:${this.port}?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
 
-  private async loadOrGenerateRealityParams(): Promise<void> {
-    if (existsSync(this.paramsPath)) {
-      const raw = await readFile(this.paramsPath, 'utf-8');
-      const parsed = JSON.parse(raw) as Partial<IXrayRealityParams>;
+  private async loadOrGenerateWsParams(): Promise<void> {
+    if (existsSync(this.wsParamsPath)) {
+      const raw = await readFile(this.wsParamsPath, 'utf-8');
+      const parsed = JSON.parse(raw) as Partial<IXrayWsParams>;
 
-      if (parsed.privateKey && parsed.publicKey && parsed.shortId) {
-        this.params = {
-          privateKey: parsed.privateKey,
-          publicKey: parsed.publicKey,
-          shortId: parsed.shortId,
-        };
+      if (parsed.wsPath) {
+        this.wsParams = { wsPath: parsed.wsPath };
         return;
       }
-
-      this.logger.warn(
-        'configs/xray-reality.json неполный — регенерирую Reality-ключи (все клиенты должны заново скачать конфиг)',
-      );
     }
 
-    this.params = await this.generateRealityParams();
-    await writeFile(this.paramsPath, JSON.stringify(this.params, null, 2));
-    this.logger.log('Сгенерированы новые Reality-ключи (x25519 + shortId)');
-  }
-
-  private async generateRealityParams(): Promise<IXrayRealityParams> {
-    const { stdout } = await execAsync('xray x25519');
-    const privateKey = stdout.match(/Private key:\s*(\S+)/i)?.[1];
-    const publicKey = stdout.match(/Public key:\s*(\S+)/i)?.[1];
-
-    if (!privateKey || !publicKey) {
-      throw new InternalServerErrorException(
-        `Не удалось разобрать вывод xray x25519: ${stdout}`,
-      );
-    }
-
-    return {
-      privateKey,
-      publicKey,
-      shortId: randomBytes(8).toString('hex'),
-    };
+    this.wsParams = { wsPath: `/${randomBytes(12).toString('hex')}` };
+    await writeFile(this.wsParamsPath, JSON.stringify(this.wsParams, null, 2));
+    this.logger.log('Сгенерирован новый WS-путь для Xray');
   }
 
   private buildServerConfig(): Record<string, unknown> {
@@ -231,20 +188,16 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
             decryption: 'none',
           },
           streamSettings: {
-            network: 'tcp',
-            security: 'reality',
-            realitySettings: {
-              show: false,
-              dest: this.realityDest,
-              xver: 0,
-              serverNames: [this.realitySni],
-              privateKey: this.params.privateKey,
-              shortIds: ['', this.params.shortId],
+            network: 'ws',
+            security: 'tls',
+            tlsSettings: {
+              certificates: [
+                { certificateFile: this.certPath, keyFile: this.keyPath },
+              ],
             },
-          },
-          sniffing: {
-            enabled: true,
-            destOverride: ['http', 'tls', 'quic'],
+            wsSettings: {
+              path: this.wsParams.wsPath,
+            },
           },
         },
       ],

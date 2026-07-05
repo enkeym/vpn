@@ -1641,23 +1641,21 @@ export class PeersService {
   }
 
   /**
-   * Генерирует строку конфига AmneziaWG для существующего пира
+   * Генерирует ссылку конфига для существующего пира.
    */
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    if (!peer.hysteriaPassword) {
+    if (!peer.vlessUuid) {
       throw new InternalServerErrorException(
-        `У конфига ${peerName} отсутствует hysteriaPassword`,
+        `У конфига ${peerName} отсутствует vlessUuid`,
       );
     }
 
-    // VLESS+Reality нестабильно рвётся на некоторых сетях клиентов —
-    // временно основной и единственный протокол, который выдаём клиенту.
-    return this.hysteriaService.buildClientLink(
-      peer.name,
-      peer.hysteriaPassword,
-    );
+    // VLESS+WS+TLS за Cloudflare CDN — клиент никогда не видит реальный IP
+    // сервера, поэтому не режется блокировкой по IP (в отличие от Hysteria
+    // и прежнего прямого VLESS+Reality).
+    return this.xrayService.buildClientLink(peer.name, peer.vlessUuid);
   }
 
   /**
