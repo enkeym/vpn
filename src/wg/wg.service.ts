@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { WgConfig } from 'wireguard-tools';
 import * as path from 'path';
+import * as os from 'os';
 import { existsSync } from 'fs';
+import { writeFile, unlink } from 'fs/promises';
 import { getNextFreeIp, parseWgConfig } from './wg.utils';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -182,15 +184,24 @@ export class WgService implements OnModuleInit {
   }
 
   private async syncSystem() {
+    const tmpConfigPath = path.join(
+      os.tmpdir(),
+      `wg0-stripped-${Date.now()}-${process.pid}.conf`,
+    );
+
     try {
-      await execAsync(
-        `sudo bash -c 'wg syncconf wg0 <(wg-quick strip ${this.filePath})'`,
+      const { stdout: stripped } = await execAsync(
+        `wg-quick strip ${this.filePath}`,
       );
+      await writeFile(tmpConfigPath, stripped);
+      await execAsync(`sudo wg syncconf wg0 ${tmpConfigPath}`);
       this.logger.log('Интерфейс wg0 синхронизирован');
     } catch (error) {
       this.logger.error(
         `Ошибка синхронизации WireGuard: ${error instanceof Error ? error.message : error}`,
       );
+    } finally {
+      await unlink(tmpConfigPath).catch(() => {});
     }
   }
 

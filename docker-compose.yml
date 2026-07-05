@@ -8,6 +8,7 @@ services:
     image: vpn-bot:latest
     container_name: vpn-tgbot
     restart: unless-stopped
+    init: true
 
     cap_add:
       - NET_ADMIN
