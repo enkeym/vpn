@@ -24,6 +24,27 @@ export class AdminCommandsRegistrar {
       await this.adminHandler.cancelSearch(ctx);
     });
 
+    // Рассылка всем пользователям
+    bot.callbackQuery('admin_broadcast', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showBroadcastPrompt(ctx);
+    });
+
+    // Подтверждение рассылки
+    bot.callbackQuery('admin_confirm_broadcast', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      // Сразу отвечаем, т.к. рассылка может занять время
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.confirmBroadcast(ctx);
+    });
+
+    // Отмена рассылки
+    bot.callbackQuery('admin_cancel_broadcast', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.cancelBroadcast(ctx);
+    });
+
     // Статистика (конфиги и пользователи)
     bot.callbackQuery('admin_stats', async (ctx) => {
       if (!(await ensureAdmin(ctx, isAdmin))) return;

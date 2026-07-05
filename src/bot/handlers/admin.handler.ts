@@ -26,6 +26,17 @@ const awaitingClientDescriptionEdit = new Map<
   }
 >();
 
+// Состояние ожидания ввода текста рассылки
+// adminId -> { promptMessageId: number, chatId: number }
+const awaitingBroadcastMessage = new Map<
+  string,
+  { promptMessageId: number; chatId: number }
+>();
+
+// Текст рассылки, ожидающий подтверждения
+// adminId -> текст сообщения
+const pendingBroadcastText = new Map<string, string>();
+
 @Injectable()
 export class AdminHandler {
   private readonly logger = new Logger(AdminHandler.name);
@@ -134,6 +145,158 @@ export class AdminHandler {
   async cancelSearch(ctx: Context) {
     if (!ctx.from) return;
     this.setAwaitingClientSearch(String(ctx.from.id), null);
+    // Возвращаемся в главное меню
+    try {
+      await ctx.editMessageText(BotUi.welcomeMessage, {
+        reply_markup: BotUi.adminMenuKeyboard(),
+        parse_mode: 'Markdown',
+      });
+    } catch {
+      await ctx.reply(BotUi.welcomeMessage, {
+        reply_markup: BotUi.adminMenuKeyboard(),
+        parse_mode: 'Markdown',
+      });
+    }
+  }
+
+  // === Рассылка всем пользователям ===
+
+  isAwaitingBroadcastMessage(userId: string): boolean {
+    return awaitingBroadcastMessage.has(userId);
+  }
+
+  private setAwaitingBroadcastMessage(
+    userId: string,
+    state: { promptMessageId: number; chatId: number } | null,
+  ) {
+    if (state) {
+      awaitingBroadcastMessage.set(userId, state);
+    } else {
+      awaitingBroadcastMessage.delete(userId);
+    }
+  }
+
+  async showBroadcastPrompt(ctx: Context) {
+    if (!ctx.from || !ctx.chat) return;
+
+    const result = await ctx.editMessageText(BotUi.broadcastPrompt, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.cancelBroadcastKeyboard(),
+    });
+
+    if (result && typeof result === 'object' && 'message_id' in result) {
+      this.setAwaitingBroadcastMessage(String(ctx.from.id), {
+        promptMessageId: result.message_id,
+        chatId: ctx.chat.id,
+      });
+    }
+  }
+
+  async handleBroadcastInput(ctx: Context) {
+    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
+
+    const adminId = String(ctx.from.id);
+    const state = awaitingBroadcastMessage.get(adminId);
+    this.setAwaitingBroadcastMessage(adminId, null);
+
+    const text = ctx.message.text.trim();
+
+    // Удаляем сообщение админа
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
+    // Удаляем prompt-сообщение
+    if (state) {
+      try {
+        await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
+      } catch {
+        // Игнорируем ошибку удаления
+      }
+    }
+
+    const userIds = await this.peersService.getBroadcastUserIds();
+    if (userIds.length === 0) {
+      await ctx.reply(BotUi.broadcastEmptyText, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMenuKeyboard(),
+      });
+      return;
+    }
+
+    pendingBroadcastText.set(adminId, text);
+    await ctx.reply(BotUi.broadcastConfirmText(text, userIds.length), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.broadcastConfirmKeyboard(),
+    });
+  }
+
+  async confirmBroadcast(ctx: Context) {
+    if (!ctx.from) return;
+
+    const adminId = String(ctx.from.id);
+    const text = pendingBroadcastText.get(adminId);
+    pendingBroadcastText.delete(adminId);
+
+    if (!text) {
+      // Callback уже отвечен в регистраторе — показываем ошибку в сообщении
+      try {
+        await ctx.editMessageText(
+          '❌ Текст рассылки не найден, начните заново',
+          { reply_markup: BotUi.backToMenuKeyboard() },
+        );
+      } catch {
+        // Игнорируем ошибку редактирования
+      }
+      return;
+    }
+
+    try {
+      await ctx.editMessageText(BotUi.broadcastSendingText, {
+        parse_mode: 'Markdown',
+      });
+    } catch {
+      // Игнорируем ошибку редактирования
+    }
+
+    const userIds = await this.peersService.getBroadcastUserIds();
+    let sent = 0;
+    let failed = 0;
+    for (const userId of userIds) {
+      try {
+        await ctx.api.sendMessage(userId, text);
+        sent++;
+      } catch (error) {
+        failed++;
+        this.logger.warn(`Рассылка не доставлена ${userId}: ${error}`);
+      }
+      // Пауза между отправками, чтобы не упереться в лимиты Telegram
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    this.logger.log(`Рассылка завершена: отправлено ${sent}, ошибок ${failed}`);
+
+    const resultText = BotUi.broadcastResultText(sent, failed);
+    try {
+      await ctx.editMessageText(resultText, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMenuKeyboard(),
+      });
+    } catch {
+      await ctx.reply(resultText, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMenuKeyboard(),
+      });
+    }
+  }
+
+  async cancelBroadcast(ctx: Context) {
+    if (!ctx.from) return;
+    const adminId = String(ctx.from.id);
+    this.setAwaitingBroadcastMessage(adminId, null);
+    pendingBroadcastText.delete(adminId);
     // Возвращаемся в главное меню
     try {
       await ctx.editMessageText(BotUi.welcomeMessage, {

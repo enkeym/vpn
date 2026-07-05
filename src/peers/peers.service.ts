@@ -645,6 +645,17 @@ export class PeersService {
     };
   }
 
+  /** Уникальные Telegram ID пользователей с конфигами (кроме заблокированных) — для рассылки. */
+  async getBroadcastUserIds(): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ telegramId: schema.peers.telegramId })
+      .from(schema.peers)
+      .where(
+        sql`${schema.peers.telegramId} not in (select ${schema.blockedUsers.telegramId} from ${schema.blockedUsers})`,
+      );
+    return rows.map((row) => row.telegramId);
+  }
+
   /**
    * Расширенная аналитика по конфигам для админ-панели.
    */

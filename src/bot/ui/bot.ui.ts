@@ -109,6 +109,7 @@ export const BotUi = {
       .text('📊 Статистика', 'admin_stats')
       .text('📈 Аналитика', 'admin_analytics')
       .row()
+      .text('📢 Рассылка', 'admin_broadcast')
       .text('📖 Инструкция', 'show_instructions');
   },
 
@@ -856,6 +857,35 @@ export const BotUi = {
       .text('🔍 Искать снова', 'admin_search')
       .row()
       .text('« В меню', 'main_menu'),
+
+  // === Рассылка всем пользователям ===
+
+  broadcastPrompt:
+    '📢 *Рассылка*\n\n' +
+    'Введите текст сообщения — бот отправит его всем пользователям с конфигами (кроме заблокированных):',
+
+  broadcastConfirmText: (text: string, usersCount: number) =>
+    '📢 *Подтверждение рассылки*\n\n' +
+    `Получателей: *${usersCount}*\n\n` +
+    'Текст сообщения:\n\n' +
+    escapeMarkdown(text),
+
+  broadcastEmptyText: '📢 *Рассылка*\n\nНет пользователей для рассылки',
+
+  broadcastSendingText: '📢 *Отправка...*',
+
+  broadcastResultText: (sent: number, failed: number) =>
+    '📢 *Рассылка завершена*\n\n' +
+    `✅ Отправлено: *${sent}*` +
+    (failed > 0 ? `\n❌ Не доставлено: *${failed}*` : ''),
+
+  cancelBroadcastKeyboard: () =>
+    new InlineKeyboard().text('❌ Отмена', 'admin_cancel_broadcast'),
+
+  broadcastConfirmKeyboard: () =>
+    new InlineKeyboard()
+      .text('✅ Отправить', 'admin_confirm_broadcast')
+      .text('❌ Отмена', 'admin_cancel_broadcast'),
 
   clientDetailsText: (
     telegramId: string,
