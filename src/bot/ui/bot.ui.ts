@@ -359,6 +359,12 @@ export const BotUi = {
     // Кнопка получения ссылки-конфига (vless://)
     keyboard.text('🔗 Получить ссылку', `get_config_file:${peer.name}`).row();
 
+    // Инструкция: как пустить Telegram/все приложения через VPN (прокси-ссылка
+    // для Telegram невозможна на CDN-схеме — ведём на объяснение/инструкцию).
+    keyboard
+      .text('📨 Telegram и приложения', 'instruction:telegram')
+      .row();
+
     // Показываем кнопку "Продлить" если конфиг истёк или на паузе
     if (peer.paused || expired) {
       keyboard.text('🔄 Продлить', `extend_peer:${peer.name}`).row();
@@ -1051,12 +1057,12 @@ export const BotUi = {
       `admin_peer:${peerName}:${telegramId}`,
     ),
 
-  // === Инструкции по установке Hiddify (VLESS + Reality) ===
+  // === Инструкции по установке (VLESS + WS + TLS через Cloudflare CDN) ===
 
   instructionsMenuTitle:
-    '📖 *Инструкция по установке Hiddify*\n\n' +
-    'Ваш VPN работает по протоколу *VLESS + Reality* — маскируется под обычный HTTPS и обходит блокировки провайдера (в т.ч. Ростелеком).\n\n' +
-    'Нужно приложение *Hiddify* — оно есть на всех платформах, конфиг добавляется одной ссылкой или QR-кодом.\n\n' +
+    '📖 *Инструкция по установке*\n\n' +
+    'Ваш VPN работает по протоколу *VLESS + WebSocket + TLS* через Cloudflare CDN — трафик маскируется под обычный HTTPS к сайту, поэтому обходит блокировки провайдера (в т.ч. по IP сервера).\n\n' +
+    'Подойдёт любое приложение из списка ниже — конфиг добавляется одной ссылкой `vless://…` или QR-кодом. _Если один клиент подключается нестабильно — попробуйте другой из той же инструкции._\n\n' +
     'Выберите вашу платформу — откроется пошаговая инструкция.\n\n' +
     '⏱ _Обычно настройка занимает 2–3 минуты_',
 
@@ -1069,6 +1075,7 @@ export const BotUi = {
       .text('🍏 macOS', 'instruction:macos')
       .row()
       .text('🐧 Linux', 'instruction:linux')
+      .text('📨 Telegram', 'instruction:telegram')
       .row()
       .text('📖 Официальные ресурсы', 'instruction:video')
       .row()
@@ -1081,83 +1088,110 @@ export const BotUi = {
       .text('« В меню', 'main_menu'),
 
   instructionVideo:
-    '📖 *Официальные ресурсы Hiddify*\n\n' +
-    '• [Сайт для скачивания](https://hiddify.com/)\n' +
-    '• [Все версии на GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '📖 *Официальные ресурсы клиентов*\n\n' +
+    '*Hiddify*\n' +
+    '• [Сайт](https://hiddify.com/) · [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '*v2rayNG (Android)*\n' +
+    '• [GitHub](https://github.com/2dust/v2rayNG/releases/latest)\n\n' +
+    '*v2rayN (Windows/macOS/Linux)*\n' +
+    '• [GitHub](https://github.com/2dust/v2rayN/releases/latest)\n\n' +
+    '*NekoBox / NekoRay*\n' +
+    '• [Android](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest) · [Desktop](https://github.com/MatsuriDayo/nekoray/releases/latest)\n\n' +
     '_Выберите платформу для пошаговой инструкции_',
 
   instructionAndroid:
-    '📱 *Установка Hiddify на Android*\n\n' +
-    '*Шаг 1: Установите приложение*\n' +
-    '• [Hiddify в Google Play](https://play.google.com/store/apps/details?id=app.hiddify.com)\n' +
-    '• Или скачайте APK с [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '📱 *Настройка на Android*\n\n' +
+    '*Шаг 1: Установите приложение* (любое на выбор)\n' +
+    '• *v2rayNG* — рекомендуем, самый стабильный: [GitHub](https://github.com/2dust/v2rayNG/releases/latest)\n' +
+    '• *Hiddify*: [Google Play](https://play.google.com/store/apps/details?id=app.hiddify.com) · [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
+    '• *NekoBox*: [GitHub](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest)\n\n' +
     '*Шаг 2: Добавьте конфиг*\n' +
-    '• Скопируйте ссылку `vless://…` из бота (нажмите на неё — она скопируется)\n' +
-    '• Откройте Hiddify → нажмите "+" вверху\n' +
-    '• Выберите "Добавить из буфера обмена"\n' +
-    '• _Или_ "Сканировать QR-код" и наведите на QR из бота\n\n' +
+    '• Скопируйте ссылку `vless://…` из бота (нажмите на неё — скопируется)\n' +
+    '• *v2rayNG*: «+» вверху → «Импорт из буфера обмена». _Или_ «Сканировать QR-код» и наведите на QR из бота\n' +
+    '• *Hiddify/NekoBox*: «+» → «Добавить из буфера обмена» / «Сканировать QR»\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Нажмите большую кнопку подключения по центру\n' +
+    '• *v2rayNG*: выберите конфиг в списке → нажмите кнопку ▶️ снизу справа\n' +
+    '• *Hiddify*: большая кнопка по центру\n' +
     '• Разрешите создание VPN-соединения\n' +
-    '• Готово! 🎉',
+    '• Готово! Весь трафик (включая Telegram и YouTube) идёт через VPN 🎉\n\n' +
+    '⚠️ _Если подключилось, но сайты не грузятся_ — в настройках клиента поставьте *Remote DNS* = `1.1.1.1` и переподключитесь.',
 
   instructionIos:
-    '🍎 *Установка Hiddify на iOS / iPhone*\n\n' +
-    '*Шаг 1: Установите приложение*\n' +
-    '• [Hiddify в App Store](https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532)\n' +
-    '• Или найдите "Hiddify" в App Store\n\n' +
-    '*Шаг 2: Добавьте конфиг*\n\n' +
-    '_Способ 1 (через ссылку):_\n' +
+    '🍎 *Настройка на iOS / iPhone*\n\n' +
+    '*Шаг 1: Установите приложение* (любое на выбор)\n' +
+    '• *Streisand* — бесплатный, рекомендуем: [App Store](https://apps.apple.com/app/streisand/id6450534064)\n' +
+    '• *Hiddify*: [App Store](https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532)\n' +
+    '• *FoXray*: [App Store](https://apps.apple.com/app/foxray/id6448898396)\n' +
+    '• *Shadowrocket* (платный, ~$3): [App Store](https://apps.apple.com/app/shadowrocket/id932747118)\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n' +
     '• Скопируйте ссылку `vless://…` из бота (нажмите на неё)\n' +
-    '• Откройте Hiddify → "+" → "Добавить из буфера обмена"\n\n' +
-    '_Способ 2 (через QR-код):_\n' +
-    '• Откройте Hiddify → "+" → "Сканировать QR-код"\n' +
-    '• Наведите на QR-код из бота\n\n' +
+    '• Откройте приложение → «+» → «Добавить из буфера обмена» (Import from clipboard)\n' +
+    '• _Или_ «+» → «Сканировать QR-код» и наведите на QR из бота\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Нажмите большую кнопку подключения\n' +
-    '• Разрешите добавление VPN-конфигурации\n' +
-    '• Готово! 🎉',
+    '• Нажмите кнопку подключения / переключатель\n' +
+    '• Разрешите добавление VPN-конфигурации (запросит один раз)\n' +
+    '• Готово! Весь трафик (включая Telegram и YouTube) идёт через VPN 🎉\n\n' +
+    '⚠️ _Если подключилось, но сайты не грузятся_ — в настройках клиента поставьте *Remote DNS* = `1.1.1.1` и переподключитесь.',
 
   instructionWindows:
-    '🪟 *Установка Hiddify на Windows*\n\n' +
-    '*Шаг 1: Скачайте и установите*\n' +
-    '• [Скачать установщик (GitHub Releases)](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
-    '• Выберите файл `Hiddify-Windows-Setup-x64.exe` и запустите\n\n' +
+    '🪟 *Настройка на Windows*\n\n' +
+    '*Шаг 1: Скачайте приложение* (любое на выбор)\n' +
+    '• *v2rayN* — рекомендуем, самый стабильный: [GitHub](https://github.com/2dust/v2rayN/releases/latest) (файл `v2rayN-windows-64.zip`)\n' +
+    '• *Hiddify*: [GitHub](https://github.com/hiddify/hiddify-app/releases/latest) (файл `Hiddify-Windows-Setup-x64.exe`)\n' +
+    '• *NekoRay*: [GitHub](https://github.com/MatsuriDayo/nekoray/releases/latest)\n\n' +
     '*Шаг 2: Добавьте конфиг*\n' +
     '• Скопируйте ссылку `vless://…` из бота\n' +
-    '• Запустите Hiddify → "New Profile" / "+" → "Добавить из буфера обмена"\n\n' +
+    '• *v2rayN*: в трее правой кнопкой → «Импорт из буфера обмена» (или Ctrl+V в главном окне)\n' +
+    '• *Hiddify*: «New Profile» / «+» → «Добавить из буфера обмена»\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Нажмите большую кнопку подключения\n' +
+    '• *v2rayN*: выберите сервер → правой кнопкой по значку в трее → режим «Глобальный» (Global), чтобы весь трафик шёл через VPN\n' +
+    '• *Hiddify*: большая кнопка подключения\n' +
     '• Готово! 🎉\n\n' +
-    '_💡 Совет: В настройках включите автозапуск при входе в систему_',
+    '⚠️ _Если подключилось, но сайты не грузятся_ — поставьте *Remote DNS* = `1.1.1.1` в настройках и переподключитесь.\n' +
+    '_💡 Совет: включите автозапуск при входе в систему в настройках приложения._',
 
   instructionMacos:
-    '🍏 *Установка Hiddify на macOS*\n\n' +
-    '*Шаг 1: Установите приложение*\n' +
-    '• [Hiddify в App Store](https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532)\n' +
-    '• Или скачайте `.dmg` с [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '🍏 *Настройка на macOS*\n\n' +
+    '*Шаг 1: Установите приложение* (любое на выбор)\n' +
+    '• *Hiddify*: [App Store](https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532) · [GitHub `.dmg`](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
+    '• *Streisand* (для Apple Silicon): [App Store](https://apps.apple.com/app/streisand/id6450534064)\n' +
+    '• *v2rayN* (macOS): [GitHub](https://github.com/2dust/v2rayN/releases/latest) (файл `v2rayN-macos-64.dmg`)\n\n' +
     '*Шаг 2: Добавьте конфиг*\n' +
     '• Скопируйте ссылку `vless://…` из бота\n' +
-    '• Запустите Hiddify → "+" → "Добавить из буфера обмена"\n\n' +
+    '• В приложении → «+» → «Добавить из буфера обмена»\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Нажмите большую кнопку подключения\n' +
-    '• Разрешите добавление VPN-конфигурации\n' +
-    '• Готово! 🎉\n\n' +
-    '_💡 Совет: Иконка в меню-баре позволяет быстро включать/выключать VPN_',
+    '• Нажмите кнопку подключения\n' +
+    '• Разрешите добавление VPN-конфигурации (запросит один раз)\n' +
+    '• Готово! Весь трафик (включая Telegram и YouTube) идёт через VPN 🎉\n\n' +
+    '⚠️ _Если подключилось, но сайты не грузятся_ — поставьте *Remote DNS* = `1.1.1.1` в настройках и переподключитесь.\n' +
+    '_💡 Совет: иконка в меню-баре позволяет быстро включать/выключать VPN._',
 
   instructionLinux:
-    '🐧 *Установка Hiddify на Linux*\n\n' +
-    '*Шаг 1: Скачайте приложение*\n' +
-    '• [GitHub Releases](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
-    '• Возьмите `Hiddify-Linux-x64.AppImage` (универсально) или `.deb` для Debian/Ubuntu\n\n' +
+    '🐧 *Настройка на Linux*\n\n' +
+    '*Шаг 1: Скачайте приложение* (любое на выбор)\n' +
+    '• *Hiddify*: [GitHub](https://github.com/hiddify/hiddify-app/releases/latest) — `Hiddify-Linux-x64.AppImage` (универсально) или `.deb`\n' +
+    '• *NekoRay*: [GitHub](https://github.com/MatsuriDayo/nekoray/releases/latest)\n' +
+    '• *v2rayN* (Linux): [GitHub](https://github.com/2dust/v2rayN/releases/latest)\n\n' +
     '*Шаг 2: Запустите*\n' +
     '• AppImage: сделайте исполняемым и запустите\n' +
     '```\nchmod +x Hiddify-Linux-x64.AppImage\n./Hiddify-Linux-x64.AppImage\n```\n' +
     '• `.deb`: `sudo dpkg -i Hiddify-*.deb`\n\n' +
     '*Шаг 3: Добавьте конфиг и подключитесь*\n' +
     '• Скопируйте ссылку `vless://…` из бота\n' +
-    '• В Hiddify: "+" → "Добавить из буфера обмена"\n' +
-    '• Нажмите большую кнопку подключения\n' +
+    '• В приложении: «+» → «Добавить из буфера обмена»\n' +
+    '• Нажмите кнопку подключения (в NekoRay — включите режим Tun/Global для всего трафика)\n' +
     '• Готово! 🎉\n\n' +
-    '📖 [Сайт Hiddify](https://hiddify.com/)',
+    '⚠️ _Если подключилось, но сайты не грузятся_ — поставьте *Remote DNS* = `1.1.1.1` в настройках и переподключитесь.',
+
+  // === Инструкция: Telegram и другие приложения через VPN ===
+
+  instructionTelegram:
+    '📨 *Telegram, YouTube и другие приложения*\n\n' +
+    'Отдельная прокси-ссылка для Telegram *не нужна* и технически невозможна: встроенный прокси Telegram (SOCKS5/MTProto) не проходит через защиту Cloudflare, которая и прячет наш сервер от блокировок.\n\n' +
+    '✅ *Как правильно:* просто подключите наш VPN в приложении (Hiddify / v2rayNG / Streisand и т.п.) — и *весь* трафик телефона/компьютера, включая Telegram, YouTube, Instagram и любые сайты, автоматически пойдёт через VPN. Ничего отдельно настраивать в Telegram не надо.\n\n' +
+    '*Если Telegram всё равно медленный или не грузит медиа:*\n' +
+    '• Убедитесь, что клиент подключён в режиме *VPN / глобальный* (а не «только прокси для браузера»).\n' +
+    '• Поставьте *Remote DNS* = `1.1.1.1` в настройках клиента.\n' +
+    '• Переподключитесь (выключить → включить).\n\n' +
+    '_Выберите свою платформу в меню инструкций для пошаговой установки._',
 };
