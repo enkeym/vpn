@@ -121,7 +121,9 @@ export class SubscriptionService {
           interrupt_exist_connections: true,
         },
         // Прямой выход в интернет с реального IP клиента (мимо VPS).
-        { type: 'direct', tag: 'direct-out', domain_strategy: 'ipv4_only' },
+        // Прямой выход резолвит назначение сам (через DNS клиента/Hiddify) —
+        // без domain_strategy, иначе прямой путь к RU-сайтам не резолвится.
+        { type: 'direct', tag: 'direct-out' },
       ],
       route: {
         rules: [
