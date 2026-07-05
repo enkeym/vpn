@@ -178,6 +178,12 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
     return {
       log: { loglevel: 'warning' },
+      // Резолвим имена на сервере только через IPv4 (исходящий IPv6 на VPS
+      // не маршрутизируется). queryStrategy UseIPv4 не даёт запрашивать AAAA.
+      dns: {
+        servers: ['1.1.1.1', '8.8.8.8'],
+        queryStrategy: 'UseIPv4',
+      },
       inbounds: [
         {
           listen: '0.0.0.0',
@@ -198,6 +204,12 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
             wsSettings: {
               path: this.wsParams.wsPath,
             },
+          },
+          // sniffing извлекает реальный домен из TLS/HTTP — без него запросы,
+          // где клиент уже зарезолвил имя в IPv6, уходили бы на мёртвый IPv6.
+          sniffing: {
+            enabled: true,
+            destOverride: ['http', 'tls', 'quic'],
           },
         },
       ],
