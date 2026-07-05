@@ -521,11 +521,7 @@ export class PeersService implements OnApplicationBootstrap {
         // Регистрируем пир в WG (интерфейс ещё поднят; будет убрано в Фазе 4).
         await this.wgService.createClientConfig(newPeer.name, credentials);
 
-        // VLESS+WS+TLS за Cloudflare CDN — клиент не видит реальный IP сервера.
-        const config = this.xrayService.buildClientLink(
-          newPeer.name,
-          vlessUuid,
-        );
+        const config = this.buildCombinedConfigText(newPeer);
 
         // Инвалидируем кеши
         this.invalidateUserPeersCache(dto.telegramId);
@@ -583,6 +579,19 @@ export class PeersService implements OnApplicationBootstrap {
       peer,
       CACHE_TTL.MEDIUM,
     );
+
+    return peer;
+  }
+
+  /** Используется публичным эндпоинтом подписки (src/subscription) — токен в URL это сам vlessUuid. */
+  async findPeerByVlessUuid(vlessUuid: string): Promise<TPeerSelect> {
+    const peer = await this.db.query.peers.findFirst({
+      where: eq(schema.peers.vlessUuid, vlessUuid),
+    });
+
+    if (!peer || peer.paused) {
+      throw new NotFoundException('Конфиг не найден');
+    }
 
     return peer;
   }
@@ -1594,16 +1603,8 @@ export class PeersService implements OnApplicationBootstrap {
         // Регистрируем обновлённый пир в WG (интерфейс ещё поднят; уйдёт в Фазе 4).
         await this.wgService.createClientConfig(peerName, credentials);
 
-        // vlessUuid при замене не меняется — ссылка остаётся прежней
-        if (!oldPeer.vlessUuid) {
-          throw new InternalServerErrorException(
-            `У конфига ${peerName} отсутствует vlessUuid`,
-          );
-        }
-        const config = this.xrayService.buildClientLink(
-          peerName,
-          oldPeer.vlessUuid,
-        );
+        // vlessUuid/hysteriaPassword при замене не меняются — ссылки остаются прежними
+        const config = this.buildCombinedConfigText(oldPeer);
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
 
@@ -1649,9 +1650,56 @@ export class PeersService implements OnApplicationBootstrap {
   }
 
   /**
-   * Генерирует ссылку конфига для существующего пира.
+   * Текст с тремя вариантами подключения: подписка sing-box (авто-переключение
+   * между CDN и прямым Hysteria2 — для Hiddify/NekoBox) и обе прямые ссылки
+   * отдельно (для v2rayNG или ручного переключения, если один канал не идёт
+   * на конкретной сети). CDN обходит блокировку по IP сервера (домашние сети),
+   * прямая Hysteria2 — блокировку самого Cloudflare (часть мобильных сетей).
+   */
+  private buildCombinedConfigText(peer: TPeerSelect): string {
+    if (!peer.vlessUuid || !peer.hysteriaPassword) {
+      throw new InternalServerErrorException(
+        `У конфига ${peer.name} отсутствует vlessUuid/hysteriaPassword`,
+      );
+    }
+
+    const subscriptionUrl = this.buildSubscriptionUrl(peer.vlessUuid);
+    const vlessLink = this.xrayService.buildClientLink(
+      peer.name,
+      peer.vlessUuid,
+    );
+    const hysteriaLink = this.hysteriaService.buildClientLink(
+      peer.name,
+      peer.hysteriaPassword,
+    );
+
+    return (
+      `🔗 *Подписка* (авто-переключение, Hiddify/NekoBox):\n${subscriptionUrl}\n\n` +
+      `*Прямые ссылки* (v2rayNG или ручной выбор, если подписка не подключается):\n` +
+      `${vlessLink}\n\n${hysteriaLink}`
+    );
+  }
+
+  private buildSubscriptionUrl(vlessUuid: string): string {
+    const { domain } = this.xrayService.getPublicParams();
+    const subPort = process.env.SUB_PORT || '2053';
+    return `https://${domain}:${subPort}/sub/${vlessUuid}`;
+  }
+
+  /**
+   * Генерирует текст конфига для существующего пира.
    */
   async getPeerConfigString(peerName: string): Promise<string> {
+    const peer = await this.findPeer(peerName);
+    return this.buildCombinedConfigText(peer);
+  }
+
+  /**
+   * Генерирует QR-код ссылки-подписки (возвращает Buffer с PNG изображением).
+   * В QR — только подписка: прямые vless/hysteria2 ссылки не дают авто-
+   * переключения, а подписку клиент (Hiddify/NekoBox) распознаёт по URL сам.
+   */
+  async generatePeerQrCode(peerName: string): Promise<Buffer> {
     const peer = await this.findPeer(peerName);
 
     if (!peer.vlessUuid) {
@@ -1660,19 +1708,9 @@ export class PeersService implements OnApplicationBootstrap {
       );
     }
 
-    // VLESS+WS+TLS за Cloudflare CDN — клиент никогда не видит реальный IP
-    // сервера, поэтому не режется блокировкой по IP (в отличие от Hysteria
-    // и прежнего прямого VLESS+Reality).
-    return this.xrayService.buildClientLink(peer.name, peer.vlessUuid);
-  }
+    const subscriptionUrl = this.buildSubscriptionUrl(peer.vlessUuid);
 
-  /**
-   * Генерирует QR-код для конфига пира (возвращает Buffer с PNG изображением)
-   */
-  async generatePeerQrCode(peerName: string): Promise<Buffer> {
-    const config = await this.getPeerConfigString(peerName);
-
-    return QRCode.toBuffer(config, {
+    return QRCode.toBuffer(subscriptionUrl, {
       type: 'png',
       width: 512,
       margin: 2,

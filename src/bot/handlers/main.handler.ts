@@ -180,7 +180,6 @@ export class MainHandler {
       windows: BotUi.instructionWindows,
       macos: BotUi.instructionMacos,
       linux: BotUi.instructionLinux,
-      telegram: BotUi.instructionTelegram,
       video: BotUi.instructionVideo,
     };
 

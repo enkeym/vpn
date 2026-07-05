@@ -130,6 +130,21 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Xray синхронизирован: ${clients.length} клиент(ов)`);
   }
 
+  /** Публичные параметры для сборки outbound'а в sing-box-подписке. */
+  getPublicParams(): { domain: string; port: number; wsPath: string } {
+    if (!this.wsParams) {
+      throw new InternalServerErrorException(
+        'Xray не инициализирован — невозможно получить параметры',
+      );
+    }
+
+    return {
+      domain: this.domain as string,
+      port: this.port,
+      wsPath: this.wsParams.wsPath,
+    };
+  }
+
   /**
    * vless://-ссылка для клиента через Cloudflare CDN (WS+TLS). Реальный
    * сертификат домена, поэтому insecure не нужен.

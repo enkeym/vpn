@@ -15,6 +15,7 @@ import { BotModule } from './bot/bot.module';
 import { NotificationModule } from './notification/notification.module';
 import { CacheModule } from './common/cache/cache.module';
 import { PaymentModule } from './payment/payment.module';
+import { SubscriptionModule } from './subscription/subscription.module';
 import { InternalGuard } from './common/guards/internal.guard';
 
 @Module({
@@ -36,6 +37,7 @@ import { InternalGuard } from './common/guards/internal.guard';
     PeersModule,
     BotModule,
     PaymentModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
   providers: [
