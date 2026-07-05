@@ -246,7 +246,7 @@ export class PeerManageHandler {
       const message = await ctx.replyWithPhoto(
         new InputFile(qrBuffer, `${peerName}_qr.png`),
         {
-          caption: `📷 *QR-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении AmneziaWG_`,
+          caption: `📷 *QR-код* \`${peer.name}\`\n\n_Отсканируйте в v2rayNG / Hiddify / NekoBox_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
@@ -267,13 +267,14 @@ export class PeerManageHandler {
     if (!ctx.chat) return;
 
     try {
-      const config = await this.peersService.getPeerConfigString(peerName);
+      const link = await this.peersService.getPeerConfigString(peerName);
       const peer = await this.peersService.findPeer(peerName);
 
-      const message = await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${peer.name}.conf`),
+      const message = await ctx.reply(
+        `🔑 *Ссылка-конфиг* \`${peer.name}\`\n\n` +
+          `\`${link}\`\n\n` +
+          `_Скопируйте и вставьте в v2rayNG / Hiddify / NekoBox_`,
         {
-          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение AmneziaWG_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
@@ -328,19 +329,18 @@ export class PeerManageHandler {
         // Игнорируем ошибку удаления
       }
 
-      // Отправляем новый конфиг файлом (родитель удалён — нужна клавиатура с goto_peer_after_replace)
-      await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${newPeer.name}.conf`),
-        {
-          caption: BotUi.configReplaced(
-            newPeer.name,
-            newPeer.ip,
-            newPeer.expiresAt,
-          ),
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
-        },
-      );
+      // Отправляем новый конфиг QR-фото + ссылкой (родитель удалён —
+      // нужна клавиатура с goto_peer_after_replace)
+      const qr = await this.peersService.generatePeerQrCode(newPeer.name);
+
+      await ctx.replyWithPhoto(new InputFile(qr, `${newPeer.name}_qr.png`), {
+        caption:
+          `${BotUi.configReplaced(newPeer.name, newPeer.ip, newPeer.expiresAt)}\n\n` +
+          `\`${config}\`\n\n` +
+          `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
+      });
     } catch (error) {
       this.logger.error(`Ошибка замены конфига: ${error}`);
       const errorMsg = error instanceof Error ? error.message : String(error);

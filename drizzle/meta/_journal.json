@@ -29,6 +29,13 @@
       "when": 1779979200000,
       "tag": "0003_peer_activity_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1783249787641,
+      "tag": "0004_massive_peter_quill",
+      "breakpoints": true
     }
   ]
 }

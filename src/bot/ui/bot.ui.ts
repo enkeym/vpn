@@ -315,12 +315,12 @@ export const BotUi = {
 
   paymentSuccessTitle:
     '✅ *Оплата прошла успешно!*\n\n' +
-    'Создаю ваш конфиг... Через секунду вы получите файл.\n\n' +
+    'Создаю ваш конфиг... Через секунду вы получите ссылку и QR-код.\n\n' +
     '_Далее: откройте раздел «Инструкция» и выберите вашу платформу для пошаговой настройки._',
 
   backToMenuKeyboard: () => new InlineKeyboard().text('В меню', 'main_menu'),
 
-  /** После выдачи .conf — те же действия, что в главном меню (инструкция + меню). */
+  /** После выдачи конфига — те же действия, что в главном меню (инструкция + меню). */
   configDeliveredKeyboard: (peerName?: string) => {
     const kb = new InlineKeyboard();
     if (peerName) {
@@ -356,8 +356,8 @@ export const BotUi = {
     // Кнопка QR-кода всегда первая
     keyboard.text('📷 QR-код', `show_qr:${peer.name}`).row();
 
-    // Кнопка получения файла конфига
-    keyboard.text('📄 Получить файл', `get_config_file:${peer.name}`).row();
+    // Кнопка получения ссылки-конфига (vless://)
+    keyboard.text('🔗 Получить ссылку', `get_config_file:${peer.name}`).row();
 
     // Показываем кнопку "Продлить" если конфиг истёк или на паузе
     if (peer.paused || expired) {
@@ -435,20 +435,17 @@ export const BotUi = {
     '• Или выбрать тариф 30, 60 или 90 дней\n\n' +
     'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
 
-  configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ *Конфиг ${name} создан!*\n\n` + `🌐 IP: \`${ip}\`\n`;
+  configCreated: (name: string, _ip: string, expiresAt?: Date | null) => {
+    let msg = `✅ *Конфиг ${name} создан!*\n\n`;
     if (expiresAt) {
       msg += `📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}\n\n`;
-    } else {
-      msg += '\n';
     }
     msg +=
       '*Дальнейшие шаги:*\n' +
-      '1. Откройте файл в приложении AmneziaWG\n' +
-      '2. Нажмите «Подключить» в приложении\n' +
-      '3. Готово — VPN активен\n\n' +
-      '_Подробная инструкция для каждой платформы — в разделе «Инструкция»._\n\n' +
-      '_На телефоне можно использовать кнопку «QR-код» в карточке конфига для быстрой настройки._';
+      '1. Установите приложение Hiddify (раздел «Инструкция»)\n' +
+      '2. Добавьте конфиг: отсканируйте QR-код выше или вставьте ссылку из буфера обмена\n' +
+      '3. Нажмите «Подключить» — VPN активен ✅\n\n' +
+      '_Подробная инструкция для каждой платформы — в разделе «Инструкция»._';
     return msg;
   },
 
@@ -462,7 +459,7 @@ export const BotUi = {
     } else {
       msg += '\n⏳ Срок: ♾️ Бессрочно';
     }
-    msg += '\n\n_Скачайте новый конфиг и удалите старый из приложения._';
+    msg += '\n\n_Добавьте новую ссылку/QR в Hiddify и удалите старый профиль._';
     return msg;
   },
 
@@ -1054,12 +1051,13 @@ export const BotUi = {
       `admin_peer:${peerName}:${telegramId}`,
     ),
 
-  // === Инструкции по установке AmneziaWG ===
+  // === Инструкции по установке Hiddify (VLESS + Reality) ===
 
   instructionsMenuTitle:
-    '📖 *Инструкция по установке AmneziaWG*\n\n' +
-    '⚠️ Обычный WireGuard не подойдёт — нужно именно приложение AmneziaWG (обходит блокировки провайдера), конфиг импортируется так же, как в обычном WireGuard.\n\n' +
-    'Выберите вашу платформу — откроется пошаговая инструкция с прямыми ссылками на приложение.\n\n' +
+    '📖 *Инструкция по установке Hiddify*\n\n' +
+    'Ваш VPN работает по протоколу *VLESS + Reality* — маскируется под обычный HTTPS и обходит блокировки провайдера (в т.ч. Ростелеком).\n\n' +
+    'Нужно приложение *Hiddify* — оно есть на всех платформах, конфиг добавляется одной ссылкой или QR-кодом.\n\n' +
+    'Выберите вашу платформу — откроется пошаговая инструкция.\n\n' +
     '⏱ _Обычно настройка занимает 2–3 минуты_',
 
   instructionsMenuKeyboard: () =>
@@ -1083,96 +1081,83 @@ export const BotUi = {
       .text('« В меню', 'main_menu'),
 
   instructionVideo:
-    '📖 *Официальные ресурсы AmneziaWG*\n\n' +
-    '• [Документация AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)\n' +
-    '• [GitHub-организация Amnezia](https://github.com/amnezia-vpn)\n\n' +
-    '_Выберите платформу для текстовой инструкции с прямыми ссылками на приложение_',
+    '📖 *Официальные ресурсы Hiddify*\n\n' +
+    '• [Сайт для скачивания](https://hiddify.com/)\n' +
+    '• [Все версии на GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '_Выберите платформу для пошаговой инструкции_',
 
   instructionAndroid:
-    '📱 *Установка AmneziaWG на Android*\n\n' +
+    '📱 *Установка Hiddify на Android*\n\n' +
     '*Шаг 1: Установите приложение*\n' +
-    '• [AmneziaWG в Google Play](https://play.google.com/store/apps/details?id=org.amnezia.awg)\n' +
-    '• Или найдите "AmneziaWG" в Play Store\n' +
-    '⚠️ _Обычный WireGuard не подойдёт — нужно именно это приложение_\n\n' +
-    '*Шаг 2: Импортируйте конфиг*\n' +
-    '• Откройте AmneziaWG\n' +
-    '• Нажмите кнопку "+" внизу справа\n' +
-    '• Выберите "Импорт из файла или архива"\n' +
-    '• Найдите скачанный файл .conf (в папке "Загрузки" или "Downloads")\n\n' +
+    '• [Hiddify в Google Play](https://play.google.com/store/apps/details?id=app.hiddify.com)\n' +
+    '• Или скачайте APK с [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n' +
+    '• Скопируйте ссылку `vless://…` из бота (нажмите на неё — она скопируется)\n' +
+    '• Откройте Hiddify → нажмите "+" вверху\n' +
+    '• Выберите "Добавить из буфера обмена"\n' +
+    '• _Или_ "Сканировать QR-код" и наведите на QR из бота\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Включите переключатель рядом с конфигом\n' +
+    '• Нажмите большую кнопку подключения по центру\n' +
     '• Разрешите создание VPN-соединения\n' +
-    '• Готово! 🎉\n\n' +
-    '_💡 Совет: Для автоподключения удерживайте конфиг и включите "Auto-activate"_',
+    '• Готово! 🎉',
 
   instructionIos:
-    '🍎 *Установка AmneziaWG на iOS / iPhone*\n\n' +
+    '🍎 *Установка Hiddify на iOS / iPhone*\n\n' +
     '*Шаг 1: Установите приложение*\n' +
-    '• [AmneziaWG в App Store](https://apps.apple.com/app/amneziawg/id6478942365)\n' +
-    '• Или найдите "AmneziaWG" в App Store\n' +
-    '⚠️ _Обычный WireGuard не подойдёт — нужно именно это приложение_\n\n' +
-    '*Шаг 2: Импортируйте конфиг*\n\n' +
-    '_Способ 1 (через файл):_\n' +
-    '• Скачайте файл .conf из бота\n' +
-    '• Нажмите на файл → "Поделиться"\n' +
-    '• Выберите "AmneziaWG"\n\n' +
-    '_Способ 2 (через QR-код — быстрее):_\n' +
-    '• Откройте AmneziaWG\n' +
-    '• Нажмите "+" → "Создать из QR-кода"\n' +
-    '• Отсканируйте QR-код из бота\n\n' +
+    '• [Hiddify в App Store](https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532)\n' +
+    '• Или найдите "Hiddify" в App Store\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n\n' +
+    '_Способ 1 (через ссылку):_\n' +
+    '• Скопируйте ссылку `vless://…` из бота (нажмите на неё)\n' +
+    '• Откройте Hiddify → "+" → "Добавить из буфера обмена"\n\n' +
+    '_Способ 2 (через QR-код):_\n' +
+    '• Откройте Hiddify → "+" → "Сканировать QR-код"\n' +
+    '• Наведите на QR-код из бота\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Включите переключатель рядом с конфигом\n' +
+    '• Нажмите большую кнопку подключения\n' +
     '• Разрешите добавление VPN-конфигурации\n' +
-    '• Готово! 🎉\n\n' +
-    '_💡 Совет: Добавьте виджет AmneziaWG для быстрого подключения_',
+    '• Готово! 🎉',
 
   instructionWindows:
-    '🪟 *Установка AmneziaWG на Windows*\n\n' +
+    '🪟 *Установка Hiddify на Windows*\n\n' +
     '*Шаг 1: Скачайте и установите*\n' +
-    '• [Скачать установщик (GitHub Releases)](https://github.com/amnezia-vpn/amneziawg-windows-client/releases/latest)\n' +
-    '• Выберите .msi/.exe из последнего релиза и запустите\n' +
-    '⚠️ _Обычный WireGuard не подойдёт — нужно именно это приложение_\n\n' +
-    '*Шаг 2: Импортируйте конфиг*\n' +
-    '• Запустите AmneziaWG\n' +
-    '• Нажмите "Импортировать туннель из файла"\n' +
-    '• Выберите скачанный из бота файл .conf\n\n' +
+    '• [Скачать установщик (GitHub Releases)](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
+    '• Выберите файл `Hiddify-Windows-Setup-x64.exe` и запустите\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n' +
+    '• Скопируйте ссылку `vless://…` из бота\n' +
+    '• Запустите Hiddify → "New Profile" / "+" → "Добавить из буфера обмена"\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Выберите конфиг в списке слева\n' +
-    '• Нажмите "Подключить" — появится зелёный щит\n' +
+    '• Нажмите большую кнопку подключения\n' +
     '• Готово! 🎉\n\n' +
-    '_💡 Совет: В настройках включите "Запускать при входе в систему"_',
+    '_💡 Совет: В настройках включите автозапуск при входе в систему_',
 
   instructionMacos:
-    '🍏 *Установка AmneziaWG на macOS*\n\n' +
+    '🍏 *Установка Hiddify на macOS*\n\n' +
     '*Шаг 1: Установите приложение*\n' +
-    '• [AmneziaWG в App Store для Mac](https://apps.apple.com/app/amneziawg/id6478942365)\n' +
-    '• Или найдите "AmneziaWG" в App Store\n' +
-    '⚠️ _Обычный WireGuard не подойдёт — нужно именно это приложение_\n\n' +
-    '*Шаг 2: Импортируйте конфиг*\n' +
-    '• Запустите AmneziaWG\n' +
-    '• Нажмите "Импортировать туннель(и) из файла"\n' +
-    '• Или перетащите файл .conf в окно приложения\n\n' +
+    '• [Hiddify в App Store](https://apps.apple.com/app/hiddify-proxy-vpn/id6596777532)\n' +
+    '• Или скачайте `.dmg` с [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n' +
+    '• Скопируйте ссылку `vless://…` из бота\n' +
+    '• Запустите Hiddify → "+" → "Добавить из буфера обмена"\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Выберите конфиг в списке\n' +
-    '• Нажмите "Активировать"\n' +
+    '• Нажмите большую кнопку подключения\n' +
     '• Разрешите добавление VPN-конфигурации\n' +
     '• Готово! 🎉\n\n' +
     '_💡 Совет: Иконка в меню-баре позволяет быстро включать/выключать VPN_',
 
   instructionLinux:
-    '🐧 *Установка AmneziaWG на Linux*\n\n' +
-    '⚠️ _Готовых пакетов в репозиториях дистрибутивов нет — собирается из исходников (нужны make и компилятор C, для второй команды — Go)_\n\n' +
-    '*Шаг 1: Утилиты awg / awg-quick*\n' +
-    '```\ngit clone https://github.com/amnezia-vpn/amneziawg-tools.git\ncd amneziawg-tools/src\nmake WITH_WGQUICK=yes\nsudo make install WITH_WGQUICK=yes\ncd ../..\n```\n\n' +
-    '*Шаг 2: Userspace-реализация (если нет модуля ядра amneziawg)*\n' +
-    '```\ngit clone https://github.com/amnezia-vpn/amneziawg-go.git\ncd amneziawg-go\nmake\nsudo make install\ncd ..\n```\n\n' +
-    '*Шаг 3: Настройка*\n' +
-    '1. Скачайте файл .conf из бота\n' +
-    '2. Скопируйте в /etc/amnezia/amneziawg/\n' +
-    '```\nsudo mkdir -p /etc/amnezia/amneziawg\nsudo cp путь/к/файлу.conf /etc/amnezia/amneziawg/awg0.conf\n```\n' +
-    '3. Запустите VPN:\n' +
-    '```\nsudo awg-quick up awg0\n```\n' +
-    '4. Для автозапуска настройте systemd-юнит вручную — готового awg-quick@.service в пакете нет\n\n' +
-    '📖 [Документация AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)\n' +
-    '📖 [amneziawg-tools на GitHub](https://github.com/amnezia-vpn/amneziawg-tools)',
+    '🐧 *Установка Hiddify на Linux*\n\n' +
+    '*Шаг 1: Скачайте приложение*\n' +
+    '• [GitHub Releases](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
+    '• Возьмите `Hiddify-Linux-x64.AppImage` (универсально) или `.deb` для Debian/Ubuntu\n\n' +
+    '*Шаг 2: Запустите*\n' +
+    '• AppImage: сделайте исполняемым и запустите\n' +
+    '```\nchmod +x Hiddify-Linux-x64.AppImage\n./Hiddify-Linux-x64.AppImage\n```\n' +
+    '• `.deb`: `sudo dpkg -i Hiddify-*.deb`\n\n' +
+    '*Шаг 3: Добавьте конфиг и подключитесь*\n' +
+    '• Скопируйте ссылку `vless://…` из бота\n' +
+    '• В Hiddify: "+" → "Добавить из буфера обмена"\n' +
+    '• Нажмите большую кнопку подключения\n' +
+    '• Готово! 🎉\n\n' +
+    '📖 [Сайт Hiddify](https://hiddify.com/)',
 };

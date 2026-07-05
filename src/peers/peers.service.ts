@@ -20,7 +20,9 @@ import {
   sql,
 } from 'drizzle-orm';
 import { WgService } from 'src/wg/wg.service';
-import { randomBytes } from 'node:crypto';
+import { XrayService } from 'src/xray/xray.service';
+import type { IXrayClient } from 'src/xray/xray.service';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
 import { NotificationService } from 'src/notification/notification.service';
@@ -69,6 +71,7 @@ export class PeersService {
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly wgService: WgService,
+    private readonly xrayService: XrayService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -77,6 +80,7 @@ export class PeersService {
     // Прогреваем кеш IP адресов при старте
     await this.warmUpIpsCache();
     await this.syncWgWithDb();
+    await this.syncXrayWithDb();
     await this.backfillPausedAt();
     await this.backfillPausedReason();
   }
@@ -271,6 +275,36 @@ export class PeersService {
   }
 
   /**
+   * Синхронизация клиентов Xray (VLESS + Reality) с БД: собирает активных
+   * (не на паузе) пиров и отдаёт их XrayService. Зеркало syncWgWithDb.
+   * Ошибки не пробрасываем — сбой Reality не должен ронять старт бота или
+   * создание/удаление пира.
+   */
+  private async syncXrayWithDb(): Promise<void> {
+    try {
+      const activePeers = await this.db.query.peers.findMany({
+        where: eq(schema.peers.paused, false),
+        columns: { name: true, vlessUuid: true },
+      });
+
+      const clients: IXrayClient[] = activePeers
+        .filter(
+          (peer): peer is { name: string; vlessUuid: string } =>
+            peer.vlessUuid !== null,
+        )
+        .map((peer) => ({ name: peer.name, uuid: peer.vlessUuid }));
+
+      await this.xrayService.syncClients(clients);
+    } catch (error) {
+      this.logger.error(
+        `Ошибка синхронизации Xray с БД: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+  }
+
+  /**
    * Проверить, использовал ли пользователь пробный период (один раз на пользователя).
    * С кешированием — снижает задержки при навигации по меню.
    */
@@ -390,6 +424,7 @@ export class PeersService {
         await this.wgService.generateClientCredentials(usedIps);
 
       const expiresAt = durationDays ? calculateExpiresAt(durationDays) : null;
+      const vlessUuid = randomUUID();
 
       const peerData: TPeer = {
         telegramId: dto.telegramId,
@@ -398,6 +433,7 @@ export class PeersService {
         publicKey: credentials.publicKey,
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
+        vlessUuid,
         ip: credentials.ip,
         endpoint: `${this.wgService.host}:${this.wgService.port}`,
         paused: false,
@@ -417,9 +453,13 @@ export class PeersService {
       this.addIpToCache(credentials.ip);
 
       try {
-        const config = await this.wgService.createClientConfig(
+        // Регистрируем пир в WG (интерфейс ещё поднят; будет убрано в Фазе 4).
+        await this.wgService.createClientConfig(newPeer.name, credentials);
+
+        // Клиенту отдаём Reality-ссылку, а не WG-конфиг
+        const config = this.xrayService.buildClientLink(
           newPeer.name,
-          credentials,
+          vlessUuid,
         );
 
         // Инвалидируем кеши
@@ -430,6 +470,10 @@ export class PeersService {
             String(dto.telegramId),
           );
         }
+
+        // Добавляем нового клиента в Xray/Reality (не блокирует выдачу
+        // WG-конфига — ошибки проглатываются внутри syncXrayWithDb).
+        await this.syncXrayWithDb();
 
         return { peer: newPeer, config };
       } catch (error) {
@@ -508,6 +552,9 @@ export class PeersService {
           ip: peer.ip,
         });
       }
+
+      // Синхронизируем Reality (пауза/возобновление конфига)
+      await this.syncXrayWithDb();
     } catch (error) {
       this.logger.error(
         `Ошибка обновления WG Для ${peerName}, отмена изменений`,
@@ -546,6 +593,9 @@ export class PeersService {
         this.logger.error(`Не удалось удалить пир из WG: ${error}`);
       }
     }
+
+    // Убираем клиента из Xray/Reality
+    await this.syncXrayWithDb();
 
     return { message: `Конфиг ${peerName} успешно удален` };
   }
@@ -590,6 +640,9 @@ export class PeersService {
         this.logger.error(`Не удалось удалить пиры из WG: ${error}`);
       }
     }
+
+    // Убираем удалённые конфиги из Reality
+    await this.syncXrayWithDb();
   }
 
   /** Расширенная статистика для админ-панели. */
@@ -909,6 +962,9 @@ export class PeersService {
         .where(inArray(schema.peers.id, ids));
 
       await this.wgService.removePeers(publicKeys);
+
+      // Убираем истёкшие конфиги из Reality
+      await this.syncXrayWithDb();
 
       for (const peer of expiredPeers) {
         this.invalidatePeerCache(peer.name);
@@ -1465,12 +1521,25 @@ export class PeersService {
 
       // Создаём новый конфиг в WireGuard
       try {
-        const config = await this.wgService.createClientConfig(
+        // Регистрируем обновлённый пир в WG (интерфейс ещё поднят; уйдёт в Фазе 4).
+        await this.wgService.createClientConfig(peerName, credentials);
+
+        // vlessUuid при замене не меняется — Reality-ссылка остаётся прежней
+        if (!oldPeer.vlessUuid) {
+          throw new InternalServerErrorException(
+            `У конфига ${peerName} отсутствует vlessUuid`,
+          );
+        }
+        const config = this.xrayService.buildClientLink(
           peerName,
-          credentials,
+          oldPeer.vlessUuid,
         );
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
+
+        // Конфиг снова активен — синхронизируем Reality
+        await this.syncXrayWithDb();
+
         return { peer: updatedPeer, config };
       } catch (error) {
         // Если не удалось создать конфиг в WG, откатываем изменения
@@ -1514,13 +1583,14 @@ export class PeersService {
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    // Единый формат с созданием пира (включая AWG-блок обфускации)
-    return this.wgService.buildClientConfigString({
-      privateKey: peer.privateKey,
-      presharedKey: peer.presharedKey,
-      ip: peer.ip,
-      endpoint: peer.endpoint,
-    });
+    if (!peer.vlessUuid) {
+      throw new InternalServerErrorException(
+        `У конфига ${peerName} отсутствует vlessUuid`,
+      );
+    }
+
+    // Полный переход на VLESS + Reality: клиенту выдаётся vless://-ссылка.
+    return this.xrayService.buildClientLink(peer.name, peer.vlessUuid);
   }
 
   /**

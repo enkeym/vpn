@@ -4,6 +4,7 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { WgModule } from './wg/wg.module';
+import { XrayModule } from './xray/xray.module';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -29,6 +30,7 @@ import { InternalGuard } from './common/guards/internal.guard';
     NotificationModule,
     DatabaseModule,
     WgModule,
+    XrayModule,
     PeersModule,
     BotModule,
     PaymentModule,

@@ -76,6 +76,9 @@ export const peers = sqliteTable(
     publicKey: text('publicKey').notNull(),
     privateKey: text('privateKey').notNull(),
     presharedKey: text('presharedKey'),
+    // VLESS UUID для Xray (VLESS + Reality). Nullable — старые WG-пиры
+    // получают его бэкфиллом в PeersService.syncXrayWithDb при старте.
+    vlessUuid: text('vlessUuid').unique(),
     ip: text('ip').notNull().unique(),
     endpoint: text('endpoint').notNull(),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),

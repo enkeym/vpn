@@ -108,10 +108,15 @@ export class PeerCreateHandler {
         // Игнорируем
       }
 
-      const message = await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${peer.name}.conf`),
+      const qr = await this.peersService.generatePeerQrCode(peer.name);
+
+      const message = await ctx.replyWithPhoto(
+        new InputFile(qr, `${peer.name}_qr.png`),
         {
-          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
+          caption:
+            `${BotUi.configCreated(peer.name, peer.ip, peer.expiresAt)}\n\n` +
+            `\`${config}\`\n\n` +
+            `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.configDeliveredKeyboard(peer.name),
         },

@@ -472,11 +472,16 @@ export class InvoiceService {
     }
     this.anchorStore.delete(telegramId);
 
-    const message = await this.bot.api.sendDocument(
+    const qr = await this.peersService.generatePeerQrCode(peer.name);
+
+    const message = await this.bot.api.sendPhoto(
       telegramId,
-      new InputFile(Buffer.from(config), `${peer.name}.conf`),
+      new InputFile(qr, `${peer.name}_qr.png`),
       {
-        caption,
+        caption:
+          `${caption}\n\n` +
+          `\`${config}\`\n\n` +
+          `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
         parse_mode: 'Markdown',
         reply_markup: BotUi.configDeliveredKeyboard(peer.name),
       },

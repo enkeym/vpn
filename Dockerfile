@@ -63,7 +63,23 @@ RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git go-impl 
     make -C go-impl install DESTDIR=/awg/out
 
 # ============================================
-# Stage 5: Production image
+# Stage 5: Fetch Xray-core (VLESS + XTLS-Reality)
+# ============================================
+# Xray-core — чистый Go, статически слинкован, работает на Alpine без glibc.
+# Версия закреплена (ARG) — при необходимости бампнуть тегом из релизов
+# https://github.com/XTLS/Xray-core/releases. Reality + xtls-rprx-vision
+# доступны с v1.8.0, здесь — проверенный стабильный релиз.
+FROM base AS xray-build
+ARG XRAY_VERSION=v1.8.24
+WORKDIR /xray
+RUN apk add --no-cache curl unzip && \
+    curl -fsSL -o xray.zip \
+      "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" && \
+    unzip xray.zip -d /xray/out && \
+    chmod +x /xray/out/xray
+
+# ============================================
+# Stage 6: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -89,6 +105,12 @@ COPY --from=awg-build /awg/out/usr/bin/awg /usr/bin/awg
 COPY --from=awg-build /awg/out/usr/bin/awg-quick /usr/bin/awg-quick
 COPY --from=awg-build /awg/out/usr/bin/amneziawg-go /usr/bin/amneziawg-go
 
+# Бинарник Xray-core + geo-данные (VLESS + Reality)
+COPY --from=xray-build /xray/out/xray /usr/bin/xray
+COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
+COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat
+ENV XRAY_LOCATION_ASSET=/usr/share/xray
+
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
@@ -104,6 +126,7 @@ LABEL version="1.0"
 
 # Порты
 EXPOSE 443/udp
+EXPOSE 443/tcp
 EXPOSE 3000
 
 # Health check внутри контейнера
