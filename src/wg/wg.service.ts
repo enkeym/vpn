@@ -99,6 +99,7 @@ export class WgService implements OnModuleInit {
     await this.configMutex.runExclusive(async () => {
       await this.loadOrGenerateAwgParams();
       await this.generateServerConfig();
+      await this.syncListenPort();
       await this.getServerPublicKey();
       await this.startInterfaceUp();
       await this.syncSystem();
@@ -131,6 +132,30 @@ export class WgService implements OnModuleInit {
     await this.writeServerConfig(server);
 
     this.logger.log(`Серверная конфигурация создана: ${this.filePath}`);
+  }
+
+  /**
+   * generateServerConfig() пишет ListenPort только при создании нового файла,
+   * поэтому смена WG_PORT в .env не влияет на уже существующий wg0.conf —
+   * приводим ListenPort в файле в соответствие с текущим env перед подъёмом интерфейса.
+   */
+  private async syncListenPort(): Promise<void> {
+    if (!existsSync(this.filePath)) return;
+
+    const raw = await readFile(this.filePath, 'utf-8');
+    const match = raw.match(/^ListenPort\s*=\s*(\d+)/m);
+    const currentPort = match ? Number(match[1]) : null;
+
+    if (currentPort === this.port) return;
+
+    this.logger.warn(
+      `ListenPort в wg0.conf (${currentPort}) не совпадает с WG_PORT (${this.port}) — обновляю`,
+    );
+    const patched = raw.replace(
+      /^ListenPort\s*=\s*\d+/m,
+      `ListenPort = ${this.port}`,
+    );
+    await writeFile(this.filePath, patched);
   }
 
   /**
