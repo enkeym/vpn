@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  type OnApplicationBootstrap,
 } from '@nestjs/common';
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
@@ -61,7 +62,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 @Injectable()
-export class PeersService {
+export class PeersService implements OnApplicationBootstrap {
   private readonly logger = new Logger(PeersService.name);
   private readonly createPeerMutex = new Mutex();
 
@@ -79,7 +80,15 @@ export class PeersService {
     private readonly cacheService: CacheService,
   ) {}
 
-  async onModuleInit() {
+  /**
+   * onApplicationBootstrap (а не onModuleInit) — гарантирует, что onModuleInit
+   * у WgService/XrayService/HysteriaService уже отработал и их процессы
+   * инициализированы. Иначе была гонка: syncXrayWithDb/syncHysteriaWithDb
+   * вызывались раньше, чем сервис успевал загрузить параметры, syncClients
+   * молча выходил по guard'у (`!this.wsParams`), и xray.json/hysteria.yaml
+   * оставались с пустым списком клиентов до ручного пересоздания конфига.
+   */
+  async onApplicationBootstrap() {
     // Прогреваем кеш IP адресов при старте
     await this.warmUpIpsCache();
     await this.syncWgWithDb();
