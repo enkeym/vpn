@@ -225,7 +225,9 @@ export class WgService implements OnModuleInit {
       .padStart(2, '0');
     const quicVersions = ['00000001', '6b3343cf'];
     const quicVersion = quicVersions[randomInt(0, quicVersions.length)];
-    const i1BodyLen = randomInt(1150, 1200);
+    // <r N> ограничен документацией AmneziaWG значением 1000 — превышение
+    // приводило к "Unknown section" при импорте в мобильном приложении.
+    const i1BodyLen = randomInt(900, 1000);
 
     return {
       I1: `<b 0x${quicFirstByte}${quicVersion}><r ${i1BodyLen}><t>`,
