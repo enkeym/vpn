@@ -25,6 +25,14 @@ interface ICredentialsProps {
   ip: string;
 }
 
+export interface IClientConfigProps {
+  privateKey: string;
+  presharedKey: string | null;
+  ip: string;
+  /** Endpoint из БД пира; по умолчанию — текущий host:port сервера */
+  endpoint?: string;
+}
+
 export interface IDbPeer {
   name: string;
   publicKey: string;
@@ -425,7 +433,6 @@ export class WgService implements OnModuleInit {
       this.invalidateConfigCache();
 
       const server = await this.getConfig();
-      const serverPublicKey = await this.getServerPublicKey();
 
       server.addPeer({
         publicKey: credentials.publicKey,
@@ -441,21 +448,36 @@ export class WgService implements OnModuleInit {
 
       await this.syncSystem();
 
-      return `[Interface]
-PrivateKey = ${credentials.privateKey}
-Address = ${credentials.ip}/32
+      return this.buildClientConfigString({
+        privateKey: credentials.privateKey,
+        presharedKey: credentials.presharedKey,
+        ip: credentials.ip,
+      });
+    });
+  }
+
+  /**
+   * Собирает строку клиентского конфига AmneziaWG.
+   * Единый формат для создания пира, QR-кода и повторной выдачи файла —
+   * AWG-блок обфускации обязан присутствовать везде, иначе handshake не пройдёт.
+   */
+  async buildClientConfigString(props: IClientConfigProps): Promise<string> {
+    const serverPublicKey = await this.getServerPublicKey();
+
+    return `[Interface]
+PrivateKey = ${props.privateKey}
+Address = ${props.ip}/32
 DNS = ${this.clientDns}
 MTU = 1420
 ${this.buildAwgConfigBlock(this.awgParams)}
 
 [Peer]
 PublicKey = ${serverPublicKey}
-PresharedKey = ${credentials.presharedKey}
-Endpoint = ${this.host}:${this.port}
+PresharedKey = ${props.presharedKey}
+Endpoint = ${props.endpoint ?? `${this.host}:${this.port}`}
 AllowedIPs = ${this.allowedIps}
 PersistentKeepalive = 25
 `;
-    });
   }
 
   async removePeer(publicKey: string) {

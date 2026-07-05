@@ -1496,27 +1496,18 @@ export class PeersService {
   }
 
   /**
-   * Генерирует строку конфига WireGuard для существующего пира
+   * Генерирует строку конфига AmneziaWG для существующего пира
    */
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    // Получаем публичный ключ сервера через WgService (с кешированием)
-    const serverPublicKey = await this.wgService.getServerPublicKey();
-
-    return `[Interface]
-PrivateKey = ${peer.privateKey}
-Address = ${peer.ip}/32
-DNS = 1.1.1.1, 8.8.8.8
-MTU = 1420
-
-[Peer]
-PublicKey = ${serverPublicKey}
-PresharedKey = ${peer.presharedKey}
-Endpoint = ${peer.endpoint}
-AllowedIPs = ${process.env.WG_ALLOWED_IPS || '0.0.0.0/0'}
-PersistentKeepalive = 25
-`;
+    // Единый формат с созданием пира (включая AWG-блок обфускации)
+    return this.wgService.buildClientConfigString({
+      privateKey: peer.privateKey,
+      presharedKey: peer.presharedKey,
+      ip: peer.ip,
+      endpoint: peer.endpoint,
+    });
   }
 
   /**
