@@ -12,7 +12,6 @@ services:
 
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
     devices:
       - /dev/net/tun:/dev/net/tun
     sysctls:
@@ -43,7 +42,6 @@ services:
     volumes:
       - ./configs:/app/configs
       - ./data:/app/data
-      - /lib/modules:/lib/modules:ro
 
     ports:
       - '${WG_PORT:-51820}:51820/udp'

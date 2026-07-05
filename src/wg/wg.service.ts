@@ -9,7 +9,8 @@ import { WgConfig } from 'wireguard-tools';
 import * as path from 'path';
 import * as os from 'os';
 import { existsSync } from 'fs';
-import { writeFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink } from 'fs/promises';
+import { randomInt } from 'crypto';
 import { getNextFreeIp, parseWgConfig } from './wg.utils';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -43,6 +44,18 @@ interface ParsedConfigCache {
   timestamp: number;
 }
 
+interface IAwgParams {
+  Jc: number;
+  Jmin: number;
+  Jmax: number;
+  S1: number;
+  S2: number;
+  H1: number;
+  H2: number;
+  H3: number;
+  H4: number;
+}
+
 @Injectable()
 export class WgService implements OnModuleInit {
   private readonly logger = new Logger(WgService.name);
@@ -62,10 +75,16 @@ export class WgService implements OnModuleInit {
   private configCache: ParsedConfigCache | null = null;
   private readonly CONFIG_CACHE_TTL = 30 * 1000; // 30 секунд
 
+  // Параметры обфускации AmneziaWG: одинаковы на сервере и во всех клиентских
+  // конфигах. Jc/Jmin/Jmax/S1/S2 — фиксированные безопасные значения,
+  // H1-H4 генерируются один раз и хранятся в wg0.conf (переживают рестарт).
+  private awgParams!: IAwgParams;
+
   async onModuleInit() {
     if (!this.host) throw new Error(`WG_HOST в .env не задан`);
 
     await this.configMutex.runExclusive(async () => {
+      await this.loadOrGenerateAwgParams();
       await this.generateServerConfig();
       await this.getServerPublicKey();
       await this.startInterfaceUp();
@@ -96,7 +115,7 @@ export class WgService implements OnModuleInit {
     });
 
     await server.generateKeys();
-    await server.writeToFile();
+    await this.writeServerConfig(server);
 
     this.logger.log(`Серверная конфигурация создана: ${this.filePath}`);
   }
@@ -127,6 +146,119 @@ export class WgService implements OnModuleInit {
    */
   private invalidateConfigCache(): void {
     this.configCache = null;
+  }
+
+  private buildAwgConfigBlock(params: IAwgParams): string {
+    return [
+      `Jc = ${params.Jc}`,
+      `Jmin = ${params.Jmin}`,
+      `Jmax = ${params.Jmax}`,
+      `S1 = ${params.S1}`,
+      `S2 = ${params.S2}`,
+      `H1 = ${params.H1}`,
+      `H2 = ${params.H2}`,
+      `H3 = ${params.H3}`,
+      `H4 = ${params.H4}`,
+    ].join('\n');
+  }
+
+  private generateAwgParams(): IAwgParams {
+    const usedHeaders = new Set<number>();
+    const nextHeader = () => {
+      let value: number;
+      do {
+        value = randomInt(5, 2 ** 31 - 1);
+      } while (usedHeaders.has(value));
+      usedHeaders.add(value);
+      return value;
+    };
+
+    return {
+      Jc: 4,
+      Jmin: 40,
+      Jmax: 70,
+      S1: 50,
+      S2: 100,
+      H1: nextHeader(),
+      H2: nextHeader(),
+      H3: nextHeader(),
+      H4: nextHeader(),
+    };
+  }
+
+  private parseAwgParamsFromFile(raw: string): IAwgParams | null {
+    const get = (key: string) => {
+      const match = raw.match(new RegExp(`^${key}\\s*=\\s*(\\d+)`, 'm'));
+      return match ? Number(match[1]) : undefined;
+    };
+
+    const params = {
+      Jc: get('Jc'),
+      Jmin: get('Jmin'),
+      Jmax: get('Jmax'),
+      S1: get('S1'),
+      S2: get('S2'),
+      H1: get('H1'),
+      H2: get('H2'),
+      H3: get('H3'),
+      H4: get('H4'),
+    };
+
+    if (Object.values(params).some((value) => value === undefined)) {
+      return null;
+    }
+
+    return params as IAwgParams;
+  }
+
+  /**
+   * H1-H4 должны быть одинаковыми на сервере и у всех клиентов, поэтому
+   * генерируются один раз при первом старте и затем читаются из wg0.conf.
+   * Если конфиг уже существует (миграция со старого WireGuard-конфига без
+   * этих полей), параметры генерируются и дописываются в него на месте —
+   * список пиров при этом не трогается.
+   */
+  private async loadOrGenerateAwgParams(): Promise<void> {
+    if (!existsSync(this.filePath)) {
+      this.awgParams = this.generateAwgParams();
+      return;
+    }
+
+    const raw = await readFile(this.filePath, 'utf-8');
+    const parsed = this.parseAwgParamsFromFile(raw);
+
+    if (parsed) {
+      this.awgParams = parsed;
+      return;
+    }
+
+    this.logger.warn(
+      'В wg0.conf отсутствуют параметры обфускации AmneziaWG — генерирую и дописываю (миграция со старого конфига). Все клиенты должны заново скачать конфиг.',
+    );
+    this.awgParams = this.generateAwgParams();
+
+    const patched = raw.replace(
+      '[Interface]',
+      `[Interface]\n${this.buildAwgConfigBlock(this.awgParams)}`,
+    );
+    await writeFile(this.filePath, patched);
+  }
+
+  /**
+   * wireguard-tools при каждом writeToFile() перегенерирует файл из объекта
+   * WgConfig и не знает о полях AmneziaWG, поэтому они всегда дописываются
+   * повторно после стандартной записи.
+   */
+  private async writeServerConfig(server: WgConfig): Promise<void> {
+    await server.writeToFile();
+
+    const raw = await readFile(this.filePath, 'utf-8');
+    const patched = raw.replace(
+      '[Interface]',
+      `[Interface]\n${this.buildAwgConfigBlock(this.awgParams)}`,
+    );
+
+    await writeFile(this.filePath, patched);
   }
 
   public async getServerPublicKey(): Promise<string> {
@@ -191,10 +323,10 @@ export class WgService implements OnModuleInit {
 
     try {
       const { stdout: stripped } = await execAsync(
-        `wg-quick strip ${this.filePath}`,
+        `awg-quick strip ${this.filePath}`,
       );
       await writeFile(tmpConfigPath, stripped);
-      await execAsync(`sudo wg syncconf wg0 ${tmpConfigPath}`);
+      await execAsync(`sudo awg syncconf wg0 ${tmpConfigPath}`);
       this.logger.log('Интерфейс wg0 синхронизирован');
     } catch (error) {
       this.logger.error(
@@ -212,11 +344,11 @@ export class WgService implements OnModuleInit {
     }
 
     try {
-      await execAsync(`sudo wg-quick up ${this.filePath}`);
+      await execAsync(`sudo awg-quick up ${this.filePath}`);
       this.logger.log('Интерфейс wg0 успешно поднят');
     } catch (error) {
       try {
-        await execAsync(`sudo wg-quick down ${this.filePath}`);
+        await execAsync(`sudo awg-quick down ${this.filePath}`);
       } catch {}
 
       throw new Error(
@@ -227,7 +359,7 @@ export class WgService implements OnModuleInit {
 
   async getPeerRuntimeStats(): Promise<Map<string, IWgPeerRuntimeStats>> {
     try {
-      const { stdout } = await execAsync('wg show wg0 dump');
+      const { stdout } = await execAsync('awg show wg0 dump');
       const lines = stdout.trim().split('\n').filter(Boolean);
       const stats = new Map<string, IWgPeerRuntimeStats>();
 
@@ -301,7 +433,7 @@ export class WgService implements OnModuleInit {
         allowedIps: [`${credentials.ip}/32`],
       });
 
-      await server.writeToFile();
+      await this.writeServerConfig(server);
       this.logger.log(`Клиент ${name} добавлен в конфиг: ${credentials.ip}`);
 
       // Инвалидируем кеш после записи
@@ -314,6 +446,7 @@ PrivateKey = ${credentials.privateKey}
 Address = ${credentials.ip}/32
 DNS = ${this.clientDns}
 MTU = 1420
+${this.buildAwgConfigBlock(this.awgParams)}
 
 [Peer]
 PublicKey = ${serverPublicKey}
@@ -347,7 +480,7 @@ PersistentKeepalive = 25
           (peer) => !peer.publicKey || !keysSet.has(peer.publicKey),
         );
 
-        await server.writeToFile();
+        await this.writeServerConfig(server);
         this.invalidateConfigCache();
         await this.syncSystem();
         this.logger.log(`Удалено пиров из WG: ${publicKeys.length}`);
@@ -391,7 +524,7 @@ PersistentKeepalive = 25
       });
     }
 
-    await server.writeToFile();
+    await this.writeServerConfig(server);
 
     this.invalidateConfigCache();
 

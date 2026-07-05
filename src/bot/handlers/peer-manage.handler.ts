@@ -246,7 +246,7 @@ export class PeerManageHandler {
       const message = await ctx.replyWithPhoto(
         new InputFile(qrBuffer, `${peerName}_qr.png`),
         {
-          caption: `📷 *QR-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении WireGuard_`,
+          caption: `📷 *QR-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении AmneziaWG_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
@@ -273,7 +273,7 @@ export class PeerManageHandler {
       const message = await ctx.replyWithDocument(
         new InputFile(Buffer.from(config), `${peer.name}.conf`),
         {
-          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение WireGuard_`,
+          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение AmneziaWG_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },

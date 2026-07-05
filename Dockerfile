@@ -46,13 +46,33 @@ RUN pnpm run build
 RUN CI=true pnpm prune --prod
 
 # ============================================
-# Stage 4: Production image
+# Stage 4: Build AmneziaWG (awg, awg-quick, amneziawg-go)
+# ============================================
+# Кернел-модуля AmneziaWG в Alpine нет, поэтому собираем userspace-реализацию
+# (amneziawg-go) — она не требует модуля ядра хоста, только /dev/net/tun.
+FROM base AS awg-build
+WORKDIR /awg
+RUN apk add --no-cache build-base linux-headers git go
+
+RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git tools && \
+    make -C tools/src WITH_WGQUICK=yes && \
+    make -C tools/src install DESTDIR=/awg/out WITH_WGQUICK=yes
+
+RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git go-impl && \
+    make -C go-impl && \
+    make -C go-impl install DESTDIR=/awg/out
+
+# ============================================
+# Stage 5: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
 
 # Установка runtime-зависимостей
 # --no-cache уменьшает размер образа
+# wireguard-tools оставлен только ради `wg genkey/pubkey/genpsk` — их использует
+# npm-пакет wireguard-tools и WgService.getServerPublicKey(); поднятие и
+# управление интерфейсом идёт через awg/awg-quick (см. ниже).
 RUN apk add --no-cache \
     wireguard-tools \
     iptables \
@@ -63,6 +83,11 @@ RUN apk add --no-cache \
     wget \
     # Для отладки (опционально, можно убрать)
     curl
+
+# Бинарники AmneziaWG
+COPY --from=awg-build /awg/out/usr/bin/awg /usr/bin/awg
+COPY --from=awg-build /awg/out/usr/bin/awg-quick /usr/bin/awg-quick
+COPY --from=awg-build /awg/out/usr/bin/amneziawg-go /usr/bin/amneziawg-go
 
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
