@@ -49,10 +49,11 @@ services:
       - '${XRAY_PORT:-443}:${XRAY_PORT:-443}/tcp'
       # Hysteria2 (QUIC/UDP) — резервный протокол против DPI, отдельный порт
       - '${HYSTERIA_PORT:-8443}:${HYSTERIA_PORT:-8443}/udp'
-      # Подписка sing-box (urltest-группа CDN+прямой Hysteria2) — HTTP на
-      # внутреннем 3000, наружу через один из HTTPS-портов Cloudflare для
-      # того же домена (доп. DNS-запись не нужна, см. SubscriptionModule).
-      - '${SUB_PORT:-2053}:3000/tcp'
+      # Подписка sing-box (urltest-группа CDN+прямой Hysteria2) — HTTPS на
+      # внутреннем 3443 (сертификат Cloudflare Origin CA, см. main.ts), наружу
+      # через один из HTTPS-портов Cloudflare для того же домена (доп.
+      # DNS-запись не нужна, см. SubscriptionModule).
+      - '${SUB_PORT:-2053}:3443/tcp'
       # Опционально: health check порт (если нужен внешний доступ)
       # - '3000:3000'
 

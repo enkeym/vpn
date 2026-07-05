@@ -54,7 +54,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   );
 
   public readonly port = Number(process.env.HYSTERIA_PORT || 8443);
-  private readonly host = process.env.WG_HOST;
+  private readonly host = process.env.HOST;
   private readonly masqueradeUrl =
     process.env.HYSTERIA_MASQUERADE_URL || 'https://www.wikipedia.org';
 
@@ -70,7 +70,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private initPromise: Promise<void> = Promise.resolve();
 
   async onModuleInit(): Promise<void> {
-    if (!this.host) throw new Error('WG_HOST в .env не задан');
+    if (!this.host) throw new Error('HOST в .env не задан');
 
     this.initPromise = this.mutex
       .runExclusive(async () => {

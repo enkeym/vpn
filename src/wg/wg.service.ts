@@ -79,7 +79,7 @@ export class WgService implements OnModuleInit {
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
 
   public readonly port = Number(process.env.WG_PORT || 443);
-  public readonly host = process.env.WG_HOST;
+  public readonly host = process.env.HOST;
 
   private _serverPublicKeyCache: string | null = null;
   private readonly configMutex = new Mutex();
@@ -94,7 +94,7 @@ export class WgService implements OnModuleInit {
   private awgParams!: IAwgParams;
 
   async onModuleInit() {
-    if (!this.host) throw new Error(`WG_HOST в .env не задан`);
+    if (!this.host) throw new Error(`HOST в .env не задан`);
 
     await this.configMutex.runExclusive(async () => {
       await this.loadOrGenerateAwgParams();
