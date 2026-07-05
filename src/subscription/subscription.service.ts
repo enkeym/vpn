@@ -120,60 +120,12 @@ export class SubscriptionService {
           default: 'auto',
           interrupt_exist_connections: true,
         },
-        // Прямой выход в интернет с реального IP клиента (мимо VPS).
-        // Прямой выход резолвит назначение сам (через DNS клиента/Hiddify) —
-        // без domain_strategy, иначе прямой путь к RU-сайтам не резолвится.
-        { type: 'direct', tag: 'direct-out' },
       ],
       route: {
-        rules: [
-          {
-            // Российский трафик уходит напрямую, мимо туннеля: зарубежный
-            // exit-IP VPS ловит SmartCaptcha Яндекса и блокировки на RU-сайтах.
-            // domain_suffix работает на любой версии sing-box и покрывает
-            // ключевые домены, даже если rule_set ниже не успел скачаться.
-            domain_suffix: [
-              'yandex.ru',
-              'yandex.net',
-              'yandex.com',
-              'ya.ru',
-              'yastatic.net',
-              'yandex.st',
-              'mail.ru',
-              'dzen.ru',
-              'kinopoisk.ru',
-              'vk.com',
-              'vk.ru',
-              'ok.ru',
-              'gosuslugi.ru',
-              'avito.ru',
-              'ozon.ru',
-              'wildberries.ru',
-            ],
-            outbound: 'direct-out',
-          },
-          // Полное покрытие «всего российского трафика» — по гео-спискам
-          // (все домены категории RU + российские IP-диапазоны).
-          { rule_set: ['geosite-ru', 'geoip-ru'], outbound: 'direct-out' },
-        ],
-        rule_set: [
-          {
-            type: 'remote',
-            tag: 'geosite-ru',
-            format: 'binary',
-            url: 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs',
-            // Скачиваем гео-списки через сам туннель — github в RU нестабилен.
-            download_detour: 'select',
-          },
-          {
-            type: 'remote',
-            tag: 'geoip-ru',
-            format: 'binary',
-            url: 'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs',
-            download_detour: 'select',
-          },
-        ],
-        // Всё нероссийское — как раньше, через выбранный канал (auto/WS/Reality/Hysteria).
+        // RU-split через client-side "direct" outbound откатили: на практике
+        // прямой выход из TUN не пробивался наружу на Android (Hiddify) —
+        // вис весь трафик, попавший под RU-правило, а не только Яндекс.
+        // Весь трафик, включая RU, снова идёт через select (как было раньше).
         final: 'select',
         auto_detect_interface: true,
       },
