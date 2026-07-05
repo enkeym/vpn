@@ -189,10 +189,12 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       '  type: userpass',
     ];
 
+    // Hysteria2 фатально падает на старте, если auth.userpass пуст —
+    // подставляем недостижимый плейсхолдер, пока нет реальных клиентов.
+    lines.push('  userpass:');
     if (this.clients.length === 0) {
-      lines.push('  userpass: {}');
+      lines.push(`    _placeholder: ${randomBytes(16).toString('hex')}`);
     } else {
-      lines.push('  userpass:');
       for (const client of this.clients) {
         lines.push(`    ${client.name}: ${client.password}`);
       }
