@@ -35,7 +35,6 @@ export interface IXrayClient {
 
 interface IXrayInboundClient {
   id: string;
-  flow: string;
 }
 
 /**
@@ -146,7 +145,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * vless://-ссылка для клиента (v2rayNG / Hiddify / NekoBox / sing-box).
-   * flow=xtls-rprx-vision + fp=chrome — актуальный набор против DPI ТСПУ.
+   * Без flow (xtls-rprx-vision убран) — на sing-box-ядре (Hiddify) Vision
+   * приводил к нестабильным обрывам соединения; обычный VLESS+Reality
+   * камуфляж хендшейка сохраняет.
    */
   buildClientLink(name: string, uuid: string): string {
     if (!this.params) {
@@ -164,7 +165,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       fp: 'chrome',
       sni: p.sni,
       sid: p.shortId,
-      flow: 'xtls-rprx-vision',
     });
 
     return `vless://${uuid}@${p.host}:${p.port}?${query.toString()}#${encodeURIComponent(
@@ -217,7 +217,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private buildServerConfig(): Record<string, unknown> {
     const inboundClients: IXrayInboundClient[] = this.clients.map((client) => ({
       id: client.uuid,
-      flow: 'xtls-rprx-vision',
     }));
 
     return {
