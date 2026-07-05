@@ -9,8 +9,11 @@ import * as path from 'path';
 import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { randomBytes } from 'crypto';
-import { spawn, ChildProcess } from 'child_process';
+import { exec, spawn, ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import { Mutex } from 'async-mutex';
+
+const execAsync = promisify(exec);
 
 /** Клиент VLESS: имя пира и его UUID (id из БД). */
 export interface IXrayClient {
@@ -31,13 +34,30 @@ interface IXrayWsParams {
 }
 
 /**
- * Управляет процессом Xray-core (VLESS + WebSocket + TLS за Cloudflare CDN).
- * Клиент подключается к домену на Cloudflare (проксируемая A-запись, оранжевое
- * облако), Cloudflare терминирует внешний TLS и поднимает новое TLS-соединение
- * до этого сервера, аутентифицируясь сертификатом Cloudflare Origin CA —
- * поэтому блокировка по IP этого VPS тут не работает: клиент никогда не видит
- * реальный IP сервера, только IP Cloudflare. Пришёл на замену VLESS+Reality,
- * который на некоторых сетях клиентов резался DPI по IP сервера напрямую.
+ * Постоянные параметры Reality-инбаунда (прямой TCP, без CDN). Приватный
+ * ключ x25519 живёт только на сервере, публичный (pbk) и shortId раздаются
+ * клиентам в vless://-ссылке. Хранятся в configs/xray-reality.json.
+ */
+interface IXrayRealityParams {
+  privateKey: string;
+  publicKey: string;
+  shortId: string;
+}
+
+/**
+ * Управляет процессом Xray-core с двумя независимыми путями обхода блокировок:
+ *
+ * 1. VLESS+WS+TLS за Cloudflare CDN (nginx перед Xray терминирует TLS и
+ *    проксирует на localhost — сам Xray смотрит только внутрь контейнера).
+ *    Клиент никогда не видит реальный IP сервера — не режется блокировкой
+ *    по IP, но зависит от доступности самого Cloudflare у клиента.
+ * 2. VLESS+Reality — прямой TCP на реальный IP сервера, без CDN и без WS.
+ *    Не защищён от блокировки по IP, зато не зависит от Cloudflare и не
+ *    требует HTTP/WS-хендшейка — работает там, где режут именно CDN/WS.
+ *
+ * Оба канала входят в одну sing-box-подписку (см. SubscriptionService) вместе
+ * с прямой Hysteria2 — три разных механизма обхода, у каждого свой профиль
+ * блокировки, клиент сам держит активным то, что реально работает на сети.
  */
 @Injectable()
 export class XrayService implements OnModuleInit, OnModuleDestroy {
@@ -47,22 +67,30 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     process.cwd(),
     '/configs/xray-ws.json',
   );
+  private readonly realityParamsPath = path.join(
+    process.cwd(),
+    '/configs/xray-reality.json',
+  );
   private readonly configPath = path.join(process.cwd(), '/configs/xray.json');
-  private readonly certPath = path.join(
-    process.cwd(),
-    '/configs/cloudflare-cert.pem',
-  );
-  private readonly keyPath = path.join(
-    process.cwd(),
-    '/configs/cloudflare-key.pem',
-  );
 
+  /** Внешний порт CDN-канала — теперь его слушает nginx, а не сам Xray. */
   public readonly port = Number(process.env.XRAY_PORT || 443);
+  /** Внутренний порт, на который nginx проксирует WS (никогда не публикуется наружу). */
+  private readonly internalWsPort = Number(
+    process.env.XRAY_INTERNAL_WS_PORT || 8880,
+  );
+  public readonly realityPort = Number(process.env.REALITY_PORT || 8443);
   private readonly domain = process.env.XRAY_DOMAIN;
+  private readonly host = process.env.HOST;
+  private readonly realityDest =
+    process.env.XRAY_REALITY_DEST || 'www.wikipedia.org:443';
+  private readonly realitySni =
+    process.env.XRAY_REALITY_SNI || 'www.wikipedia.org';
 
   private readonly mutex = new Mutex();
 
   private wsParams!: IXrayWsParams;
+  private realityParams!: IXrayRealityParams;
   private clients: IXrayClient[] = [];
 
   private currentProc: ChildProcess | null = null;
@@ -78,17 +106,14 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     if (!this.domain) throw new Error('XRAY_DOMAIN в .env не задан');
-    if (!existsSync(this.certPath) || !existsSync(this.keyPath)) {
-      throw new Error(
-        `Не найден сертификат Cloudflare Origin CA: ${this.certPath} / ${this.keyPath}`,
-      );
-    }
+    if (!this.host) throw new Error('HOST в .env не задан');
 
     // Ошибка инициализации Xray не должна ронять весь бот (AWG и остальное
     // продолжают работать) — логируем и продолжаем.
     this.initPromise = this.mutex
       .runExclusive(async () => {
         await this.loadOrGenerateWsParams();
+        await this.loadOrGenerateRealityParams();
         await this.writeConfig();
         this.startProcess();
       })
@@ -130,9 +155,18 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Xray синхронизирован: ${clients.length} клиент(ов)`);
   }
 
-  /** Публичные параметры для сборки outbound'а в sing-box-подписке. */
-  getPublicParams(): { domain: string; port: number; wsPath: string } {
-    if (!this.wsParams) {
+  /** Публичные параметры для сборки outbound'ов в sing-box-подписке. */
+  getPublicParams(): {
+    domain: string;
+    port: number;
+    wsPath: string;
+    host: string;
+    realityPort: number;
+    realityPublicKey: string;
+    realityShortId: string;
+    realitySni: string;
+  } {
+    if (!this.wsParams || !this.realityParams) {
       throw new InternalServerErrorException(
         'Xray не инициализирован — невозможно получить параметры',
       );
@@ -142,12 +176,17 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       domain: this.domain as string,
       port: this.port,
       wsPath: this.wsParams.wsPath,
+      host: this.host as string,
+      realityPort: this.realityPort,
+      realityPublicKey: this.realityParams.publicKey,
+      realityShortId: this.realityParams.shortId,
+      realitySni: this.realitySni,
     };
   }
 
   /**
-   * vless://-ссылка для клиента через Cloudflare CDN (WS+TLS). Реальный
-   * сертификат домена, поэтому insecure не нужен.
+   * vless://-ссылка для клиента через Cloudflare CDN (WS+TLS). TLS терминирует
+   * nginx настоящим сертификатом домена, поэтому insecure не нужен.
    */
   buildClientLink(name: string, uuid: string): string {
     if (!this.wsParams) {
@@ -170,6 +209,33 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     )}`;
   }
 
+  /**
+   * vless://-ссылка для клиента напрямую на IP сервера (Reality, без CDN).
+   * Работает там, где режут сам Cloudflare/WS, но не защищена от блокировки
+   * по IP — дополняет, а не заменяет CDN-канал.
+   */
+  buildRealityClientLink(name: string, uuid: string): string {
+    if (!this.realityParams) {
+      throw new InternalServerErrorException(
+        'Xray не инициализирован — невозможно собрать reality-ссылку',
+      );
+    }
+
+    const query = new URLSearchParams({
+      type: 'tcp',
+      security: 'reality',
+      encryption: 'none',
+      pbk: this.realityParams.publicKey,
+      fp: 'random',
+      sni: this.realitySni,
+      sid: this.realityParams.shortId,
+    });
+
+    return `vless://${uuid}@${this.host}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
+      name,
+    )}`;
+  }
+
   private async loadOrGenerateWsParams(): Promise<void> {
     if (existsSync(this.wsParamsPath)) {
       const raw = await readFile(this.wsParamsPath, 'utf-8');
@@ -184,6 +250,47 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     this.wsParams = { wsPath: `/${randomBytes(12).toString('hex')}` };
     await writeFile(this.wsParamsPath, JSON.stringify(this.wsParams, null, 2));
     this.logger.log('Сгенерирован новый WS-путь для Xray');
+  }
+
+  private async loadOrGenerateRealityParams(): Promise<void> {
+    if (existsSync(this.realityParamsPath)) {
+      const raw = await readFile(this.realityParamsPath, 'utf-8');
+      const parsed = JSON.parse(raw) as Partial<IXrayRealityParams>;
+
+      if (parsed.privateKey && parsed.publicKey && parsed.shortId) {
+        this.realityParams = {
+          privateKey: parsed.privateKey,
+          publicKey: parsed.publicKey,
+          shortId: parsed.shortId,
+        };
+        return;
+      }
+    }
+
+    this.realityParams = await this.generateRealityParams();
+    await writeFile(
+      this.realityParamsPath,
+      JSON.stringify(this.realityParams, null, 2),
+    );
+    this.logger.log('Сгенерированы новые Reality-ключи (x25519 + shortId)');
+  }
+
+  private async generateRealityParams(): Promise<IXrayRealityParams> {
+    const { stdout } = await execAsync('xray x25519');
+    const privateKey = stdout.match(/Private key:\s*(\S+)/i)?.[1];
+    const publicKey = stdout.match(/Public key:\s*(\S+)/i)?.[1];
+
+    if (!privateKey || !publicKey) {
+      throw new InternalServerErrorException(
+        `Не удалось разобрать вывод xray x25519: ${stdout}`,
+      );
+    }
+
+    return {
+      privateKey,
+      publicKey,
+      shortId: randomBytes(8).toString('hex'),
+    };
   }
 
   private buildServerConfig(): Record<string, unknown> {
@@ -201,8 +308,12 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       },
       inbounds: [
         {
-          listen: '0.0.0.0',
-          port: this.port,
+          tag: 'ws-cdn',
+          // Только localhost — снаружи этот порт слушает nginx, он же
+          // терминирует TLS настоящим сертификатом Cloudflare и проксирует
+          // сюда обычным HTTP/WS. Xray сам TLS для этого инбаунда не делает.
+          listen: '127.0.0.1',
+          port: this.internalWsPort,
           protocol: 'vless',
           settings: {
             clients: inboundClients,
@@ -210,18 +321,32 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           },
           streamSettings: {
             network: 'ws',
-            security: 'tls',
-            tlsSettings: {
-              certificates: [
-                { certificateFile: this.certPath, keyFile: this.keyPath },
-              ],
-            },
             wsSettings: {
               path: this.wsParams.wsPath,
             },
           },
-          // sniffing извлекает реальный домен из TLS/HTTP — без него запросы,
-          // где клиент уже зарезолвил имя в IPv6, уходили бы на мёртвый IPv6.
+        },
+        {
+          tag: 'reality-direct',
+          listen: '0.0.0.0',
+          port: this.realityPort,
+          protocol: 'vless',
+          settings: {
+            clients: inboundClients,
+            decryption: 'none',
+          },
+          streamSettings: {
+            network: 'tcp',
+            security: 'reality',
+            realitySettings: {
+              show: false,
+              dest: this.realityDest,
+              xver: 0,
+              serverNames: [this.realitySni],
+              privateKey: this.realityParams.privateKey,
+              shortIds: ['', this.realityParams.shortId],
+            },
+          },
           sniffing: {
             enabled: true,
             destOverride: ['http', 'tls', 'quic'],
@@ -275,7 +400,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       }, 2000);
     });
 
-    this.logger.log(`xray запущен (pid=${proc.pid}), порт ${this.port}/tcp`);
+    this.logger.log(
+      `xray запущен (pid=${proc.pid}): ws-cdn на localhost:${this.internalWsPort} (за nginx:${this.port}), reality-direct на ${this.realityPort}/tcp`,
+    );
   }
 
   private async stopProcess(): Promise<void> {
