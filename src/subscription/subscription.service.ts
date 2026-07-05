@@ -39,6 +39,9 @@ export class SubscriptionService {
         {
           type: 'vless',
           tag: 'cdn-wifi',
+          // Резолвим назначение только в IPv4: у VPS нет исходящего IPv6,
+          // домены с AAAA-записью иначе отваливаются (dial tcp6 unreachable).
+          domain_strategy: 'ipv4_only',
           server: xray.domain,
           server_port: xray.port,
           uuid: peer.vlessUuid,
@@ -58,6 +61,7 @@ export class SubscriptionService {
         {
           type: 'vless',
           tag: 'reality-direct',
+          domain_strategy: 'ipv4_only',
           server: xray.host,
           server_port: xray.realityPort,
           uuid: peer.vlessUuid,
@@ -75,6 +79,7 @@ export class SubscriptionService {
         {
           type: 'hysteria2',
           tag: 'direct-mobile',
+          domain_strategy: 'ipv4_only',
           server: hysteria.host,
           server_port: hysteria.port,
           // Hysteria2 userpass-авторизация — сервер ждёт "имя:пароль" одной строкой.
@@ -116,7 +121,7 @@ export class SubscriptionService {
           interrupt_exist_connections: true,
         },
         // Прямой выход в интернет с реального IP клиента (мимо VPS).
-        { type: 'direct', tag: 'direct-out' },
+        { type: 'direct', tag: 'direct-out', domain_strategy: 'ipv4_only' },
       ],
       route: {
         rules: [
