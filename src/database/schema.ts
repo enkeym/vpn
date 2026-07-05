@@ -79,6 +79,9 @@ export const peers = sqliteTable(
     // VLESS UUID для Xray (VLESS + Reality). Nullable — старые WG-пиры
     // получают его бэкфиллом в PeersService.syncXrayWithDb при старте.
     vlessUuid: text('vlessUuid').unique(),
+    // Пароль для Hysteria2 (QUIC/UDP, самоподписанный сертификат, без домена).
+    // Nullable — старые пиры получают его бэкфиллом аналогично vlessUuid.
+    hysteriaPassword: text('hysteriaPassword').unique(),
     ip: text('ip').notNull().unique(),
     endpoint: text('endpoint').notNull(),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),

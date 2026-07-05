@@ -22,6 +22,8 @@ import {
 import { WgService } from 'src/wg/wg.service';
 import { XrayService } from 'src/xray/xray.service';
 import type { IXrayClient } from 'src/xray/xray.service';
+import { HysteriaService } from 'src/hysteria/hysteria.service';
+import type { IHysteriaClient } from 'src/hysteria/hysteria.service';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
@@ -72,6 +74,7 @@ export class PeersService {
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly wgService: WgService,
     private readonly xrayService: XrayService,
+    private readonly hysteriaService: HysteriaService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -81,6 +84,8 @@ export class PeersService {
     await this.warmUpIpsCache();
     await this.syncWgWithDb();
     await this.syncXrayWithDb();
+    await this.backfillHysteriaPasswords();
+    await this.syncHysteriaWithDb();
     await this.backfillPausedAt();
     await this.backfillPausedReason();
   }
@@ -305,6 +310,55 @@ export class PeersService {
   }
 
   /**
+   * Аналог syncXrayWithDb для Hysteria2 — альтернативного протокола на
+   * случай, если VLESS+Reality режется DPI на сети конкретного клиента.
+   */
+  private async syncHysteriaWithDb(): Promise<void> {
+    try {
+      const activePeers = await this.db.query.peers.findMany({
+        where: eq(schema.peers.paused, false),
+        columns: { name: true, hysteriaPassword: true },
+      });
+
+      const clients: IHysteriaClient[] = activePeers
+        .filter(
+          (peer): peer is { name: string; hysteriaPassword: string } =>
+            peer.hysteriaPassword !== null,
+        )
+        .map((peer) => ({ name: peer.name, password: peer.hysteriaPassword }));
+
+      await this.hysteriaService.syncClients(clients);
+    } catch (error) {
+      this.logger.error(
+        `Ошибка синхронизации Hysteria2 с БД: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+  }
+
+  /** Бэкфилл hysteriaPassword для пиров, созданных до появления Hysteria2. */
+  private async backfillHysteriaPasswords(): Promise<void> {
+    const peersWithoutPassword = await this.db.query.peers.findMany({
+      where: isNull(schema.peers.hysteriaPassword),
+      columns: { id: true },
+    });
+
+    for (const peer of peersWithoutPassword) {
+      await this.db
+        .update(schema.peers)
+        .set({ hysteriaPassword: randomBytes(16).toString('hex') })
+        .where(eq(schema.peers.id, peer.id));
+    }
+
+    if (peersWithoutPassword.length > 0) {
+      this.logger.log(
+        `Бэкфилл hysteriaPassword: ${peersWithoutPassword.length} конфигов`,
+      );
+    }
+  }
+
+  /**
    * Проверить, использовал ли пользователь пробный период (один раз на пользователя).
    * С кешированием — снижает задержки при навигации по меню.
    */
@@ -425,6 +479,7 @@ export class PeersService {
 
       const expiresAt = durationDays ? calculateExpiresAt(durationDays) : null;
       const vlessUuid = randomUUID();
+      const hysteriaPassword = randomBytes(16).toString('hex');
 
       const peerData: TPeer = {
         telegramId: dto.telegramId,
@@ -434,6 +489,7 @@ export class PeersService {
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
         vlessUuid,
+        hysteriaPassword,
         ip: credentials.ip,
         endpoint: `${this.wgService.host}:${this.wgService.port}`,
         paused: false,
@@ -471,9 +527,10 @@ export class PeersService {
           );
         }
 
-        // Добавляем нового клиента в Xray/Reality (не блокирует выдачу
-        // WG-конфига — ошибки проглатываются внутри syncXrayWithDb).
+        // Добавляем нового клиента в Xray/Reality и Hysteria2 (не блокирует
+        // выдачу WG-конфига — ошибки проглатываются внутри sync*WithDb).
         await this.syncXrayWithDb();
+        await this.syncHysteriaWithDb();
 
         return { peer: newPeer, config };
       } catch (error) {
@@ -553,8 +610,9 @@ export class PeersService {
         });
       }
 
-      // Синхронизируем Reality (пауза/возобновление конфига)
+      // Синхронизируем Reality и Hysteria2 (пауза/возобновление конфига)
       await this.syncXrayWithDb();
+      await this.syncHysteriaWithDb();
     } catch (error) {
       this.logger.error(
         `Ошибка обновления WG Для ${peerName}, отмена изменений`,
@@ -594,8 +652,9 @@ export class PeersService {
       }
     }
 
-    // Убираем клиента из Xray/Reality
+    // Убираем клиента из Xray/Reality и Hysteria2
     await this.syncXrayWithDb();
+    await this.syncHysteriaWithDb();
 
     return { message: `Конфиг ${peerName} успешно удален` };
   }
@@ -641,8 +700,9 @@ export class PeersService {
       }
     }
 
-    // Убираем удалённые конфиги из Reality
+    // Убираем удалённые конфиги из Reality и Hysteria2
     await this.syncXrayWithDb();
+    await this.syncHysteriaWithDb();
   }
 
   /** Расширенная статистика для админ-панели. */
@@ -963,8 +1023,9 @@ export class PeersService {
 
       await this.wgService.removePeers(publicKeys);
 
-      // Убираем истёкшие конфиги из Reality
+      // Убираем истёкшие конфиги из Reality и Hysteria2
       await this.syncXrayWithDb();
+      await this.syncHysteriaWithDb();
 
       for (const peer of expiredPeers) {
         this.invalidatePeerCache(peer.name);
@@ -1537,8 +1598,9 @@ export class PeersService {
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
 
-        // Конфиг снова активен — синхронизируем Reality
+        // Конфиг снова активен — синхронизируем Reality и Hysteria2
         await this.syncXrayWithDb();
+        await this.syncHysteriaWithDb();
 
         return { peer: updatedPeer, config };
       } catch (error) {
@@ -1589,8 +1651,25 @@ export class PeersService {
       );
     }
 
-    // Полный переход на VLESS + Reality: клиенту выдаётся vless://-ссылка.
-    return this.xrayService.buildClientLink(peer.name, peer.vlessUuid);
+    // Основная ссылка — VLESS + Reality.
+    const vlessLink = this.xrayService.buildClientLink(
+      peer.name,
+      peer.vlessUuid,
+    );
+
+    // Резервная ссылка — Hysteria2 (QUIC), на случай если VLESS режется
+    // DPI на конкретной сети клиента. hysteriaPassword может отсутствовать
+    // у пиров, созданных до появления Hysteria2 и ещё не прошедших бэкфилл.
+    if (!peer.hysteriaPassword) {
+      return vlessLink;
+    }
+
+    const hysteriaLink = this.hysteriaService.buildClientLink(
+      peer.name,
+      peer.hysteriaPassword,
+    );
+
+    return `${vlessLink}\n\n${hysteriaLink}`;
   }
 
   /**

@@ -79,7 +79,22 @@ RUN apk add --no-cache curl unzip && \
     chmod +x /xray/out/xray
 
 # ============================================
-# Stage 6: Production image
+# Stage 6: Fetch Hysteria2 (QUIC/UDP, резервный протокол против DPI)
+# ============================================
+# Hysteria2 — чистый Go, статически слинкован, работает на Alpine без glibc.
+# Релизы монорепо тегируются как "app/vX.Y.Z" (в URL — "app%2FvX.Y.Z").
+# Версия закреплена (ARG) — при необходимости бампнуть тегом из релизов
+# https://github.com/apernet/hysteria/releases.
+FROM base AS hysteria-build
+ARG HYSTERIA_VERSION=v2.6.0
+WORKDIR /hysteria
+RUN apk add --no-cache curl && \
+    curl -fsSL -o /hysteria/hysteria \
+      "https://github.com/apernet/hysteria/releases/download/app%2F${HYSTERIA_VERSION}/hysteria-linux-amd64" && \
+    chmod +x /hysteria/hysteria
+
+# ============================================
+# Stage 7: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -111,6 +126,9 @@ COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
 COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat
 ENV XRAY_LOCATION_ASSET=/usr/share/xray
 
+# Бинарник Hysteria2 (резервный протокол, QUIC/UDP)
+COPY --from=hysteria-build /hysteria/hysteria /usr/bin/hysteria
+
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
@@ -127,6 +145,7 @@ LABEL version="1.0"
 # Порты
 EXPOSE 443/udp
 EXPOSE 443/tcp
+EXPOSE 8443/udp
 EXPOSE 3000
 
 # Health check внутри контейнера
