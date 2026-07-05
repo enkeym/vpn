@@ -50,6 +50,9 @@ export class SubscriptionService {
           tls: {
             enabled: true,
             server_name: xray.domain,
+            // uTLS-отпечаток Chrome — чтобы DPI не отличал наш ClientHello от
+            // обычного браузера (Reality уже маскируется, WS-канал — нет).
+            utls: { enabled: true, fingerprint: 'chrome' },
           },
         },
         {
@@ -91,8 +94,14 @@ export class SubscriptionService {
           tag: 'auto',
           outbounds: ['cdn-wifi', 'reality-direct', 'direct-mobile'],
           url: 'https://www.gstatic.com/generate_204',
+          // Проверяем канал раз в минуту — «мёртвый» сервер отваливается
+          // максимум за минуту, а не висит зомби до ручного переключения.
           interval: '1m',
-          tolerance: 50,
+          // Порог переключения поднят с 50 до 150 мс: не даём auto «прыгать»
+          // между почти равными каналами и рвать живые соединения на ровном месте.
+          tolerance: 150,
+          // Не держим тест простаивающего канала бесконечно.
+          idle_timeout: '15m',
           // Сразу переключает уже открытые соединения на новый лучший
           // outbound вместо того, чтобы ждать, пока старые закроются сами —
           // без этого клиент мог "залипать" на канале, переставшем работать
@@ -106,8 +115,58 @@ export class SubscriptionService {
           default: 'auto',
           interrupt_exist_connections: true,
         },
+        // Прямой выход в интернет с реального IP клиента (мимо VPS).
+        { type: 'direct', tag: 'direct-out' },
       ],
       route: {
+        rules: [
+          {
+            // Российский трафик уходит напрямую, мимо туннеля: зарубежный
+            // exit-IP VPS ловит SmartCaptcha Яндекса и блокировки на RU-сайтах.
+            // domain_suffix работает на любой версии sing-box и покрывает
+            // ключевые домены, даже если rule_set ниже не успел скачаться.
+            domain_suffix: [
+              'yandex.ru',
+              'yandex.net',
+              'yandex.com',
+              'ya.ru',
+              'yastatic.net',
+              'yandex.st',
+              'mail.ru',
+              'dzen.ru',
+              'kinopoisk.ru',
+              'vk.com',
+              'vk.ru',
+              'ok.ru',
+              'gosuslugi.ru',
+              'avito.ru',
+              'ozon.ru',
+              'wildberries.ru',
+            ],
+            outbound: 'direct-out',
+          },
+          // Полное покрытие «всего российского трафика» — по гео-спискам
+          // (все домены категории RU + российские IP-диапазоны).
+          { rule_set: ['geosite-ru', 'geoip-ru'], outbound: 'direct-out' },
+        ],
+        rule_set: [
+          {
+            type: 'remote',
+            tag: 'geosite-ru',
+            format: 'binary',
+            url: 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs',
+            // Скачиваем гео-списки через сам туннель — github в RU нестабилен.
+            download_detour: 'select',
+          },
+          {
+            type: 'remote',
+            tag: 'geoip-ru',
+            format: 'binary',
+            url: 'https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs',
+            download_detour: 'select',
+          },
+        ],
+        // Всё нероссийское — как раньше, через выбранный канал (auto/WS/Reality/Hysteria).
         final: 'select',
         auto_detect_interface: true,
       },

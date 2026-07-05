@@ -369,7 +369,29 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
         },
       },
       routing: {
-        rules: [{ type: 'field', inboundTag: ['api'], outboundTag: 'api' }],
+        rules: [
+          { type: 'field', inboundTag: ['api'], outboundTag: 'api' },
+          // Блокируем клиентам доступ во внутренние/локальные сети сервера
+          // (loopback, docker-сеть, LAN). Иначе через туннель были бы доступны
+          // Stats API (127.0.0.1:8881), health, внутренний WS и прочие сервисы
+          // контейнера. Явные CIDR вместо geoip:private — не зависит от geoip.dat.
+          {
+            type: 'field',
+            outboundTag: 'block',
+            ip: [
+              '0.0.0.0/8',
+              '10.0.0.0/8',
+              '100.64.0.0/10',
+              '127.0.0.0/8',
+              '169.254.0.0/16',
+              '172.16.0.0/12',
+              '192.168.0.0/16',
+              '::1/128',
+              'fc00::/7',
+              'fe80::/10',
+            ],
+          },
+        ],
       },
       inbounds: [
         {
