@@ -512,10 +512,11 @@ export class PeersService {
         // Регистрируем пир в WG (интерфейс ещё поднят; будет убрано в Фазе 4).
         await this.wgService.createClientConfig(newPeer.name, credentials);
 
-        // Клиенту отдаём Reality-ссылку, а не WG-конфиг
-        const config = this.xrayService.buildClientLink(
+        // Клиенту отдаём Hysteria2-ссылку (VLESS+Reality нестабильно рвётся
+        // на некоторых сетях клиентов — временно основной протокол).
+        const config = this.hysteriaService.buildClientLink(
           newPeer.name,
-          vlessUuid,
+          hysteriaPassword,
         );
 
         // Инвалидируем кеши
@@ -1585,15 +1586,15 @@ export class PeersService {
         // Регистрируем обновлённый пир в WG (интерфейс ещё поднят; уйдёт в Фазе 4).
         await this.wgService.createClientConfig(peerName, credentials);
 
-        // vlessUuid при замене не меняется — Reality-ссылка остаётся прежней
-        if (!oldPeer.vlessUuid) {
+        // hysteriaPassword при замене не меняется — ссылка остаётся прежней
+        if (!oldPeer.hysteriaPassword) {
           throw new InternalServerErrorException(
-            `У конфига ${peerName} отсутствует vlessUuid`,
+            `У конфига ${peerName} отсутствует hysteriaPassword`,
           );
         }
-        const config = this.xrayService.buildClientLink(
+        const config = this.hysteriaService.buildClientLink(
           peerName,
-          oldPeer.vlessUuid,
+          oldPeer.hysteriaPassword,
         );
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
@@ -1645,31 +1646,18 @@ export class PeersService {
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    if (!peer.vlessUuid) {
+    if (!peer.hysteriaPassword) {
       throw new InternalServerErrorException(
-        `У конфига ${peerName} отсутствует vlessUuid`,
+        `У конфига ${peerName} отсутствует hysteriaPassword`,
       );
     }
 
-    // Основная ссылка — VLESS + Reality.
-    const vlessLink = this.xrayService.buildClientLink(
-      peer.name,
-      peer.vlessUuid,
-    );
-
-    // Резервная ссылка — Hysteria2 (QUIC), на случай если VLESS режется
-    // DPI на конкретной сети клиента. hysteriaPassword может отсутствовать
-    // у пиров, созданных до появления Hysteria2 и ещё не прошедших бэкфилл.
-    if (!peer.hysteriaPassword) {
-      return vlessLink;
-    }
-
-    const hysteriaLink = this.hysteriaService.buildClientLink(
+    // VLESS+Reality нестабильно рвётся на некоторых сетях клиентов —
+    // временно основной и единственный протокол, который выдаём клиенту.
+    return this.hysteriaService.buildClientLink(
       peer.name,
       peer.hysteriaPassword,
     );
-
-    return `${vlessLink}\n\n${hysteriaLink}`;
   }
 
   /**

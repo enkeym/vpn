@@ -112,6 +112,8 @@ RUN apk add --no-cache \
     sudo \
     # Для healthcheck
     wget \
+    # Для генерации самоподписанного сертификата Hysteria2 (HysteriaService)
+    openssl \
     # Для отладки (опционально, можно убрать)
     curl
 

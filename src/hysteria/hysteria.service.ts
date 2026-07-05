@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import * as path from 'path';
 import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
@@ -109,9 +114,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       await this.stopProcess();
       this.startProcess();
     });
-    this.logger.log(
-      `Hysteria2 синхронизирован: ${clients.length} клиент(ов)`,
-    );
+    this.logger.log(`Hysteria2 синхронизирован: ${clients.length} клиент(ов)`);
   }
 
   /** Публичные параметры для сборки клиентской ссылки. */
