@@ -162,7 +162,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       security: 'reality',
       encryption: 'none',
       pbk: p.publicKey,
-      fp: 'chrome',
+      fp: 'random',
       sni: p.sni,
       sid: p.shortId,
     });
