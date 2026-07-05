@@ -18,4 +18,5 @@ logs:
 	docker compose -p $(NAME) logs -f
 
 clean:
-	docker system prune -af --volumes
+	docker image prune -af --filter "label=com.docker.compose.project=$(NAME)"
+	docker volume prune -f --filter "label=com.docker.compose.project=$(NAME)"
