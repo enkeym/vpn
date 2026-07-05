@@ -297,8 +297,7 @@ export class PeerManageHandler {
 
     try {
       // Сначала проверяем, можно ли заменить
-      const peer = await this.peersService.findPeer(peerName);
-      const { canReplace, hoursLeft } = this.peersService.canReplacePeer(peer);
+      const { canReplace, hoursLeft } = this.peersService.canReplacePeer();
 
       if (!canReplace) {
         await safeEditMessageText(

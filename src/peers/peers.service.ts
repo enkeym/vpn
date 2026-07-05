@@ -43,9 +43,9 @@ const TRIAL_EXPIRED_DELETE_AFTER_DAYS = 7;
 const PAID_EXPIRED_DELETE_AFTER_DAYS = 30;
 const MANUAL_PAUSED_DELETE_AFTER_DAYS = 90;
 const ACTIVE_PAID_INACTIVITY_NOTIFY_AFTER_DAYS = 30;
-const UNLIMITED_INACTIVITY_NOTIFY_AFTER_DAYS = 45;
-const UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS = 60;
-const INACTIVE_PAUSED_DELETE_AFTER_DAYS = 30;
+// const UNLIMITED_INACTIVITY_NOTIFY_AFTER_DAYS = 45;
+// const UNLIMITED_INACTIVITY_PAUSE_AFTER_DAYS = 60;
+// const INACTIVE_PAUSED_DELETE_AFTER_DAYS = 30;
 
 function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
   const now = new Date();
@@ -1175,7 +1175,7 @@ export class PeersService {
     });
 
     let paidNotified = 0;
-    let unlimitedNotified = 0;
+    const unlimitedNotified = 0;
 
     // // [ВРЕМЕННО ОТКЛЮЧЕНО] Паузa бессрочных конфигов за неактивность
     // const unlimitedToPause = activePeers.filter((peer) => {
@@ -1358,28 +1358,41 @@ export class PeersService {
   /**
    * Проверяет, можно ли заменить конфиг (прошло ли 24 часа с последней замены)
    */
-  canReplacePeer(peer: TPeerSelect): {
+  // Лимит "раз в 24 часа" временно отключён — перевыпуск разрешён без
+  // ограничений (нужно для массовой переустановки конфигов после апгрейда
+  // обфускации до AmneziaWG 2.0/I1-I5).
+  // Лимит "раз в 24 часа" временно отключён — перевыпуск разрешён без
+  // ограничений (нужно для массовой переустановки конфигов после апгрейда
+  // обфускации до AmneziaWG 2.0/I1-I5).
+  canReplacePeer(): {
     canReplace: boolean;
     hoursLeft?: number;
   } {
-    if (!peer.lastReplacedAt) {
-      return { canReplace: true };
-    }
-
-    const now = new Date();
-    const lastReplaced = new Date(peer.lastReplacedAt);
-    const hoursSinceLastReplace =
-      (now.getTime() - lastReplaced.getTime()) / (1000 * 60 * 60);
-
-    if (hoursSinceLastReplace >= 24) {
-      return { canReplace: true };
-    }
-
-    return {
-      canReplace: false,
-      hoursLeft: Math.ceil(24 - hoursSinceLastReplace),
-    };
+    return { canReplace: true };
   }
+
+  //  canReplacePeer(peer: TPeerSelect): {
+  //   canReplace: boolean;
+  //   hoursLeft?: number;
+  // } {
+  //   if (!peer.lastReplacedAt) {
+  //     return { canReplace: true };
+  //   }
+
+  //   const now = new Date();
+  //   const lastReplaced = new Date(peer.lastReplacedAt);
+  //   const hoursSinceLastReplace =
+  //     (now.getTime() - lastReplaced.getTime()) / (1000 * 60 * 60);
+
+  //   if (hoursSinceLastReplace >= 24) {
+  //     return { canReplace: true };
+  //   }
+
+  //   return {
+  //     canReplace: false,
+  //     hoursLeft: Math.ceil(24 - hoursSinceLastReplace),
+  //   };
+  // }
 
   /**
    * Заменяет конфиг: удаляет старый и создаёт новый с теми же параметрами (тариф, срок)
@@ -1392,7 +1405,7 @@ export class PeersService {
       const oldPeer = await this.findPeer(peerName);
 
       // Проверяем, можно ли заменить
-      const { canReplace, hoursLeft } = this.canReplacePeer(oldPeer);
+      const { canReplace, hoursLeft } = this.canReplacePeer();
       if (!canReplace) {
         throw new BadRequestException(
           `Заменить конфиг можно только раз в 24 часа. Осталось: ${hoursLeft} ч.`,

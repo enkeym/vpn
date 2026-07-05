@@ -62,6 +62,11 @@ interface IAwgParams {
   H2: number;
   H3: number;
   H4: number;
+  I1: string;
+  I2: string;
+  I3: string;
+  I4: string;
+  I5: string;
 }
 
 @Injectable()
@@ -73,7 +78,7 @@ export class WgService implements OnModuleInit {
   private readonly allowedIps = process.env.WG_ALLOWED_IPS || '0.0.0.0/0';
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
 
-  public readonly port = Number(process.env.WG_PORT || 51820);
+  public readonly port = Number(process.env.WG_PORT || 443);
   public readonly host = process.env.WG_HOST;
 
   private _serverPublicKeyCache: string | null = null;
@@ -85,7 +90,7 @@ export class WgService implements OnModuleInit {
 
   // Параметры обфускации AmneziaWG: одинаковы на сервере и во всех клиентских
   // конфигах. Jc/Jmin/Jmax/S1/S2 — фиксированные безопасные значения,
-  // H1-H4 генерируются один раз и хранятся в wg0.conf (переживают рестарт).
+  // H1-H4 и I1-I5 генерируются один раз и хранятся в wg0.conf (переживают рестарт).
   private awgParams!: IAwgParams;
 
   async onModuleInit() {
@@ -167,6 +172,11 @@ export class WgService implements OnModuleInit {
       `H2 = ${params.H2}`,
       `H3 = ${params.H3}`,
       `H4 = ${params.H4}`,
+      `I1 = ${params.I1}`,
+      `I2 = ${params.I2}`,
+      `I3 = ${params.I3}`,
+      `I4 = ${params.I4}`,
+      `I5 = ${params.I5}`,
     ].join('\n');
   }
 
@@ -191,25 +201,67 @@ export class WgService implements OnModuleInit {
       H2: nextHeader(),
       H3: nextHeader(),
       H4: nextHeader(),
+      ...this.generateAwgSignaturePackets(),
+    };
+  }
+
+  /**
+   * I1-I5 — сигнатурные пакеты AmneziaWG 2.0 (CPS-формат). I1 маскирует
+   * хендшейк под QUIC Initial-пакет (первый байт и версия рандомизируются
+   * при генерации, чтобы не превратиться в общий для всех отпечаток —
+   * пример из документации Amnezia использует фиксированные байты и явно
+   * не годится для прямого копирования). I2-I5 добавляют энтропию.
+   * Теги <r>/<t>/<rc>/<rd> разворачивает в случайные байты amneziawg-go
+   * на лету при отправке каждого пакета, поэтому сами строки — шаблон,
+   * а не готовые данные.
+   */
+  private generateAwgSignaturePackets(): Pick<
+    IAwgParams,
+    'I1' | 'I2' | 'I3' | 'I4' | 'I5'
+  > {
+    const quicFirstBytes = [0xc0, 0xc1, 0xc2, 0xc3];
+    const quicFirstByte = quicFirstBytes[randomInt(0, quicFirstBytes.length)]
+      .toString(16)
+      .padStart(2, '0');
+    const quicVersions = ['00000001', '6b3343cf'];
+    const quicVersion = quicVersions[randomInt(0, quicVersions.length)];
+    const i1BodyLen = randomInt(1150, 1200);
+
+    return {
+      I1: `<b 0x${quicFirstByte}${quicVersion}><r ${i1BodyLen}><t>`,
+      I2: `<r ${randomInt(80, 200)}><rd ${randomInt(4, 12)}>`,
+      I3: `<rc ${randomInt(8, 24)}><r ${randomInt(60, 150)}><t>`,
+      I4: `<r ${randomInt(100, 250)}>`,
+      I5: `<rd ${randomInt(4, 10)}><rc ${randomInt(4, 10)}><r ${randomInt(80, 180)}><t>`,
     };
   }
 
   private parseAwgParamsFromFile(raw: string): IAwgParams | null {
-    const get = (key: string) => {
+    const getNumber = (key: string) => {
       const match = raw.match(new RegExp(`^${key}\\s*=\\s*(\\d+)`, 'm'));
       return match ? Number(match[1]) : undefined;
     };
 
+    const getString = (key: string) => {
+      const match = raw.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm'));
+      return match ? match[1].trim() : undefined;
+    };
+
     const params = {
-      Jc: get('Jc'),
-      Jmin: get('Jmin'),
-      Jmax: get('Jmax'),
-      S1: get('S1'),
-      S2: get('S2'),
-      H1: get('H1'),
-      H2: get('H2'),
-      H3: get('H3'),
-      H4: get('H4'),
+      Jc: getNumber('Jc'),
+      Jmin: getNumber('Jmin'),
+      Jmax: getNumber('Jmax'),
+      S1: getNumber('S1'),
+      S2: getNumber('S2'),
+      H1: getNumber('H1'),
+      H2: getNumber('H2'),
+      H3: getNumber('H3'),
+      H4: getNumber('H4'),
+      I1: getString('I1'),
+      I2: getString('I2'),
+      I3: getString('I3'),
+      I4: getString('I4'),
+      I5: getString('I5'),
     };
 
     if (Object.values(params).some((value) => value === undefined)) {

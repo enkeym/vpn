@@ -103,7 +103,7 @@ LABEL maintainer="vpn-bot"
 LABEL version="1.0"
 
 # Порты
-EXPOSE 51820/udp
+EXPOSE 443/udp
 EXPOSE 3000
 
 # Health check внутри контейнера
