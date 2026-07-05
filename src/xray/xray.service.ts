@@ -202,7 +202,13 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
         },
       ],
       outbounds: [
-        { protocol: 'freedom', tag: 'direct' },
+        // UseIPv4: на VPS исходящий IPv6 не маршрутизируется — без этого Xray
+        // пытается резолвить домены (YouTube и т.п.) в AAAA-запись и зависает.
+        {
+          protocol: 'freedom',
+          tag: 'direct',
+          settings: { domainStrategy: 'UseIPv4' },
+        },
         { protocol: 'blackhole', tag: 'block' },
       ],
     };
