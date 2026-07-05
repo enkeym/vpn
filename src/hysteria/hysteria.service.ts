@@ -225,6 +225,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private startProcess(): void {
     const proc = spawn('hysteria', ['server', '-c', this.configPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HYSTERIA_LOG_LEVEL: 'debug' },
     });
     this.currentProc = proc;
 
