@@ -42,6 +42,9 @@ export class SubscriptionService {
           // Резолвим назначение только в IPv4: у VPS нет исходящего IPv6,
           // домены с AAAA-записью иначе отваливаются (dial tcp6 unreachable).
           domain_strategy: 'ipv4_only',
+          // TCP Fast Open — меньше round-trip'ов на новый хендшейк после
+          // смены сети (Wi-Fi↔мобильный). Требует поддержки и на сервере.
+          tcp_fast_open: true,
           server: xray.domain,
           server_port: xray.port,
           uuid: peer.vlessUuid,
@@ -62,6 +65,7 @@ export class SubscriptionService {
           type: 'vless',
           tag: 'reality-direct',
           domain_strategy: 'ipv4_only',
+          tcp_fast_open: true,
           server: xray.host,
           server_port: xray.realityPort,
           uuid: peer.vlessUuid,
@@ -96,8 +100,26 @@ export class SubscriptionService {
         },
         {
           type: 'urltest',
+          tag: 'auto-direct',
+          // Гонка только между "прямыми" протоколами (без CDN) — на мобильных
+          // сетях они обычно не блокируются и держат нагрузку Telegram-медиа
+          // (много мелких parallel-соединений) заметно лучше, чем WS+CDN.
+          outbounds: ['direct-mobile', 'reality-direct'],
+          url: 'https://www.gstatic.com/generate_204',
+          // Короче, чем у внешней группы: быстрее ловим момент, когда канал
+          // ожил после смены сети (Wi-Fi↔мобильный).
+          interval: '30s',
+          tolerance: 150,
+          idle_timeout: '15m',
+        },
+        {
+          type: 'urltest',
           tag: 'auto',
-          outbounds: ['cdn-wifi', 'reality-direct', 'direct-mobile'],
+          // cdn-wifi подключается только если ОБА прямых канала недоступны —
+          // типичный случай: IP сервера заблокирован на конкретной Wi-Fi сети.
+          // Раньше cdn-wifi конкурировал с ними наравне по пингу и мог
+          // выигрывать гонку, хотя по факту хуже держит Telegram-медиа.
+          outbounds: ['auto-direct', 'cdn-wifi'],
           url: 'https://www.gstatic.com/generate_204',
           // Проверяем канал раз в минуту — «мёртвый» сервер отваливается
           // максимум за минуту, а не висит зомби до ручного переключения.
@@ -116,7 +138,13 @@ export class SubscriptionService {
         {
           type: 'selector',
           tag: 'select',
-          outbounds: ['auto', 'cdn-wifi', 'reality-direct', 'direct-mobile'],
+          outbounds: [
+            'auto',
+            'auto-direct',
+            'cdn-wifi',
+            'reality-direct',
+            'direct-mobile',
+          ],
           default: 'auto',
           interrupt_exist_connections: true,
         },
