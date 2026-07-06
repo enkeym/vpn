@@ -305,5 +305,11 @@ export class UserCommandsRegistrar {
       await ctx.answerCallbackQuery();
       await this.mainHandler.showInstruction(ctx, ctx.match[1]);
     });
+
+    // Готовые настройки Hiddify (файл + текст для копирования)
+    bot.callbackQuery('send_hiddify_settings', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.sendHiddifySettings(ctx);
+    });
   }
 }

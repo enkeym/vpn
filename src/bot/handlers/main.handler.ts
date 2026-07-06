@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { type Api, type Context } from 'grammy';
+import { InputFile, type Api, type Context } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
+import { HIDDIFY_OPTIONS_JSON } from '../assets/hiddify-options';
 import { BotUi } from '../ui/bot.ui';
 import {
   isMessageNotModifiedError,
@@ -189,6 +190,32 @@ export class MainHandler {
       reply_markup: BotUi.backToInstructionsKeyboard(),
       parse_mode: 'Markdown',
       link_preview_options: { is_disabled: true },
+    });
+  }
+
+  /** Готовые настройки Hiddify: файл для импорта + текст для копирования в буфер. */
+  async sendHiddifySettings(ctx: Context) {
+    if (!ctx.chat) return;
+
+    await safeEditMessageText(ctx, BotUi.hiddifySettingsIntro, {
+      parse_mode: 'Markdown',
+      link_preview_options: { is_disabled: true },
+    });
+
+    await ctx.replyWithDocument(
+      new InputFile(
+        Buffer.from(HIDDIFY_OPTIONS_JSON, 'utf-8'),
+        'hiddify-options.json',
+      ),
+      {
+        caption: BotUi.hiddifySettingsFileCaption,
+        parse_mode: 'Markdown',
+      },
+    );
+
+    await ctx.reply(BotUi.hiddifySettingsCopyText(HIDDIFY_OPTIONS_JSON), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.backToInstructionsKeyboard(),
     });
   }
 }
