@@ -1441,10 +1441,6 @@ export class PeersService implements OnApplicationBootstrap {
       peer.name,
       peer.vlessUuid,
     );
-    const realityLink = this.xrayService.buildRealityClientLink(
-      peer.name,
-      peer.vlessUuid,
-    );
     const hysteriaLink = this.hysteriaService.buildClientLink(
       peer.name,
       peer.hysteriaPassword,
@@ -1453,7 +1449,7 @@ export class PeersService implements OnApplicationBootstrap {
     return (
       `🔗 *Подписка* (авто-переключение, Hiddify/NekoBox):\n\`${subscriptionUrl}\`\n\n` +
       `*Прямые ссылки* (v2rayNG или ручной выбор, если подписка не подключается):\n` +
-      `\`${vlessLink}\`\n\n\`${realityLink}\`\n\n\`${hysteriaLink}\``
+      `\`${vlessLink}\`\n\n\`${hysteriaLink}\``
     );
   }
 
