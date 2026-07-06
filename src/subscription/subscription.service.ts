@@ -100,30 +100,20 @@ export class SubscriptionService {
         },
         {
           type: 'urltest',
-          tag: 'auto-direct',
-          // Гонка только между "прямыми" протоколами (без CDN) — на мобильных
-          // сетях они обычно не блокируются и держат нагрузку Telegram-медиа
-          // (много мелких parallel-соединений) заметно лучше, чем WS+CDN.
-          outbounds: ['direct-mobile', 'reality-direct'],
-          url: 'https://www.gstatic.com/generate_204',
-          // Короче, чем у внешней группы: быстрее ловим момент, когда канал
-          // ожил после смены сети (Wi-Fi↔мобильный).
-          interval: '30s',
-          tolerance: 150,
-          idle_timeout: '15m',
-        },
-        {
-          type: 'urltest',
           tag: 'auto',
-          // cdn-wifi подключается только если ОБА прямых канала недоступны —
-          // типичный случай: IP сервера заблокирован на конкретной Wi-Fi сети.
-          // Раньше cdn-wifi конкурировал с ними наравне по пингу и мог
-          // выигрывать гонку, хотя по факту хуже держит Telegram-медиа.
-          outbounds: ['auto-direct', 'cdn-wifi'],
+          // ВАЖНО: плоская группа, без вложенности. Раньше пробовали разбить
+          // на auto-direct (hysteria/reality) + auto (auto-direct/cdn-wifi) —
+          // сломало автопереключение: внешняя группа мерила ТЕКУЩИЙ выбор
+          // внутренней в момент замера, и если он совпадал с упавшим каналом,
+          // внешняя группа тоже считала весь auto-direct мёртвым и зависала,
+          // вместо того чтобы дать reality-direct шанс — на проде реально был
+          // случай, когда Hysteria2 упала, а автопереключения на живой
+          // reality-direct не произошло, пришлось выбирать вручную.
+          outbounds: ['cdn-wifi', 'reality-direct', 'direct-mobile'],
           url: 'https://www.gstatic.com/generate_204',
-          // Проверяем канал раз в минуту — «мёртвый» сервер отваливается
-          // максимум за минуту, а не висит зомби до ручного переключения.
-          interval: '1m',
+          // Короче, чем раньше (было 1m): быстрее ловим момент, когда канал
+          // ожил/умер после смены сети (Wi-Fi↔мобильный).
+          interval: '30s',
           // Порог переключения поднят с 50 до 150 мс: не даём auto «прыгать»
           // между почти равными каналами и рвать живые соединения на ровном месте.
           tolerance: 150,
@@ -138,13 +128,7 @@ export class SubscriptionService {
         {
           type: 'selector',
           tag: 'select',
-          outbounds: [
-            'auto',
-            'auto-direct',
-            'cdn-wifi',
-            'reality-direct',
-            'direct-mobile',
-          ],
+          outbounds: ['auto', 'cdn-wifi', 'reality-direct', 'direct-mobile'],
           default: 'auto',
           interrupt_exist_connections: true,
         },
