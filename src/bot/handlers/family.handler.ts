@@ -744,13 +744,17 @@ export class FamilyHandler {
         durationDays,
       });
 
-      // Отправляем конфиг клиенту
+      // Отправляем конфиг клиенту: QR-код + ссылки (как после покупки)
       try {
-        const message = await ctx.api.sendDocument(
+        const qr = await this.peersService.generatePeerQrCode(peer.name);
+        const message = await ctx.api.sendPhoto(
           member.telegramId,
-          new InputFile(Buffer.from(config), `${peer.name}.conf`),
+          new InputFile(qr, `${peer.name}_qr.png`),
           {
-            caption: BotUi.memberConfigCreated(peer.name, peer.expiresAt),
+            caption:
+              `${BotUi.memberConfigCreated(peer.name, peer.expiresAt)}\n\n` +
+              `${config}\n\n` +
+              `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
             parse_mode: 'Markdown',
           },
         );

@@ -1447,9 +1447,9 @@ export class PeersService implements OnApplicationBootstrap {
     );
 
     return (
-      `🔗 *Подписка* (авто-переключение, Hiddify/NekoBox):\n${subscriptionUrl}\n\n` +
+      `🔗 *Подписка* (авто-переключение, Hiddify/NekoBox):\n\`${subscriptionUrl}\`\n\n` +
       `*Прямые ссылки* (v2rayNG или ручной выбор, если подписка не подключается):\n` +
-      `${vlessLink}\n\n${hysteriaLink}`
+      `\`${vlessLink}\`\n\n\`${hysteriaLink}\``
     );
   }
 

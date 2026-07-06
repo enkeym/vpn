@@ -272,7 +272,7 @@ export class PeerManageHandler {
 
       const message = await ctx.reply(
         `🔑 *Ссылка-конфиг* \`${peer.name}\`\n\n` +
-          `\`${link}\`\n\n` +
+          `${link}\n\n` +
           `_Скопируйте и вставьте в v2rayNG / Hiddify / NekoBox_`,
         {
           parse_mode: 'Markdown',
@@ -336,7 +336,7 @@ export class PeerManageHandler {
       await ctx.replyWithPhoto(new InputFile(qr, `${newPeer.name}_qr.png`), {
         caption:
           `${BotUi.configReplaced(newPeer.name, newPeer.expiresAt)}\n\n` +
-          `\`${config}\`\n\n` +
+          `${config}\n\n` +
           `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),

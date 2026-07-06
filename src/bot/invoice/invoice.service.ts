@@ -480,7 +480,7 @@ export class InvoiceService {
       {
         caption:
           `${caption}\n\n` +
-          `\`${config}\`\n\n` +
+          `${config}\n\n` +
           `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
         parse_mode: 'Markdown',
         reply_markup: BotUi.configDeliveredKeyboard(peer.name),
