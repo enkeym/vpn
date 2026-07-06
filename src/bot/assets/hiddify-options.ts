@@ -19,7 +19,7 @@ export const HIDDIFY_OPTIONS_JSON = `{
   "direct-port": 12337,
   "redirect-port": 12336,
   "tun-implementation": "mixed",
-  "mtu": 9000,
+  "mtu": 1400,
   "strict-route": false,
   "connection-test-url": "http://captive.apple.com/hotspot-detect.html",
   "url-test-interval": 600,
