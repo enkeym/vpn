@@ -45,6 +45,11 @@ export class MainHandler {
     return this.adminIds.includes(userId);
   }
 
+  /** Временный флаг: скрывает меню оплаты (и кнопки входа в него) для обычных пользователей */
+  isUserPaymentMenuHidden(): boolean {
+    return this.configService.get<string>('HIDE_USER_PAYMENT_MENU') === 'true';
+  }
+
   async getUserType(userId: string): Promise<UserType> {
     if (this.isAdmin(userId)) return 'admin';
     const isFamilyMember = await this.familyService.isMember(userId);
@@ -70,7 +75,10 @@ export class MainHandler {
       case 'family':
         return BotUi.familyMemberMenuKeyboard(showTrial);
       default:
-        return BotUi.mainMenuKeyboard(showTrial);
+        return BotUi.mainMenuKeyboard(
+          showTrial,
+          !this.isUserPaymentMenuHidden(),
+        );
     }
   }
 

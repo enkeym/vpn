@@ -7,6 +7,8 @@ import { PeerManageHandler } from '../handlers/peer-manage.handler';
 import { PeerDeleteHandler } from '../handlers/peer-delete.handler';
 import { InvoiceService } from '../invoice/invoice.service';
 import { MainMenuService } from '../menu/main-menu.service';
+import { BotUi } from '../ui/bot.ui';
+import { safeEditMessageText } from '../utils/safe-edit-message';
 
 /**
  * Регистрация пользовательских команд и callback-кнопок:
@@ -78,6 +80,13 @@ export class UserCommandsRegistrar {
         this.peersService.hasUsedFirstPurchaseDiscount(userId),
       ]);
       if (userType === 'user') {
+        if (this.mainHandler.isUserPaymentMenuHidden()) {
+          await safeEditMessageText(ctx, BotUi.paymentMenuUnavailable, {
+            parse_mode: 'Markdown',
+            reply_markup: BotUi.backToMenuKeyboard(),
+          });
+          return;
+        }
         await this.peerCreateHandler.showPaymentPlans(ctx, hasUsedDiscount);
       } else {
         await this.peerCreateHandler.showCreateOptions(ctx);

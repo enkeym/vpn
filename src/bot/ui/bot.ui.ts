@@ -67,13 +67,16 @@ function getMemberDisplayName(member: TFamilyMember, escape = false): string {
 }
 
 export const BotUi = {
-  // Главное меню для обычных пользователей (showTrial — показывать кнопку пробного периода)
-  mainMenuKeyboard: (showTrial = false) => {
+  // Главное меню для обычных пользователей (showTrial — показывать кнопку пробного периода,
+  // showGetVpn — показывать кнопку покупки; временно скрывается флагом HIDE_USER_PAYMENT_MENU)
+  mainMenuKeyboard: (showTrial = false, showGetVpn = true) => {
     const kb = new InlineKeyboard();
     if (showTrial) {
       kb.text('🆓 Пробный период', 'create_trial_config').row();
     }
-    kb.text('📄 Получить VPN', 'show_create_options').row();
+    if (showGetVpn) {
+      kb.text('📄 Получить VPN', 'show_create_options').row();
+    }
     return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
@@ -272,6 +275,10 @@ export const BotUi = {
       ? '⚠️ TEST\\_PAYMENT: в ЮKassa списывается *1 ₽* за любой тариф.\n\n'
       : ''),
 
+  paymentMenuUnavailable:
+    '💳 *Оплата временно недоступна*\n\n' +
+    'Покупка и продление подписки сейчас отключены. Попробуйте позже.',
+
   paymentPlansKeyboard: (hasDiscount: boolean, testPayment = false) => {
     const kb = new InlineKeyboard();
     const p = (n: number) => (testPayment ? `1 ₽ (тест)` : `${n} ₽`);
@@ -331,11 +338,13 @@ export const BotUi = {
       .text('В меню', 'main_menu');
   },
 
-  emptyConfigsKeyboard: () =>
-    new InlineKeyboard()
-      .text('📄 Получить VPN', 'show_create_options')
-      .row()
-      .text('« Назад в меню', 'main_menu'),
+  emptyConfigsKeyboard: (showGetVpn = true) => {
+    const kb = new InlineKeyboard();
+    if (showGetVpn) {
+      kb.text('📄 Получить VPN', 'show_create_options').row();
+    }
+    return kb.text('« Назад в меню', 'main_menu');
+  },
 
   configsListKeyboard: (peers: TPeer[]) => {
     const keyboard = new InlineKeyboard();

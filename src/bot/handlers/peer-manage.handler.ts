@@ -3,6 +3,7 @@ import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
+import { MainHandler } from './main.handler';
 
 // Состояние ожидания ввода описания для своих конфигов
 // userId -> { peerName: string, promptMessageId: number, chatId: number }
@@ -15,7 +16,10 @@ const awaitingDescriptionEdit = new Map<
 export class PeerManageHandler {
   private readonly logger = new Logger(PeerManageHandler.name);
 
-  constructor(private readonly peersService: PeersService) {}
+  constructor(
+    private readonly peersService: PeersService,
+    private readonly mainHandler: MainHandler,
+  ) {}
 
   isAwaitingDescriptionEdit(userId: string): boolean {
     return awaitingDescriptionEdit.has(userId);
@@ -44,9 +48,14 @@ export class PeerManageHandler {
     );
 
     if (peers.length === 0) {
+      const userType = await this.mainHandler.getUserType(
+        String(ctx.from.id),
+      );
+      const showGetVpn =
+        userType !== 'user' || !this.mainHandler.isUserPaymentMenuHidden();
       return safeEditMessageText(ctx, BotUi.noConfigs, {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.emptyConfigsKeyboard(),
+        reply_markup: BotUi.emptyConfigsKeyboard(showGetVpn),
       });
     }
 
