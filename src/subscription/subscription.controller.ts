@@ -19,4 +19,11 @@ export class SubscriptionController {
     const peer = await this.peersService.findPeerByVlessUuid(uuid);
     return this.subscriptionService.buildSingBoxConfig(peer);
   }
+
+  /** Полный конфиг (log+dns+inbounds) — для официальных sing-box-клиентов (SFA/SFI/SFM). */
+  @Get(':uuid/full')
+  async getFullSubscription(@Param('uuid') uuid: string) {
+    const peer = await this.peersService.findPeerByVlessUuid(uuid);
+    return this.subscriptionService.buildFullSingBoxConfig(peer);
+  }
 }

@@ -176,4 +176,36 @@ export class SubscriptionService {
       },
     };
   }
+
+  /**
+   * Полный sing-box-конфиг для официальных клиентов sing-box (SFA/SFI/SFM).
+   * В отличие от Hiddify/NekoBox, они не достраивают TUN/DNS сами вокруг
+   * подписки — нужен самодостаточный конфиг, поэтому добавлены log/dns/
+   * inbounds поверх тех же outbounds+route.
+   */
+  buildFullSingBoxConfig(
+    peer: Pick<TPeerSelect, 'name' | 'vlessUuid' | 'hysteriaPassword'>,
+  ): Record<string, unknown> {
+    const base = this.buildSingBoxConfig(peer);
+
+    return {
+      log: { level: 'warning', timestamp: true },
+      dns: base.dns,
+      inbounds: [
+        {
+          type: 'tun',
+          tag: 'tun-in',
+          // Только IPv4: у VPS нет исходящего IPv6 (см. domain_strategy на
+          // outbound'ах) — TUN-адрес с IPv6 только сбивал бы клиента с толку.
+          address: ['172.19.0.1/28'],
+          auto_route: true,
+          strict_route: false,
+          stack: 'mixed',
+          sniff: true,
+        },
+      ],
+      outbounds: base.outbounds,
+      route: base.route,
+    };
+  }
 }

@@ -1437,6 +1437,7 @@ export class PeersService implements OnApplicationBootstrap {
     }
 
     const subscriptionUrl = this.buildSubscriptionUrl(peer.vlessUuid);
+    const fullSubscriptionUrl = this.buildFullSubscriptionUrl(peer.vlessUuid);
     const vlessLink = this.xrayService.buildClientLink(
       peer.name,
       peer.vlessUuid,
@@ -1448,6 +1449,7 @@ export class PeersService implements OnApplicationBootstrap {
 
     return (
       `🔗 *Подписка* (авто-переключение, Hiddify/NekoBox):\n\`${subscriptionUrl}\`\n\n` +
+      `*Для официального sing-box (SFA/SFI/SFM)*:\n\`${fullSubscriptionUrl}\`\n\n` +
       `*Прямые ссылки* (v2rayNG или ручной выбор, если подписка не подключается):\n` +
       `\`${vlessLink}\`\n\n\`${hysteriaLink}\``
     );
@@ -1458,6 +1460,16 @@ export class PeersService implements OnApplicationBootstrap {
     // /sub на NestJS и всё остальное на Xray по пути, см. docker/nginx.conf.
     const { domain, port } = this.xrayService.getPublicParams();
     return `https://${domain}:${port}/sub/${vlessUuid}`;
+  }
+
+  /**
+   * Тот же /sub, но с полным конфигом (log+dns+inbounds) — для официальных
+   * sing-box-клиентов (SFA/SFI/SFM): они, в отличие от Hiddify/NekoBox, не
+   * достраивают TUN/DNS сами.
+   */
+  private buildFullSubscriptionUrl(vlessUuid: string): string {
+    const { domain, port } = this.xrayService.getPublicParams();
+    return `https://${domain}:${port}/sub/${vlessUuid}/full`;
   }
 
   /**
