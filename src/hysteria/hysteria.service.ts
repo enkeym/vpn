@@ -14,6 +14,13 @@ import { Mutex } from 'async-mutex';
 
 const execAsync = promisify(exec);
 
+/**
+ * Пауза коалесцирования перезапуска: серия изменений пиров (массовое
+ * продление/удаление) сливается в ОДИН перезапуск Hysteria вместо N подряд —
+ * меньше обрывов активных соединений. Совпадает по смыслу с константой в XrayService.
+ */
+const RELOAD_DEBOUNCE_MS = 1500;
+
 /** Клиент Hysteria2: имя пира и его userpass-пароль. */
 export interface IHysteriaClient {
   name: string;
@@ -63,6 +70,16 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private readonly trafficStatsPort = Number(
     process.env.HYSTERIA_STATS_PORT || 8899,
   );
+  /**
+   * Заявленная клиенту пропускная способность — попадает в sing-box-подписку
+   * (up_mbps/down_mbps) и включает Brutal-конгестию на клиенте. Сервер по
+   * умолчанию (ignoreClientBandwidth=false) уважает эти значения, поэтому
+   * правка hysteria.yaml не нужна. 0 = не задано → fallback на BBR (текущее
+   * поведение). Выставлять ~80-90%% реального канала клиента, иначе Brutal
+   * шлёт агрессивно и растёт loss.
+   */
+  private readonly upMbps = Number(process.env.HYSTERIA_UP_MBPS || 0);
+  private readonly downMbps = Number(process.env.HYSTERIA_DOWN_MBPS || 0);
 
   private readonly mutex = new Mutex();
 
@@ -74,6 +91,13 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private shuttingDown = false;
   /** Промис инициализации onModuleInit — см. аналогичное поле в XrayService. */
   private initPromise: Promise<void> = Promise.resolve();
+
+  /** Подпись уже применённого набора клиентов — если новый совпадает, перезапуск пропускается. */
+  private appliedSignature = '';
+  /** Последний запрошенный набор — применяется одним перезапуском после дебаунса. */
+  private pendingClients: IHysteriaClient[] | null = null;
+  private reloadTimer: NodeJS.Timeout | null = null;
+  private reloadWaiters: Array<() => void> = [];
 
   async onModuleInit(): Promise<void> {
     if (!this.host) throw new Error('HOST в .env не задан');
@@ -114,21 +138,66 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // No-op guard + дебаунс: userpass-набор встроен в hysteria.yaml, смена
+    // требует перезаписи и перезапуска процесса — коалесцируем серию
+    // изменений в один рестарт и пропускаем его, если набор не менялся.
+    if (this.clientsSignature(clients) === this.appliedSignature) {
+      return;
+    }
+
+    this.pendingClients = clients;
+    await new Promise<void>((resolve) => {
+      this.reloadWaiters.push(resolve);
+      if (this.reloadTimer) return;
+      this.reloadTimer = setTimeout(() => {
+        this.reloadTimer = null;
+        const waiters = this.reloadWaiters;
+        this.reloadWaiters = [];
+        void this.applyReload().finally(() => {
+          for (const wake of waiters) wake();
+        });
+      }, RELOAD_DEBOUNCE_MS);
+    });
+  }
+
+  /** Стабильная подпись набора клиентов (порядок не важен). */
+  private clientsSignature(clients: IHysteriaClient[]): string {
+    return clients
+      .map((c) => `${c.name}:${c.password}`)
+      .sort()
+      .join('|');
+  }
+
+  /** Применяет последний отложенный набор одним перезапуском Hysteria. */
+  private async applyReload(): Promise<void> {
+    const clients = this.pendingClients;
+    if (!clients) return;
+    this.pendingClients = null;
+
     await this.mutex.runExclusive(async () => {
       this.clients = clients;
       await this.writeConfig();
       await this.stopProcess();
       this.startProcess();
     });
+    this.appliedSignature = this.clientsSignature(clients);
     this.logger.log(`Hysteria2 синхронизирован: ${clients.length} клиент(ов)`);
   }
 
   /** Публичные параметры для сборки клиентской ссылки. */
-  getPublicParams(): { host: string; port: number; obfsPassword: string } {
+  getPublicParams(): {
+    host: string;
+    port: number;
+    obfsPassword: string;
+    upMbps: number;
+    downMbps: number;
+  } {
     return {
       host: this.host as string,
       port: this.port,
       obfsPassword: this.params.obfsPassword,
+      upMbps: this.upMbps,
+      downMbps: this.downMbps,
     };
   }
 
@@ -181,10 +250,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
           obfsPassword: parsed.obfsPassword,
           trafficStatsSecret: randomBytes(16).toString('hex'),
         };
-        await writeFile(
-          this.paramsPath,
-          JSON.stringify(this.params, null, 2),
-        );
+        await writeFile(this.paramsPath, JSON.stringify(this.params, null, 2));
         return;
       }
     }

@@ -15,6 +15,13 @@ import { Mutex } from 'async-mutex';
 
 const execAsync = promisify(exec);
 
+/**
+ * Пауза коалесцирования перезапуска: серия изменений пиров (массовое
+ * продление/удаление) сливается в ОДИН перезапуск Xray вместо N подряд —
+ * меньше обрывов активных соединений.
+ */
+const RELOAD_DEBOUNCE_MS = 1500;
+
 /** Клиент VLESS: имя пира и его UUID (id из БД). */
 export interface IXrayClient {
   name: string;
@@ -110,6 +117,13 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    */
   private initPromise: Promise<void> = Promise.resolve();
 
+  /** Подпись уже применённого набора клиентов — если новый совпадает, перезапуск пропускается. */
+  private appliedSignature = '';
+  /** Последний запрошенный набор — применяется одним перезапуском после дебаунса. */
+  private pendingClients: IXrayClient[] | null = null;
+  private reloadTimer: NodeJS.Timeout | null = null;
+  private reloadWaiters: Array<() => void> = [];
+
   async onModuleInit(): Promise<void> {
     if (!this.domain) throw new Error('XRAY_DOMAIN в .env не задан');
     if (!this.host) throw new Error('HOST в .env не задан');
@@ -152,12 +166,50 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // No-op guard: частый случай — updatedPeer/toggle обновили поля пира, но
+    // множество активных VLESS-клиентов то же — перезапуск не нужен.
+    if (this.clientsSignature(clients) === this.appliedSignature) {
+      return;
+    }
+
+    // Коалесцируем всплеск изменений в один перезапуск. Ожидающие вызовы
+    // разбудятся после фактического применения.
+    this.pendingClients = clients;
+    await new Promise<void>((resolve) => {
+      this.reloadWaiters.push(resolve);
+      if (this.reloadTimer) return;
+      this.reloadTimer = setTimeout(() => {
+        this.reloadTimer = null;
+        const waiters = this.reloadWaiters;
+        this.reloadWaiters = [];
+        void this.applyReload().finally(() => {
+          for (const wake of waiters) wake();
+        });
+      }, RELOAD_DEBOUNCE_MS);
+    });
+  }
+
+  /** Стабильная подпись набора клиентов (порядок не важен). */
+  private clientsSignature(clients: IXrayClient[]): string {
+    return clients
+      .map((c) => `${c.name}:${c.uuid}`)
+      .sort()
+      .join('|');
+  }
+
+  /** Применяет последний отложенный набор одним перезапуском Xray. */
+  private async applyReload(): Promise<void> {
+    const clients = this.pendingClients;
+    if (!clients) return;
+    this.pendingClients = null;
+
     await this.mutex.runExclusive(async () => {
       this.clients = clients;
       await this.writeConfig();
       await this.stopProcess();
       this.startProcess();
     });
+    this.appliedSignature = this.clientsSignature(clients);
     this.logger.log(`Xray синхронизирован: ${clients.length} клиент(ов)`);
   }
 
@@ -232,7 +284,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       security: 'reality',
       encryption: 'none',
       pbk: this.realityParams.publicKey,
-      fp: 'random',
+      // Тот же отпечаток, что и в sing-box-подписке (SubscriptionService) —
+      // единый uTLS-fingerprint для одного Reality-канала, иначе DPI видит
+      // рассогласование ClientHello между прямой ссылкой и подпиской.
+      fp: 'chrome',
       sni: this.realitySni,
       sid: this.realityParams.shortId,
     });

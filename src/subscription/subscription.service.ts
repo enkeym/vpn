@@ -86,6 +86,11 @@ export class SubscriptionService {
           domain_strategy: 'ipv4_only',
           server: hysteria.host,
           server_port: hysteria.port,
+          // Brutal CC: заявляем пропускную способность клиента (из HYSTERIA_UP/DOWN_MBPS).
+          // Сервер по умолчанию уважает эти значения → Brutal в обе стороны. Нет
+          // значений → поля отсутствуют, Hysteria2 падает на BBR (текущее поведение).
+          ...(hysteria.upMbps > 0 ? { up_mbps: hysteria.upMbps } : {}),
+          ...(hysteria.downMbps > 0 ? { down_mbps: hysteria.downMbps } : {}),
           // Hysteria2 userpass-авторизация — сервер ждёт "имя:пароль" одной строкой.
           password: `${peer.name}:${peer.hysteriaPassword}`,
           obfs: {
@@ -138,7 +143,20 @@ export class SubscriptionService {
           // смена default), а не шумный автотест — переключаемся мгновенно.
           interrupt_exist_connections: true,
         },
+        // Явный blackhole-outbound для route-правил ниже (защита от утечек).
+        { type: 'block', tag: 'block' },
       ],
+      // DNS только по IPv4: домены с AAAA иначе тянут за собой IPv6-коннекты
+      // (у VPS нет исходящего IPv6). Дублирует ipv4_only на каждом outbound —
+      // на случай прямого импорта конфига в NekoBox без опций Hiddify.
+      dns: {
+        servers: [
+          { tag: 'dns-remote', address: 'tcp://8.8.8.8' },
+          { tag: 'dns-direct', address: '1.1.1.1' },
+        ],
+        final: 'dns-remote',
+        strategy: 'ipv4_only',
+      },
       route: {
         // RU-сплит (прямой выход мимо VPN для обхода Яндекс-капчи) убран:
         // клиентское приложение (Hiddify) пуляет в общий пул автовыбора все
@@ -146,6 +164,13 @@ export class SubscriptionService {
         // без прокси оказывался "самым быстрым" по его собственному health-
         // check'у и периодически становился основным каналом для ВСЕГО
         // трафика, а не только RU-доменов. Надёжность важнее обхода капчи.
+        // Защита от утечек: приватные/локальные сети и любое IPv6-назначение
+        // уводим в blackhole. Основной путь и так ipv4_only — это второй рубеж
+        // (особенно для NekoBox без ipv6-mode из опций Hiddify).
+        rules: [
+          { ip_is_private: true, outbound: 'block' },
+          { ip_cidr: ['::/0'], outbound: 'block' },
+        ],
         final: 'select',
         auto_detect_interface: true,
       },
