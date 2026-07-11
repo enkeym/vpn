@@ -143,8 +143,6 @@ export class SubscriptionService {
           // смена default), а не шумный автотест — переключаемся мгновенно.
           interrupt_exist_connections: true,
         },
-        // Явный blackhole-outbound для route-правил ниже (защита от утечек).
-        { type: 'block', tag: 'block' },
       ],
       // DNS только по IPv4: домены с AAAA иначе тянут за собой IPv6-коннекты
       // (у VPS нет исходящего IPv6). Дублирует ipv4_only на каждом outbound —
@@ -168,11 +166,20 @@ export class SubscriptionService {
         // уводим в blackhole. Основной путь и так ipv4_only — это второй рубеж
         // (особенно для NekoBox без ipv6-mode из опций Hiddify).
         rules: [
-          { ip_is_private: true, outbound: 'block' },
-          { ip_cidr: ['::/0'], outbound: 'block' },
+          // action:reject + method:drop — пакет отбрасывается без открытия
+          // сокета. С outbound:'block' (blackhole) для UDP-пакетов на
+          // Android это падало с "listen packet connection ... operation
+          // not permitted" (VPN-песочница не даёт открыть packet-listener).
+          { ip_is_private: true, action: 'reject', method: 'drop' },
+          { ip_cidr: ['::/0'], action: 'reject', method: 'drop' },
         ],
         final: 'select',
         auto_detect_interface: true,
+        // sing-box 1.12+: резолвинг домена при дозвоне до outbound'а (server:
+        // xray.domain и т.п.) больше не берётся неявно из dns.final — нужна
+        // явная ссылка на тег DNS-сервера, иначе deprecation-предупреждение
+        // (удалят в 1.14). Используем тот же сервер, что и dns.final.
+        default_domain_resolver: 'dns-remote',
       },
     };
   }
