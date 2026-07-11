@@ -118,7 +118,7 @@ RUN chmod +x /docker-entrypoint.sh
 RUN mkdir -p configs data
 
 # Метаданные
-LABEL maintainer="vpn-bot"
+LABEL maintainer="vpn-new-bot"
 LABEL version="1.0"
 
 # Порты
