@@ -6,7 +6,7 @@ services:
       cache_from:
         - vpn-new-bot:latest
     image: vpn-new-bot:latest
-    container_name: vpn-tgbot
+    container_name: vpn-new-tgbot
     restart: unless-stopped
     init: true
 
