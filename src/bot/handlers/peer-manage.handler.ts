@@ -261,6 +261,35 @@ export class PeerManageHandler {
     }
   }
 
+  /** QR специально для официального sing-box (SFA/SFI/SFM) — см. PeersService.generatePeerSingBoxQrCode. */
+  async showQrCodeSingBox(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    try {
+      const qrBuffer =
+        await this.peersService.generatePeerSingBoxQrCode(peerName);
+      const peer = await this.peersService.findPeer(peerName);
+
+      await ctx.replyWithPhoto(
+        new InputFile(qrBuffer, `${peerName}_singbox_qr.png`),
+        {
+          caption:
+            `📷 *QR для sing-box* \`${peer.name}\`\n\n` +
+            '_Только для официального приложения sing-box (SFA/SFI/SFM) — уже должно быть установлено. ' +
+            'В других клиентах (Hiddify, NekoBox, v2rayNG) используйте обычный «📷 QR-код»._',
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+        },
+      );
+    } catch (error) {
+      this.logger.error(`Ошибка генерации QR для sing-box: ${error}`);
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка генерации QR-кода',
+        show_alert: true,
+      });
+    }
+  }
+
   // === Получить файл конфига ===
 
   async sendConfigFile(ctx: Context, peerName: string) {

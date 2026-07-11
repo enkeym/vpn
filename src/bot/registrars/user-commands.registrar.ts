@@ -263,6 +263,12 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.showQrCode(ctx, ctx.match[1]);
     });
 
+    // Показать QR-код для официального sing-box (deep-link, не обычная ссылка)
+    bot.callbackQuery(/^show_qr_singbox:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.showQrCodeSingBox(ctx, ctx.match[1]);
+    });
+
     // Получить файл конфига
     bot.callbackQuery(/^get_config_file:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();

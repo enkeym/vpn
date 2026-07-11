@@ -1505,6 +1505,35 @@ export class PeersService implements OnApplicationBootstrap {
   }
 
   /**
+   * QR специально для официальных sing-box-клиентов (SFA/SFI/SFM). Их сканер
+   * не распознаёт обычную https-ссылку как профиль (в отличие от Hiddify/
+   * NekoBox/v2rayNG) — нужен deep-link их же схемы sing-box://import-remote-
+   * profile с url/name в query. Ссылка внутри — на /full (с log/dns/inbounds),
+   * т.к. именно её ждёт официальный клиент.
+   */
+  async generatePeerSingBoxQrCode(peerName: string): Promise<Buffer> {
+    const peer = await this.findPeer(peerName);
+
+    if (!peer.vlessUuid) {
+      throw new InternalServerErrorException(
+        `У конфига ${peerName} отсутствует vlessUuid`,
+      );
+    }
+
+    const fullSubscriptionUrl = this.buildFullSubscriptionUrl(peer.vlessUuid);
+    const deepLink = `sing-box://import-remote-profile?url=${encodeURIComponent(
+      fullSubscriptionUrl,
+    )}&name=${encodeURIComponent(peer.name)}`;
+
+    return QRCode.toBuffer(deepLink, {
+      type: 'png',
+      width: 512,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+  }
+
+  /**
    * Получить статистику кеша (для мониторинга)
    */
   getCacheStats(): {

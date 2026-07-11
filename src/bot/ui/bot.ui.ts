@@ -366,8 +366,12 @@ export const BotUi = {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
 
-    // Кнопка QR-кода всегда первая
+    // Кнопка QR-кода всегда первая — для Hiddify/NekoBox/v2rayNG (сканируют обычную ссылку)
     keyboard.text('📷 QR-код', `show_qr:${peer.name}`).row();
+
+    // Отдельный QR для официального sing-box (SFA/SFI/SFM) — их сканер ждёт
+    // свой deep-link, а не обычную https-ссылку (см. PeersService.generatePeerSingBoxQrCode)
+    keyboard.text('📷 QR для sing-box', `show_qr_singbox:${peer.name}`).row();
 
     // Кнопка получения ссылки-конфига (подписка + прямые vless/hysteria2)
     keyboard.text('🔗 Получить ссылку', `get_config_file:${peer.name}`).row();
