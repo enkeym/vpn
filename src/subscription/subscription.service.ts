@@ -201,7 +201,10 @@ export class SubscriptionService {
           auto_route: true,
           strict_route: false,
           stack: 'mixed',
-          sniff: true,
+          // sniff на инбаунде — legacy-поле (sing-box 1.11+ deprecated,
+          // удалено в 1.13, см. migration guide). Не переносим в route
+          // rule action: маршрутизация у нас только по IP (ip_is_private/
+          // ip_cidr), sniff по домену для неё не нужен.
         },
       ],
       outbounds: base.outbounds,
