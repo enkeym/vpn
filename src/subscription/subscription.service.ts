@@ -148,9 +148,11 @@ export class SubscriptionService {
       // (у VPS нет исходящего IPv6). Дублирует ipv4_only на каждом outbound —
       // на случай прямого импорта конфига в NekoBox без опций Hiddify.
       dns: {
+        // sing-box 1.12+: короткая форма address (со схемой в строке) —
+        // legacy, deprecated (удалят в 1.14). Новый формат — явные type+server.
         servers: [
-          { tag: 'dns-remote', address: 'tcp://8.8.8.8' },
-          { tag: 'dns-direct', address: '1.1.1.1' },
+          { type: 'tcp', tag: 'dns-remote', server: '8.8.8.8' },
+          { type: 'udp', tag: 'dns-direct', server: '1.1.1.1' },
         ],
         final: 'dns-remote',
         strategy: 'ipv4_only',
