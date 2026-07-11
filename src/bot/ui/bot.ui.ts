@@ -67,13 +67,15 @@ function getMemberDisplayName(member: TFamilyMember, escape = false): string {
 }
 
 export const BotUi = {
-  // Главное меню для обычных пользователей (showTrial — показывать кнопку пробного периода)
-  mainMenuKeyboard: (showTrial = false) => {
+  // Главное меню для обычных пользователей (showTrial — кнопка пробного периода, showPayment — кнопка оплаты)
+  mainMenuKeyboard: (showTrial = false, showPayment = true) => {
     const kb = new InlineKeyboard();
     if (showTrial) {
       kb.text('🆓 Пробный период', 'create_trial_config').row();
     }
-    kb.text('📄 Получить VPN', 'show_create_options').row();
+    if (showPayment) {
+      kb.text('📄 Получить VPN', 'show_create_options').row();
+    }
     return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()

@@ -46,6 +46,11 @@ export class MainHandler {
     return this.adminIds.includes(userId);
   }
 
+  /** Флаг `PAYMENT` — прячет кнопку оплаты у обычных пользователей (по умолчанию включена). */
+  private isPaymentEnabled(): boolean {
+    return this.configService.get<string>('PAYMENT') !== 'false';
+  }
+
   async getUserType(userId: string): Promise<UserType> {
     if (this.isAdmin(userId)) return 'admin';
     const isFamilyMember = await this.familyService.isMember(userId);
@@ -71,7 +76,7 @@ export class MainHandler {
       case 'family':
         return BotUi.familyMemberMenuKeyboard(showTrial);
       default:
-        return BotUi.mainMenuKeyboard(showTrial);
+        return BotUi.mainMenuKeyboard(showTrial, this.isPaymentEnabled());
     }
   }
 
