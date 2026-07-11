@@ -1,4 +1,4 @@
-NAME = vpn-bot
+NAME = vpn-new-bot
 
 up:
 	docker compose -p $(NAME) up -d || true
