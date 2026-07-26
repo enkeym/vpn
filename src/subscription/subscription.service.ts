@@ -82,9 +82,6 @@ export class SubscriptionService {
           // Резолвим назначение только в IPv4: у VPS нет исходящего IPv6,
           // домены с AAAA-записью иначе отваливаются (dial tcp6 unreachable).
           domain_strategy: 'ipv4_only',
-          // TCP Fast Open — меньше round-trip'ов на новый хендшейк после
-          // смены сети (Wi-Fi↔мобильный). Требует поддержки и на сервере.
-          tcp_fast_open: true,
           server: xray.domain,
           server_port: xray.port,
           uuid: peer.vlessUuid,
@@ -105,7 +102,6 @@ export class SubscriptionService {
           type: 'vless',
           tag: 'reality-direct',
           domain_strategy: 'ipv4_only',
-          tcp_fast_open: true,
           server: xray.host,
           server_port: xray.realityPort,
           uuid: peer.vlessUuid,
@@ -224,7 +220,15 @@ export class SubscriptionService {
           address: ['172.19.0.1/28'],
           auto_route: true,
           strict_route: false,
-          stack: 'mixed',
+          // gVisor вместо system/mixed: системный стек на многих сетях молча
+          // роняет пакеты крупнее MTU реального аплинка (картинки зависают,
+          // мелкий HTML — нет), т.к. sing-box не делает PMTUD и полагается на
+          // ядро ОС. gVisor сам фрагментирует/пересобирает в userspace и не
+          // зависит от этого — с ним воспроизводимо чинится тот же симптом
+          // в Hiddify. mtu ниже реального аплинка (обычно 1500) — запас под
+          // WS/TLS/Reality-заголовки поверх TCP/IP.
+          stack: 'gvisor',
+          mtu: 1400,
           // sniff на инбаунде — legacy-поле (sing-box 1.11+ deprecated,
           // удалено в 1.13, см. migration guide). Не переносим в route
           // rule action: маршрутизация у нас только по IP (ip_is_private/
