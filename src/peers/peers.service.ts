@@ -1405,8 +1405,8 @@ export class PeersService implements OnApplicationBootstrap {
 
   /**
    * Генерирует QR-код ссылки-подписки (возвращает Buffer с PNG изображением).
-   * В QR — только подписка: прямые vless/hysteria2 ссылки не дают авто-
-   * переключения, а подписку клиент (Hiddify/NekoBox) распознаёт по URL сам.
+   * В QR — только подписка: прямые vless-ссылки не дают авто-переключения,
+   * а подписку клиент (Hiddify/NekoBox) распознаёт по URL сам.
    */
   async generatePeerQrCode(peerName: string): Promise<Buffer> {
     const peer = await this.findPeer(peerName);
