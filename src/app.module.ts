@@ -4,7 +4,6 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { XrayModule } from './xray/xray.module';
-import { HysteriaModule } from './hysteria/hysteria.module';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -15,6 +14,7 @@ import { NotificationModule } from './notification/notification.module';
 import { CacheModule } from './common/cache/cache.module';
 import { PaymentModule } from './payment/payment.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { SecurityModule } from './security/security.module';
 import { InternalGuard } from './common/guards/internal.guard';
 
 @Module({
@@ -31,11 +31,11 @@ import { InternalGuard } from './common/guards/internal.guard';
     NotificationModule,
     DatabaseModule,
     XrayModule,
-    HysteriaModule,
     PeersModule,
     BotModule,
     PaymentModule,
     SubscriptionModule,
+    SecurityModule,
   ],
   controllers: [AppController],
   providers: [

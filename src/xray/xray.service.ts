@@ -6,14 +6,20 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import * as path from 'path';
+import * as os from 'os';
 import { existsSync } from 'fs';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, writeFile, unlink } from 'fs/promises';
 import { randomBytes } from 'crypto';
-import { exec, spawn, ChildProcess } from 'child_process';
+import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { Mutex } from 'async-mutex';
 
 const execAsync = promisify(exec);
+/**
+ * Для вызовов с подставляемыми значениями (email пира, пути) — только execFile:
+ * аргументы уходят массивом, без разбора шеллом.
+ */
+const execFileAsync = promisify(execFile);
 
 /**
  * Пауза коалесцирования перезапуска: серия изменений пиров (массовое
@@ -21,6 +27,58 @@ const execAsync = promisify(exec);
  * меньше обрывов активных соединений.
  */
 const RELOAD_DEBOUNCE_MS = 1500;
+
+/** Пир и его активные IP из ответа `xray api statsonlineiplist`. */
+interface IOnlineIpEntry {
+  email: string;
+  ips: string[];
+}
+
+/** IP приходят либо картой «ip → время», либо простым списком строк. */
+function extractIps(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((ip): ip is string => typeof ip === 'string');
+  }
+  if (raw !== null && typeof raw === 'object') {
+    return Object.keys(raw as Record<string, unknown>);
+  }
+  return [];
+}
+
+/**
+ * Достаёт пары «email → активные IP» из ответа statsonlineiplist.
+ *
+ * Команда просто печатает protojson-ответ как есть, а его форма отличается
+ * между сборками Xray (camelCase против snake_case, карта против списка).
+ * Поэтому идём по структуре рекурсивно и собираем любые узлы, где рядом лежат
+ * email и набор IP — разбор переживает косметические изменения формата.
+ */
+function collectOnlineIpEntries(payload: unknown): IOnlineIpEntry[] {
+  const found: IOnlineIpEntry[] = [];
+
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (node === null || typeof node !== 'object') return;
+
+    const record = node as Record<string, unknown>;
+    const email = record.email ?? record.user;
+    const ips = extractIps(
+      record.ips ?? record.onlineIps ?? record.online_ips ?? record.ip,
+    );
+
+    if (typeof email === 'string' && email.length > 0 && ips.length > 0) {
+      found.push({ email, ips });
+    }
+
+    for (const value of Object.values(record)) walk(value);
+  };
+
+  walk(payload);
+  return found;
+}
 
 /** Клиент VLESS: имя пира и его UUID (id из БД). */
 export interface IXrayClient {
@@ -71,6 +129,9 @@ interface IXrayRealityParams {
 @Injectable()
 export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(XrayService.name);
+
+  /** Теги инбаундов, в которых живут VLESS-клиенты (см. buildServerConfig). */
+  private static readonly CLIENT_INBOUND_TAGS = ['ws-cdn', 'reality-direct'];
 
   private readonly wsParamsPath = path.join(
     process.cwd(),
@@ -197,20 +258,114 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       .join('|');
   }
 
-  /** Применяет последний отложенный набор одним перезапуском Xray. */
+  /**
+   * Применяет последний отложенный набор клиентов. Разницу (добавленные и
+   * удалённые) досылаем в живой процесс через HandlerService — соединения
+   * остальных пользователей не рвутся. Конфиг на диске переписываем всегда:
+   * правки через API живут только в памяти, и после падения процесса Xray
+   * поднимется именно из файла. Если API недоступен — откатываемся на
+   * перезапуск, то есть на прежнее поведение.
+   */
   private async applyReload(): Promise<void> {
     const clients = this.pendingClients;
     if (!clients) return;
     this.pendingClients = null;
 
     await this.mutex.runExclusive(async () => {
+      const previous = this.clients;
       this.clients = clients;
       await this.writeConfig();
-      await this.stopProcess();
-      this.startProcess();
+
+      // Процесса ещё нет (старт сервиса) — применять через API нечему.
+      if (!this.currentProc) {
+        this.startProcess();
+        return;
+      }
+
+      if (!(await this.applyClientsDiff(previous, clients))) {
+        this.logger.warn(
+          'Не удалось применить клиентов через Xray API — перезапускаю процесс',
+        );
+        await this.stopProcess();
+        this.startProcess();
+      }
     });
+
     this.appliedSignature = this.clientsSignature(clients);
     this.logger.log(`Xray синхронизирован: ${clients.length} клиент(ов)`);
+  }
+
+  /**
+   * Досылает в работающий Xray разницу между наборами клиентов.
+   * false — хоть один вызов API не удался, вызывающий сделает перезапуск.
+   */
+  private async applyClientsDiff(
+    previous: IXrayClient[],
+    next: IXrayClient[],
+  ): Promise<boolean> {
+    const previousByName = new Map(previous.map((c) => [c.name, c.uuid]));
+    const nextByName = new Map(next.map((c) => [c.name, c.uuid]));
+
+    // Смена uuid у существующего имени — это удаление плюс добавление.
+    const added = next.filter((c) => previousByName.get(c.name) !== c.uuid);
+    const removed = previous
+      .filter((c) => nextByName.get(c.name) !== c.uuid)
+      .map((c) => c.name);
+
+    if (added.length === 0 && removed.length === 0) return true;
+
+    try {
+      if (removed.length > 0) await this.removeUsersViaApi(removed);
+      if (added.length > 0) await this.addUsersViaApi(added);
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Xray API отклонил изменение клиентов: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * `xray api adu` принимает файл конфига и вытаскивает из него inbounds[].tag
+   * вместе со списком пользователей. Переиспользуем buildServerConfig с
+   * подмножеством клиентов — так формат гарантированно совпадает с рабочим.
+   */
+  private async addUsersViaApi(clients: IXrayClient[]): Promise<void> {
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `xray-adu-${randomBytes(6).toString('hex')}.json`,
+    );
+
+    try {
+      await writeFile(
+        tmpPath,
+        JSON.stringify(this.buildServerConfig(clients), null, 2),
+      );
+      await execFileAsync('xray', [
+        'api',
+        'adu',
+        `--server=127.0.0.1:${this.statsApiPort}`,
+        tmpPath,
+      ]);
+    } finally {
+      await unlink(tmpPath).catch(() => undefined);
+    }
+  }
+
+  /** Удаляет пиров из обоих инбаундов по email (у нас это peer.name). */
+  private async removeUsersViaApi(emails: string[]): Promise<void> {
+    for (const tag of XrayService.CLIENT_INBOUND_TAGS) {
+      await execFileAsync('xray', [
+        'api',
+        'rmu',
+        `--server=127.0.0.1:${this.statsApiPort}`,
+        `-tag=${tag}`,
+        ...emails,
+      ]);
+    }
   }
 
   /** Публичные параметры для сборки outbound'ов в sing-box-подписке. */
@@ -260,6 +415,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       path: this.wsParams.wsPath,
       host: this.domain as string,
       sni: this.domain as string,
+      // Тот же uTLS-отпечаток, что и в sing-box-подписке для этого канала —
+      // иначе DPI видит разный ClientHello в зависимости от того, импортировал
+      // ли клиент подписку или прямую ссылку.
+      fp: 'chrome',
     });
 
     return `vless://${uuid}@${this.domain}:${this.port}?${query.toString()}#${encodeURIComponent(
@@ -295,6 +454,53 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     return `vless://${uuid}@${this.host}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
+  }
+
+  /**
+   * Ссылки vless:// на все каналы пира. Имена в якоре (#...) пользователь
+   * видит в списке серверов клиента — они должны быть понятны без пояснений.
+   * Живут здесь, а не в SubscriptionService: ссылка — знание о транспорте, и так
+   * её может взять и PeersService без цикла зависимостей между модулями.
+   */
+  buildShareLinks(name: string, uuid: string): string[] {
+    return [
+      this.buildClientLink(`${name} · CDN`, uuid),
+      this.buildRealityClientLink(`${name} · Прямой`, uuid),
+    ];
+  }
+
+  /**
+   * Список активных IP по каждому пиру (ключ — email, у нас peer.name).
+   * Требует statsUserOnline:true в policy. Ошибка не должна ронять вызывающий
+   * крон — возвращаем пустую карту (например, пока Xray не поднялся).
+   */
+  async getOnlineIps(): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+
+    try {
+      const { stdout } = await execFileAsync('xray', [
+        'api',
+        'statsonlineiplist',
+        `--server=127.0.0.1:${this.statsApiPort}`,
+        '-all',
+      ]);
+
+      // Один и тот же пир может встретиться в нескольких узлах ответа
+      // (например, по инбаунду) — объединяем, а не перезаписываем.
+      for (const entry of collectOnlineIpEntries(JSON.parse(stdout))) {
+        const merged = new Set(result.get(entry.email) ?? []);
+        for (const ip of entry.ips) merged.add(ip);
+        result.set(entry.email, [...merged]);
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось получить онлайн-IP из Xray: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -379,8 +585,16 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
   private async generateRealityParams(): Promise<IXrayRealityParams> {
     const { stdout } = await execAsync('xray x25519');
-    const privateKey = stdout.match(/Private key:\s*(\S+)/i)?.[1];
-    const publicKey = stdout.match(/Public key:\s*(\S+)/i)?.[1];
+
+    // Формат вывода менялся между версиями Xray, поддерживаем оба:
+    //   v1.8.x — "Private key: X" / "Public key: Y"
+    //   v26.x  — "PrivateKey: X" / "Password: Y" (в свежих сборках
+    //            "Password (PublicKey): Y"); третья строка Hash32 не нужна.
+    // Публичный ключ переименовали в Password, чтобы его не публиковали.
+    const privateKey = stdout.match(/private\s*key:\s*(\S+)/i)?.[1];
+    const publicKey =
+      stdout.match(/^\s*public\s*key:\s*(\S+)/im)?.[1] ??
+      stdout.match(/^\s*password[^:]*:\s*(\S+)/im)?.[1];
 
     if (!privateKey || !publicKey) {
       throw new InternalServerErrorException(
@@ -395,8 +609,15 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private buildServerConfig(): Record<string, unknown> {
-    const inboundClients: IXrayInboundClient[] = this.clients.map((client) => ({
+  /**
+   * Конфиг Xray для заданного набора клиентов. Параметр нужен, чтобы тем же
+   * кодом собрать частичный конфиг для `xray api adu` — формат инбаундов там
+   * обязан совпадать с рабочим, иначе пользователь добавится не туда.
+   */
+  private buildServerConfig(
+    clients: IXrayClient[] = this.clients,
+  ): Record<string, unknown> {
+    const inboundClients: IXrayInboundClient[] = clients.map((client) => ({
       id: client.uuid,
       // "email" — это просто ключ статистики в StatsService
       // (user>>>{email}>>>traffic>>>...), не настоящий адрес почты.
@@ -415,12 +636,22 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       // только на localhost, наружу не публикуется.
       api: {
         tag: 'api',
-        services: ['StatsService'],
+        // HandlerService — добавление/удаление пользователей на лету
+        // (xray api adu/rmu). Без него любая правка списка клиентов требует
+        // перезапуска процесса, а он рвёт соединения всем сразу.
+        services: ['HandlerService', 'StatsService'],
       },
       stats: {},
       policy: {
         levels: {
-          '0': { statsUserUplink: true, statsUserDownlink: true },
+          '0': {
+            statsUserUplink: true,
+            statsUserDownlink: true,
+            // Учёт онлайн-подключений — источник данных для getOnlineIps()
+            // (лимит устройств). Активным считается соединение в пределах
+            // последних 20 секунд.
+            statsUserOnline: true,
+          },
         },
       },
       routing: {
@@ -472,6 +703,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
             network: 'ws',
             wsSettings: {
               path: this.wsParams.wsPath,
+              // Cloudflare рвёт WebSocket после ~100с простоя на планах
+              // Free/Pro. Пинг раз в 30с держит канал живым, пока пользователь
+              // не шлёт трафик — без него связь умирала от одной паузы в видео.
+              heartbeatPeriod: 30,
             },
           },
         },

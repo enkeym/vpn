@@ -22,8 +22,6 @@ import {
 } from 'drizzle-orm';
 import { XrayService } from 'src/xray/xray.service';
 import type { IXrayClient } from 'src/xray/xray.service';
-import { HysteriaService } from 'src/hysteria/hysteria.service';
-import type { IHysteriaClient } from 'src/hysteria/hysteria.service';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
@@ -62,23 +60,19 @@ export class PeersService implements OnApplicationBootstrap {
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly xrayService: XrayService,
-    private readonly hysteriaService: HysteriaService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
 
   /**
    * onApplicationBootstrap (а не onModuleInit) — гарантирует, что onModuleInit
-   * у XrayService/HysteriaService уже отработал и их процессы
-   * инициализированы. Иначе была гонка: syncXrayWithDb/syncHysteriaWithDb
-   * вызывались раньше, чем сервис успевал загрузить параметры, syncClients
-   * молча выходил по guard'у (`!this.wsParams`), и xray.json/hysteria.yaml
-   * оставались с пустым списком клиентов до ручного пересоздания конфига.
+   * у XrayService уже отработал и его процесс инициализирован. Иначе была
+   * гонка: syncXrayWithDb вызывался раньше, чем сервис успевал загрузить
+   * параметры, syncClients молча выходил по guard'у (`!this.wsParams`), и
+   * xray.json оставался с пустым списком клиентов до ручного пересоздания.
    */
   async onApplicationBootstrap() {
     await this.syncXrayWithDb();
-    await this.backfillHysteriaPasswords();
-    await this.syncHysteriaWithDb();
     await this.backfillPausedAt();
     await this.backfillPausedReason();
   }
@@ -183,55 +177,6 @@ export class PeersService implements OnApplicationBootstrap {
         `Ошибка синхронизации Xray с БД: ${
           error instanceof Error ? error.message : error
         }`,
-      );
-    }
-  }
-
-  /**
-   * Аналог syncXrayWithDb для Hysteria2 — альтернативного протокола на
-   * случай, если VLESS+Reality режется DPI на сети конкретного клиента.
-   */
-  private async syncHysteriaWithDb(): Promise<void> {
-    try {
-      const activePeers = await this.db.query.peers.findMany({
-        where: eq(schema.peers.paused, false),
-        columns: { name: true, hysteriaPassword: true },
-      });
-
-      const clients: IHysteriaClient[] = activePeers
-        .filter(
-          (peer): peer is { name: string; hysteriaPassword: string } =>
-            peer.hysteriaPassword !== null,
-        )
-        .map((peer) => ({ name: peer.name, password: peer.hysteriaPassword }));
-
-      await this.hysteriaService.syncClients(clients);
-    } catch (error) {
-      this.logger.error(
-        `Ошибка синхронизации Hysteria2 с БД: ${
-          error instanceof Error ? error.message : error
-        }`,
-      );
-    }
-  }
-
-  /** Бэкфилл hysteriaPassword для пиров, созданных до появления Hysteria2. */
-  private async backfillHysteriaPasswords(): Promise<void> {
-    const peersWithoutPassword = await this.db.query.peers.findMany({
-      where: isNull(schema.peers.hysteriaPassword),
-      columns: { id: true },
-    });
-
-    for (const peer of peersWithoutPassword) {
-      await this.db
-        .update(schema.peers)
-        .set({ hysteriaPassword: randomBytes(16).toString('hex') })
-        .where(eq(schema.peers.id, peer.id));
-    }
-
-    if (peersWithoutPassword.length > 0) {
-      this.logger.log(
-        `Бэкфилл hysteriaPassword: ${peersWithoutPassword.length} конфигов`,
       );
     }
   }
@@ -353,14 +298,12 @@ export class PeersService implements OnApplicationBootstrap {
 
       const expiresAt = durationDays ? calculateExpiresAt(durationDays) : null;
       const vlessUuid = randomUUID();
-      const hysteriaPassword = randomBytes(16).toString('hex');
 
       const peerData: TPeer = {
         telegramId: dto.telegramId,
         username: dto.username || null,
         name: peerName,
         vlessUuid,
-        hysteriaPassword,
         paused: false,
         pausedReason: null,
         expiresAt,
@@ -386,10 +329,8 @@ export class PeersService implements OnApplicationBootstrap {
           );
         }
 
-        // Добавляем нового клиента в Xray и Hysteria2 (ошибки проглатываются
-        // внутри sync*WithDb).
+        // Добавляем нового клиента в Xray (ошибки проглатываются внутри).
         await this.syncXrayWithDb();
-        await this.syncHysteriaWithDb();
 
         return { peer: newPeer, config };
       } catch (error) {
@@ -467,10 +408,9 @@ export class PeersService implements OnApplicationBootstrap {
     this.invalidateUserPeersCache(peer.telegramId);
 
     try {
-      // Синхронизируем Xray и Hysteria2 (пауза/возобновление конфига —
-      // paused=false уже исключает/включает пира в syncXrayWithDb/syncHysteriaWithDb).
+      // Синхронизируем Xray (пауза/возобновление конфига — paused=false
+      // уже исключает/включает пира в syncXrayWithDb).
       await this.syncXrayWithDb();
-      await this.syncHysteriaWithDb();
     } catch (error) {
       this.logger.error(
         `Ошибка обновления конфига для ${peerName}, отмена изменений`,
@@ -501,9 +441,8 @@ export class PeersService implements OnApplicationBootstrap {
     this.invalidatePeerCache(peerName);
     this.invalidateUserPeersCache(peer.telegramId);
 
-    // Убираем клиента из Xray и Hysteria2
+    // Убираем клиента из Xray
     await this.syncXrayWithDb();
-    await this.syncHysteriaWithDb();
 
     return { message: `Конфиг ${peerName} успешно удален` };
   }
@@ -533,9 +472,8 @@ export class PeersService implements OnApplicationBootstrap {
       this.invalidateUserPeersCache(p.telegramId);
     }
 
-    // Убираем удалённые конфиги из Xray и Hysteria2
+    // Убираем удалённые конфиги из Xray
     await this.syncXrayWithDb();
-    await this.syncHysteriaWithDb();
   }
 
   /** Расширенная статистика для админ-панели. */
@@ -847,9 +785,8 @@ export class PeersService implements OnApplicationBootstrap {
         .set({ paused: true, pausedAt: new Date(), pausedReason: 'expired' })
         .where(inArray(schema.peers.id, ids));
 
-      // Убираем истёкшие конфиги из Xray и Hysteria2
+      // Убираем истёкшие конфиги из Xray
       await this.syncXrayWithDb();
-      await this.syncHysteriaWithDb();
 
       for (const peer of expiredPeers) {
         this.invalidatePeerCache(peer.name);
@@ -1033,18 +970,14 @@ export class PeersService implements OnApplicationBootstrap {
   }
 
   /**
-   * Кумулятивная per-user статистика из Xray (StatsService) и Hysteria2
-   * (trafficStats) — счётчики растут с момента старта процесса, как раньше
-   * у WG (`wg show dump`). Пир может быть активен через любой из двух
-   * протоколов (или оба) — суммируем. Ключ в обоих источниках — peer.name.
+   * Кумулятивная per-user статистика из Xray (StatsService) — счётчики растут
+   * с момента старта процесса, как раньше у WG (`wg show dump`).
+   * Ключ — peer.name (он же email клиента в конфиге Xray).
    */
   async refreshPeerTrafficStats(): Promise<number> {
-    const [xrayStats, hysteriaStats] = await Promise.all([
-      this.xrayService.getTrafficStats(),
-      this.hysteriaService.getTrafficStats(),
-    ]);
+    const xrayStats = await this.xrayService.getTrafficStats();
 
-    if (xrayStats.size === 0 && hysteriaStats.size === 0) {
+    if (xrayStats.size === 0) {
       return 0;
     }
 
@@ -1064,11 +997,10 @@ export class PeersService implements OnApplicationBootstrap {
 
     for (const peer of activePeers) {
       const xray = xrayStats.get(peer.name);
-      const hysteria = hysteriaStats.get(peer.name);
-      if (!xray && !hysteria) continue;
+      if (!xray) continue;
 
-      const rxBytes = (xray?.uplink ?? 0) + (hysteria?.rx ?? 0);
-      const txBytes = (xray?.downlink ?? 0) + (hysteria?.tx ?? 0);
+      const rxBytes = xray.uplink;
+      const txBytes = xray.downlink;
 
       const previousTotal = peer.rxBytes + peer.txBytes;
       const currentTotal = rxBytes + txBytes;
@@ -1363,7 +1295,7 @@ export class PeersService implements OnApplicationBootstrap {
       const currentExpiresAt = oldPeer.expiresAt;
 
       // Реактивируем конфиг и сбрасываем счётчики трафика/активности.
-      // vlessUuid/hysteriaPassword не меняются — ссылки остаются прежними,
+      // vlessUuid не меняется — ссылки остаются прежними,
       // менять здесь больше нечего (WireGuard-идентификатор упразднён).
       const [updatedPeer] = await this.db
         .update(schema.peers)
@@ -1391,9 +1323,8 @@ export class PeersService implements OnApplicationBootstrap {
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
 
-        // Конфиг снова активен — синхронизируем Xray и Hysteria2
+        // Конфиг снова активен — синхронизируем Xray
         await this.syncXrayWithDb();
-        await this.syncHysteriaWithDb();
 
         return { peer: updatedPeer, config };
       } catch (error) {
@@ -1430,28 +1361,20 @@ export class PeersService implements OnApplicationBootstrap {
    * прямая Hysteria2 — блокировку самого Cloudflare (часть мобильных сетей).
    */
   private buildCombinedConfigText(peer: TPeerSelect): string {
-    if (!peer.vlessUuid || !peer.hysteriaPassword) {
+    if (!peer.vlessUuid) {
       throw new InternalServerErrorException(
-        `У конфига ${peer.name} отсутствует vlessUuid/hysteriaPassword`,
+        `У конфига ${peer.name} отсутствует vlessUuid`,
       );
     }
 
     const subscriptionUrl = this.buildSubscriptionUrl(peer.vlessUuid);
-    const fullSubscriptionUrl = this.buildFullSubscriptionUrl(peer.vlessUuid);
-    const vlessLink = this.xrayService.buildClientLink(
-      peer.name,
-      peer.vlessUuid,
-    );
-    const hysteriaLink = this.hysteriaService.buildClientLink(
-      peer.name,
-      peer.hysteriaPassword,
-    );
+    const links = this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
 
     return (
-      `🔗 *Подписка* (авто-переключение, Hiddify/NekoBox):\n\`${subscriptionUrl}\`\n\n` +
-      `*Для официального sing-box (SFA/SFI/SFM)*:\n\`${fullSubscriptionUrl}\`\n\n` +
-      `*Прямые ссылки* (v2rayNG или ручной выбор, если подписка не подключается):\n` +
-      `\`${vlessLink}\`\n\n\`${hysteriaLink}\``
+      `🔗 *Ссылка-подписка* — работает во всех приложениях, ` +
+      `каналы переключаются автоматически:\n\`${subscriptionUrl}\`\n\n` +
+      `*Если подписка не добавляется* — импортируйте каналы по отдельности:\n` +
+      links.map((link) => `\`${link}\``).join('\n\n')
     );
   }
 

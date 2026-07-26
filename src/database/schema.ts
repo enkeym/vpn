@@ -81,8 +81,8 @@ export const peers = sqliteTable(
     // VLESS UUID для Xray. Nullable — старые WG-пиры получают его бэкфиллом
     // в PeersService.syncXrayWithDb при старте.
     vlessUuid: text('vlessUuid').unique(),
-    // Пароль для Hysteria2 (QUIC/UDP, самоподписанный сертификат, без домена).
-    // Nullable — старые пиры получают его бэкфиллом аналогично vlessUuid.
+    // Hysteria2 упразднена — поле остаётся nullable ради обратной совместимости
+    // со старыми записями, новые пиры его не заполняют (как publicKey/privateKey от WG).
     hysteriaPassword: text('hysteriaPassword').unique(),
     ip: text('ip').unique(),
     endpoint: text('endpoint'),
@@ -121,6 +121,32 @@ export const peers = sqliteTable(
     index('peers_expiration_idx').on(table.paused, table.expiresAt),
     index('peers_paused_reason_idx').on(table.paused, table.pausedReason),
     index('peers_activity_idx').on(table.paused, table.lastTrafficAt),
+  ],
+);
+
+/**
+ * Срабатывания лимита устройств. Блокировка не применяется — только запись
+ * факта и уведомление владельцу, чтобы сначала оценить долю ложных
+ * срабатываний на живых пользователях (см. DeviceLimitService).
+ */
+export const peerDeviceAlerts = sqliteTable(
+  'peer_device_alerts',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    peerName: text('peerName').notNull(),
+    /** Сколько одновременных IP насчитали в момент срабатывания. */
+    deviceCount: integer('deviceCount').notNull(),
+    /** Список IP через запятую — чтобы разбирать обращения в поддержку. */
+    ips: text('ips').notNull(),
+    notifiedAt: integer('notifiedAt', { mode: 'timestamp' }).$defaultFn(
+      () => new Date(),
+    ),
+  },
+  (table) => [
+    index('peer_device_alerts_peer_idx').on(table.peerName),
+    index('peer_device_alerts_notified_idx').on(table.notifiedAt),
   ],
 );
 

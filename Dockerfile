@@ -52,7 +52,7 @@ RUN CI=true pnpm prune --prod
 # Версия закреплена (ARG) — при необходимости бампнуть тегом из релизов
 # https://github.com/XTLS/Xray-core/releases.
 FROM base AS xray-build
-ARG XRAY_VERSION=v1.8.24
+ARG XRAY_VERSION=v26.3.27
 WORKDIR /xray
 RUN apk add --no-cache curl unzip && \
     curl -fsSL -o xray.zip \
@@ -61,22 +61,7 @@ RUN apk add --no-cache curl unzip && \
     chmod +x /xray/out/xray
 
 # ============================================
-# Stage 5: Fetch Hysteria2 (QUIC/UDP, резервный протокол против DPI)
-# ============================================
-# Hysteria2 — чистый Go, статически слинкован, работает на Alpine без glibc.
-# Релизы монорепо тегируются как "app/vX.Y.Z" (в URL — "app%2FvX.Y.Z").
-# Версия закреплена (ARG) — при необходимости бампнуть тегом из релизов
-# https://github.com/apernet/hysteria/releases.
-FROM base AS hysteria-build
-ARG HYSTERIA_VERSION=v2.6.0
-WORKDIR /hysteria
-RUN apk add --no-cache curl && \
-    curl -fsSL -o /hysteria/hysteria \
-      "https://github.com/apernet/hysteria/releases/download/app%2F${HYSTERIA_VERSION}/hysteria-linux-amd64" && \
-    chmod +x /hysteria/hysteria
-
-# ============================================
-# Stage 6: Production image
+# Stage 5: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -88,8 +73,6 @@ RUN apk add --no-cache \
     nginx \
     # Для healthcheck
     wget \
-    # Для генерации самоподписанного сертификата Hysteria2 (HysteriaService)
-    openssl \
     # Для отладки (опционально, можно убрать)
     curl
 
@@ -98,9 +81,6 @@ COPY --from=xray-build /xray/out/xray /usr/bin/xray
 COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
 COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat
 ENV XRAY_LOCATION_ASSET=/usr/share/xray
-
-# Бинарник Hysteria2 (резервный протокол, QUIC/UDP)
-COPY --from=hysteria-build /hysteria/hysteria /usr/bin/hysteria
 
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
@@ -121,10 +101,9 @@ RUN mkdir -p configs data
 LABEL maintainer="vpn-new-bot"
 LABEL version="1.0"
 
-# Порты
+# Порты: 443/tcp — nginx (TLS, VLESS+WS через CDN), 8443/tcp — VLESS+Reality
 EXPOSE 443/tcp
-EXPOSE 443/udp
-EXPOSE 8443/udp
+EXPOSE 8443/tcp
 EXPOSE 3000
 
 # Health check внутри контейнера

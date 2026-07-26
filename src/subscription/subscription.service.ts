@@ -1,38 +1,78 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import type { Response } from 'express';
 import { XrayService } from 'src/xray/xray.service';
-import { HysteriaService } from 'src/hysteria/hysteria.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 
+/** Минимальный набор полей пира для сборки любого формата подписки. */
+export type TSubscriptionPeer = Pick<TPeerSelect, 'name' | 'vlessUuid'>;
+
 /**
- * Собирает sing-box-конфиг с тремя outbound'ами под urltest-группой — три
- * независимых механизма обхода блокировок, у каждого свой профиль:
+ * Собирает подписку в двух форматах поверх двух независимых каналов обхода:
  * 1. VLESS+WS+TLS через Cloudflare CDN — обходит блокировку по IP сервера
  *    (актуально для домашних сетей), но зависит от доступности Cloudflare.
  * 2. VLESS+Reality — прямой TCP на IP сервера, без CDN и без WS-хендшейка,
  *    работает там, где режут именно CDN (часть мобильных операторов).
- * 3. Прямой Hysteria2 (UDP/QUIC) — тоже без CDN, отдельный протокол на
- *    случай, если конкретная сеть режет TCP, но не UDP (или наоборот).
- * sing-box-клиент (Hiddify, NekoBox) сам тестирует все три и держит активным
+ *
+ * sing-box-клиент (Hiddify, NekoBox) сам тестирует оба и держит активным
  * рабочий, переключаясь автоматически при обрыве — без участия пользователя.
+ * Остальные клиенты получают те же каналы ссылками vless:// в base64.
  */
 @Injectable()
 export class SubscriptionService {
-  constructor(
-    private readonly xrayService: XrayService,
-    private readonly hysteriaService: HysteriaService,
-  ) {}
+  constructor(private readonly xrayService: XrayService) {}
 
-  buildSingBoxConfig(
-    peer: Pick<TPeerSelect, 'name' | 'vlessUuid' | 'hysteriaPassword'>,
-  ): Record<string, unknown> {
-    if (!peer.vlessUuid || !peer.hysteriaPassword) {
+  /**
+   * Универсальный формат подписки: ссылки через перевод строки, всё вместе
+   * в base64. Понимают v2rayNG, v2rayN, v2RayTun, Streisand, V2Box, Shadowrocket,
+   * Happ, Karing — то есть все клиенты, кроме тех, что хотят sing-box JSON.
+   */
+  buildBase64Subscription(peer: TSubscriptionPeer): string {
+    return Buffer.from(this.buildShareLinks(peer).join('\n'), 'utf-8').toString(
+      'base64',
+    );
+  }
+
+  /** Ссылки vless:// на все каналы пира — для ручного импорта и для base64. */
+  buildShareLinks(peer: TSubscriptionPeer): string[] {
+    if (!peer.vlessUuid) {
       throw new InternalServerErrorException(
-        `У конфига ${peer.name} отсутствует vlessUuid/hysteriaPassword`,
+        `У конфига ${peer.name} отсутствует vlessUuid`,
+      );
+    }
+
+    return this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
+  }
+
+  /**
+   * Стандартные заголовки подписки. Их читают Happ, Streisand, v2rayN, Hiddify:
+   * пользователь видит срок и трафик прямо в приложении, не заходя в бот.
+   */
+  applySubscriptionHeaders(res: Response, peer: TPeerSelect): void {
+    // total=0 — безлимит по трафику; expire в секундах Unix, 0 — бессрочно.
+    const expire = peer.expiresAt
+      ? Math.floor(peer.expiresAt.getTime() / 1000)
+      : 0;
+
+    res.setHeader(
+      'Subscription-Userinfo',
+      `upload=${peer.txBytes}; download=${peer.rxBytes}; total=0; expire=${expire}`,
+    );
+    // Через сколько часов клиенту перечитать подписку.
+    res.setHeader('Profile-Update-Interval', '12');
+    res.setHeader(
+      'Profile-Title',
+      `base64:${Buffer.from(peer.name, 'utf-8').toString('base64')}`,
+    );
+  }
+
+  buildSingBoxConfig(peer: TSubscriptionPeer): Record<string, unknown> {
+    if (!peer.vlessUuid) {
+      throw new InternalServerErrorException(
+        `У конфига ${peer.name} отсутствует vlessUuid`,
       );
     }
 
     const xray = this.xrayService.getPublicParams();
-    const hysteria = this.hysteriaService.getPublicParams();
 
     return {
       outbounds: [
@@ -81,29 +121,6 @@ export class SubscriptionService {
           },
         },
         {
-          type: 'hysteria2',
-          tag: 'direct-mobile',
-          domain_strategy: 'ipv4_only',
-          server: hysteria.host,
-          server_port: hysteria.port,
-          // Brutal CC: заявляем пропускную способность клиента (из HYSTERIA_UP/DOWN_MBPS).
-          // Сервер по умолчанию уважает эти значения → Brutal в обе стороны. Нет
-          // значений → поля отсутствуют, Hysteria2 падает на BBR (текущее поведение).
-          ...(hysteria.upMbps > 0 ? { up_mbps: hysteria.upMbps } : {}),
-          ...(hysteria.downMbps > 0 ? { down_mbps: hysteria.downMbps } : {}),
-          // Hysteria2 userpass-авторизация — сервер ждёт "имя:пароль" одной строкой.
-          password: `${peer.name}:${peer.hysteriaPassword}`,
-          obfs: {
-            type: 'salamander',
-            password: hysteria.obfsPassword,
-          },
-          tls: {
-            enabled: true,
-            insecure: true,
-            server_name: hysteria.host,
-          },
-        },
-        {
           type: 'urltest',
           tag: 'auto',
           // ВАЖНО: плоская группа, без вложенности. Раньше пробовали разбить
@@ -114,7 +131,7 @@ export class SubscriptionService {
           // вместо того чтобы дать reality-direct шанс — на проде реально был
           // случай, когда Hysteria2 упала, а автопереключения на живой
           // reality-direct не произошло, пришлось выбирать вручную.
-          outbounds: ['cdn-wifi', 'reality-direct', 'direct-mobile'],
+          outbounds: ['cdn-wifi', 'reality-direct'],
           url: 'https://www.gstatic.com/generate_204',
           // Короче, чем раньше (было 1m): быстрее ловим момент, когда канал
           // ожил/умер после смены сети (Wi-Fi↔мобильный).
@@ -137,7 +154,7 @@ export class SubscriptionService {
         {
           type: 'selector',
           tag: 'select',
-          outbounds: ['auto', 'cdn-wifi', 'reality-direct', 'direct-mobile'],
+          outbounds: ['auto', 'cdn-wifi', 'reality-direct'],
           default: 'auto',
           // Тут interrupt оправдан: это осознанный выбор пользователя (или
           // смена default), а не шумный автотест — переключаемся мгновенно.
@@ -192,9 +209,7 @@ export class SubscriptionService {
    * подписки — нужен самодостаточный конфиг, поэтому добавлены log/dns/
    * inbounds поверх тех же outbounds+route.
    */
-  buildFullSingBoxConfig(
-    peer: Pick<TPeerSelect, 'name' | 'vlessUuid' | 'hysteriaPassword'>,
-  ): Record<string, unknown> {
+  buildFullSingBoxConfig(peer: TSubscriptionPeer): Record<string, unknown> {
     const base = this.buildSingBoxConfig(peer);
 
     return {

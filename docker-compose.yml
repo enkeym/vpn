@@ -41,8 +41,6 @@ services:
       - '${XRAY_PORT:-443}:${XRAY_PORT:-443}/tcp'
       # VLESS + Reality — прямой TCP на IP сервера, без CDN (см. XrayService)
       - '${REALITY_PORT:-8443}:${REALITY_PORT:-8443}/tcp'
-      # Hysteria2 (QUIC/UDP) — прямой канал против блокировки самого Cloudflare
-      - '${HYSTERIA_PORT:-8443}:${HYSTERIA_PORT:-8443}/udp'
       # Опционально: health check порт (если нужен внешний доступ)
       # - '3000:3000'
 
