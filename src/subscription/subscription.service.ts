@@ -187,6 +187,12 @@ export class SubscriptionService {
           // not permitted" (VPN-песочница не даёт открыть packet-listener).
           { ip_is_private: true, action: 'reject', method: 'drop' },
           { ip_cidr: ['::/0'], action: 'reject', method: 'drop' },
+          // Блокируем QUIC (HTTP/3, UDP 443): YouTube и Google-поиск первым
+          // делом пробуют его, и если UDP через туннель теряется/душится
+          // оператором, страница висит вместо отката на TCP. С drop клиент
+          // мгновенно откатывается на HTTP/2 — симптом «Telegram работает,
+          // YouTube и поиск зависают». Правило по network+port, без sniff.
+          { network: 'udp', port: [443], action: 'reject', method: 'drop' },
         ],
         final: 'select',
         auto_detect_interface: true,
