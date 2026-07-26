@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { BotService } from './bot.service';
 import { PeersModule } from 'src/peers/peers.module';
+import { SubscriptionModule } from 'src/subscription/subscription.module';
 import { FamilyModule } from 'src/family/family.module';
 import { BlockedModule } from 'src/blocked/blocked.module';
 import { MainHandler } from './handlers/main.handler';
@@ -20,6 +21,7 @@ import { AdminCommandsRegistrar } from './registrars/admin-commands.registrar';
 @Module({
   imports: [
     PeersModule,
+    SubscriptionModule,
     FamilyModule,
     BlockedModule,
     forwardRef(() => PaymentModule),

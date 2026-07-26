@@ -8,5 +8,6 @@ import { XrayModule } from 'src/xray/xray.module';
   imports: [PeersModule, XrayModule],
   controllers: [SubscriptionController],
   providers: [SubscriptionService],
+  exports: [SubscriptionService],
 })
 export class SubscriptionModule {}

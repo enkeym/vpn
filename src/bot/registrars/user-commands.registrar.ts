@@ -275,6 +275,12 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
     });
 
+    // Скачать sing-box конфиг файлом (.json) — импорт как «Локальный»
+    bot.callbackQuery(/^download_config:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.downloadConfigFile(ctx, ctx.match[1]);
+    });
+
     // Редактирование описания своего конфига (только для админов)
     bot.callbackQuery(/^edit_description:(.+)$/, async (ctx) => {
       if (!ctx.from || !isAdmin(String(ctx.from.id))) {

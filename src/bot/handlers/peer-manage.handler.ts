@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
+import { SubscriptionService } from 'src/subscription/subscription.service';
 import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 
@@ -15,7 +16,10 @@ const awaitingDescriptionEdit = new Map<
 export class PeerManageHandler {
   private readonly logger = new Logger(PeerManageHandler.name);
 
-  constructor(private readonly peersService: PeersService) {}
+  constructor(
+    private readonly peersService: PeersService,
+    private readonly subscriptionService: SubscriptionService,
+  ) {}
 
   isAwaitingDescriptionEdit(userId: string): boolean {
     return awaitingDescriptionEdit.has(userId);
@@ -313,6 +317,41 @@ export class PeerManageHandler {
       this.logger.error(`Ошибка отправки файла конфига: ${error}`);
       await ctx.answerCallbackQuery({
         text: 'Ошибка получения файла конфига',
+        show_alert: true,
+      });
+    }
+  }
+
+  /**
+   * Отправляет готовый sing-box конфиг файлом (.json). Нужен, когда домен
+   * подписки травят по DNS и «Удалённый» профиль в клиенте не скачивается —
+   * файл добавляется как «Локальный», в обход резолвинга по URL.
+   */
+  async downloadConfigFile(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    try {
+      const peer = await this.peersService.findPeer(peerName);
+      const config = this.subscriptionService.buildFullSingBoxConfig(peer);
+      const fileBuffer = Buffer.from(JSON.stringify(config, null, 2), 'utf-8');
+
+      const message = await ctx.replyWithDocument(
+        new InputFile(fileBuffer, `${peer.name}.json`),
+        {
+          caption:
+            `📥 *Файл конфига* \`${peer.name}\`\n\n` +
+            'Для официального *sing-box*: создайте профиль с типом ' +
+            '*«Локальный»* и импортируйте этот файл. Помогает, когда ' +
+            '«Удалённый» профиль виснет на обновлении.',
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
+        },
+      );
+      await this.peersService.setFileMessageId(peer.name, message.message_id);
+    } catch (error) {
+      this.logger.error(`Ошибка отправки файла-конфига: ${error}`);
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка формирования файла конфига',
         show_alert: true,
       });
     }

@@ -376,6 +376,10 @@ export const BotUi = {
     // Кнопка получения ссылки-конфига (подписка + прямые vless-ссылки)
     keyboard.text('🔗 Получить ссылку', `get_config_file:${peer.name}`).row();
 
+    // Скачать готовый sing-box конфиг файлом — для импорта как «Локальный»,
+    // когда домен подписки травят по DNS и «Удалённый» профиль не грузится.
+    keyboard.text('📥 Скачать файл', `download_config:${peer.name}`).row();
+
     // Показываем кнопку "Продлить" если конфиг истёк или на паузе
     if (peer.paused || expired) {
       keyboard.text('🔄 Продлить', `extend_peer:${peer.name}`).row();
