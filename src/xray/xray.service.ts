@@ -477,28 +477,35 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   async getOnlineIps(): Promise<Map<string, string[]>> {
     const result = new Map<string, string[]>();
 
-    try {
-      const { stdout } = await execFileAsync('xray', [
-        'api',
-        'statsonlineiplist',
-        `--server=127.0.0.1:${this.statsApiPort}`,
-        '-all',
-      ]);
+    // Установленная версия Xray больше не поддерживает `-all` — приходится
+    // опрашивать по одному email за раз. NotFound для конкретного пира —
+    // норма (сейчас офлайн), а не повод шуметь в логи.
+    await Promise.all(
+      this.clients.map(async (client) => {
+        try {
+          const { stdout } = await execFileAsync('xray', [
+            'api',
+            'statsonlineiplist',
+            `--server=127.0.0.1:${this.statsApiPort}`,
+            '-email',
+            client.name,
+          ]);
 
-      // Один и тот же пир может встретиться в нескольких узлах ответа
-      // (например, по инбаунду) — объединяем, а не перезаписываем.
-      for (const entry of collectOnlineIpEntries(JSON.parse(stdout))) {
-        const merged = new Set(result.get(entry.email) ?? []);
-        for (const ip of entry.ips) merged.add(ip);
-        result.set(entry.email, [...merged]);
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Не удалось получить онлайн-IP из Xray: ${
-          error instanceof Error ? error.message : error
-        }`,
-      );
-    }
+          const merged = new Set(result.get(client.name) ?? []);
+          for (const entry of collectOnlineIpEntries(JSON.parse(stdout))) {
+            for (const ip of entry.ips) merged.add(ip);
+          }
+          if (merged.size > 0) result.set(client.name, [...merged]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.includes('NotFound')) return;
+
+          this.logger.warn(
+            `Не удалось получить онлайн-IP для ${client.name}: ${message}`,
+          );
+        }
+      }),
+    );
 
     return result;
   }
