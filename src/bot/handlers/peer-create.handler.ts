@@ -110,13 +110,21 @@ export class PeerCreateHandler {
 
       const qr = await this.peersService.generatePeerQrCode(peer.name);
 
-      const message = await ctx.replyWithPhoto(
-        new InputFile(qr, `${peer.name}_qr.png`),
+      // QR отправляем с короткой подписью: полный текст конфига (подписка + две
+      // vless-ссылки) в сумме с приветствием превышает лимит подписи к фото в
+      // Telegram (1024 символа) и запрос падает с "caption is too long".
+      // Поэтому конфиг уходит отдельным сообщением — там лимит 4096.
+      await ctx.replyWithPhoto(new InputFile(qr, `${peer.name}_qr.png`), {
+        caption:
+          `${BotUi.configCreated(peer.name, peer.expiresAt)}\n\n` +
+          `_Отсканируйте QR или скопируйте ссылку из сообщения ниже_`,
+        parse_mode: 'Markdown',
+      });
+
+      const message = await ctx.reply(
+        `${config}\n\n` +
+          `_Скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
         {
-          caption:
-            `${BotUi.configCreated(peer.name, peer.expiresAt)}\n\n` +
-            `${config}\n\n` +
-            `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.configDeliveredKeyboard(peer.name),
         },

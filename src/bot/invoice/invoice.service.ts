@@ -474,14 +474,24 @@ export class InvoiceService {
 
     const qr = await this.peersService.generatePeerQrCode(peer.name);
 
-    const message = await this.bot.api.sendPhoto(
+    // Короткая подпись к QR: полный конфиг с приветствием превышает лимит
+    // подписи к фото (1024 символа) и Telegram отклоняет запрос
+    // ("caption is too long"). Конфиг шлём отдельным сообщением (лимит 4096).
+    await this.bot.api.sendPhoto(
       telegramId,
       new InputFile(qr, `${peer.name}_qr.png`),
       {
         caption:
           `${caption}\n\n` +
-          `${config}\n\n` +
-          `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+          `_Отсканируйте QR или скопируйте ссылку из сообщения ниже_`,
+        parse_mode: 'Markdown',
+      },
+    );
+
+    const message = await this.bot.api.sendMessage(
+      telegramId,
+      `${config}\n\n` + `_Скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+      {
         parse_mode: 'Markdown',
         reply_markup: BotUi.configDeliveredKeyboard(peer.name),
       },

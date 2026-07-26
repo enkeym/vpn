@@ -401,14 +401,24 @@ export class PeerManageHandler {
       // нужна клавиатура с goto_peer_after_replace)
       const qr = await this.peersService.generatePeerQrCode(newPeer.name);
 
+      // Короткая подпись к QR: полный конфиг с приветствием превышает лимит
+      // подписи к фото (1024 символа) — Telegram отклоняет с "caption is too
+      // long". Конфиг шлём отдельным сообщением, где лимит 4096.
       await ctx.replyWithPhoto(new InputFile(qr, `${newPeer.name}_qr.png`), {
         caption:
           `${BotUi.configReplaced(newPeer.name, newPeer.expiresAt)}\n\n` +
-          `${config}\n\n` +
-          `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+          `_Отсканируйте QR или скопируйте ссылку из сообщения ниже_`,
         parse_mode: 'Markdown',
-        reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
       });
+
+      await ctx.reply(
+        `${config}\n\n` +
+          `_Скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
+        },
+      );
     } catch (error) {
       this.logger.error(`Ошибка замены конфига: ${error}`);
       const errorMsg = error instanceof Error ? error.message : String(error);

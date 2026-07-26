@@ -747,16 +747,25 @@ export class FamilyHandler {
       // Отправляем конфиг клиенту: QR-код + ссылки (как после покупки)
       try {
         const qr = await this.peersService.generatePeerQrCode(peer.name);
-        const message = await ctx.api.sendPhoto(
+        // Короткая подпись к QR: полный конфиг (подписка + две vless-ссылки)
+        // с приветствием превышает лимит подписи к фото (1024 символа) —
+        // Telegram отклоняет с "caption is too long". Конфиг шлём отдельным
+        // сообщением, где лимит 4096.
+        await ctx.api.sendPhoto(
           member.telegramId,
           new InputFile(qr, `${peer.name}_qr.png`),
           {
             caption:
               `${BotUi.memberConfigCreated(peer.name, peer.expiresAt)}\n\n` +
-              `${config}\n\n` +
-              `_Отсканируйте QR или скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+              `_Отсканируйте QR или скопируйте ссылку из сообщения ниже_`,
             parse_mode: 'Markdown',
           },
+        );
+        const message = await ctx.api.sendMessage(
+          member.telegramId,
+          `${config}\n\n` +
+            `_Скопируйте ссылку в v2rayNG / Hiddify / NekoBox_`,
+          { parse_mode: 'Markdown' },
         );
         await this.peersService.setConfigMessageId(
           peer.name,
