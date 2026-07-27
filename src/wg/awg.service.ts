@@ -6,18 +6,15 @@ import { Mutex } from 'async-mutex';
 import { WgConfig } from 'wireguard-tools';
 import {
   assertValidObfuscation,
-  downgradeToAwg2,
   generateHeaderProtectionKey,
   generateObfuscation,
   obfuscationLines,
   parseAwgConfig,
   readAdvancedFromEnv,
   readAwg3FromEnv,
-  readAwgVersion,
   readObfuscationFromEnv,
   serializeAwgConfig,
   upgradeToAwg3,
-  type IAwg3Options,
   type IAwgServerConfig,
 } from './awg.utils';
 import {
@@ -25,6 +22,7 @@ import {
   generateKeys,
   getNextFreeIp,
   getSubnetPrefix,
+  readAllowedIps,
 } from './wg.utils';
 import {
   bringInterfaceUp,
@@ -64,21 +62,17 @@ export class AwgService implements ITunnelService, OnModuleInit {
 
   private readonly filePath = path.join(process.cwd(), '/configs/awg0.conf');
   private readonly interfaceAddress = process.env.AWG_ADDRESS || '10.9.0.1/16';
-  private readonly allowedIps = process.env.WG_ALLOWED_IPS || '0.0.0.0/0';
+  private readonly allowedIps = readAllowedIps();
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
   /** Junk-пакеты добавляют объём — клиентский MTU ниже, чем у чистого WireGuard */
   private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
 
-  /** 2 — формат для клиентов старее AmneziaVPN 5.0.0.5, 3 — полный набор */
-  private readonly awgVersion = readAwgVersion();
-
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом, поэтому
-   * его можно выключить, пока не все обновили приложение. В формате версии 2
-   * его нет по определению.
+   * его можно выключить, пока не все обновили приложение.
    */
   private readonly headerProtection =
-    this.awgVersion === 3 && process.env.AWG_HEADER_PROTECTION !== 'false';
+    process.env.AWG_HEADER_PROTECTION !== 'false';
 
   /**
    * Апгрейд существующего awg0.conf до AWG 3 перевыпускает параметры обфускации
@@ -165,7 +159,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private async generateServerConfig(): Promise<void> {
     if (existsSync(this.filePath)) {
       this.logger.log(`Конфиг AmneziaWG найден: ${this.filePath}`);
-      await this.syncConfigFormat();
+      await this.upgradeExistingConfig();
       return;
     }
 
@@ -181,8 +175,11 @@ export class AwgService implements ITunnelService, OnModuleInit {
     // у всех значения сами по себе становятся сигнатурой для DPI)
     const obfuscation = readObfuscationFromEnv() ?? generateObfuscation();
     const awg3 = readAwg3FromEnv();
-    if (this.headerProtection && !awg3.headerProtectionKey) {
-      awg3.headerProtectionKey = generateHeaderProtectionKey();
+    if (this.headerProtection) {
+      awg3.headerProtectionKey ??= generateHeaderProtectionKey();
+    } else {
+      // Флаг — выключатель: заданный в .env ключ его не переопределяет
+      delete awg3.headerProtectionKey;
     }
     // В .env могли приехать короткие S1..S4 — с header protection они не работают
     assertValidObfuscation(obfuscation, awg3);
@@ -213,20 +210,43 @@ export class AwgService implements ITunnelService, OnModuleInit {
   /**
    * Конфиг, созданный до AWG 3, поднимется и так, но обфускация останется на
    * уровне первой версии — дозаполняем недостающие поля на месте.
+   *
+   * Любая такая правка меняет параметры обфускации, а значит разом отключает
+   * всех, кому конфиг уже выдан, поэтому по умолчанию только пишем
+   * предупреждение: применяется она лишь при AWG_ALLOW_CONFIG_UPGRADE=true.
    */
   private async upgradeExistingConfig(): Promise<void> {
     const config = await this.getConfig();
-    const upgraded = upgradeToAwg3(
+
+    // upgradeToAwg3 правит config на месте, но пока файл не перезаписан, правки
+    // живут только в этом локальном объекте — getConfig читает файл заново
+    const changes = upgradeToAwg3(
       config,
       this.headerProtection,
       readAwg3FromEnv(),
     );
 
-    if (upgraded.length === 0) return;
+    // Header protection выключили в .env, а ключ в файле остался: с ним клиенты,
+    // ради которых его и выключают, всё равно не подключатся
+    if (!this.headerProtection && config.awg3.headerProtectionKey) {
+      delete config.awg3.headerProtectionKey;
+      changes.push('HeaderProtectionKey');
+    }
+
+    if (changes.length === 0) return;
+
+    if (!this.allowConfigUpgrade) {
+      this.logger.warn(
+        `Конфиг AmneziaWG расходится с текущими настройками AWG 3 (${changes.join(', ')}). ` +
+          'Обновление отключило бы всех, кому конфиг уже выдан, поэтому пропущено: ' +
+          'задайте AWG_ALLOW_CONFIG_UPGRADE=true, чтобы применить.',
+      );
+      return;
+    }
 
     await this.writeConfig(config);
     this.logger.warn(
-      `Конфиг AmneziaWG обновлён до AWG 3 (${upgraded.join(', ')}). ` +
+      `Конфиг AmneziaWG обновлён до AWG 3 (${changes.join(', ')}). ` +
         'Старые выданные файлы больше не подключатся: клиентам нужно заново скачать конфиг из бота.',
     );
   }

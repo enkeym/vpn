@@ -13,6 +13,7 @@ import {
   getNextFreeIp,
   getSubnetPrefix,
   parseWgConfig,
+  readAllowedIps,
 } from './wg.utils';
 import {
   bringInterfaceUp,
@@ -44,7 +45,7 @@ export class WgService implements ITunnelService, OnModuleInit {
 
   private readonly filePath = path.join(process.cwd(), '/configs/wg0.conf');
   private readonly interfaceAddress = '10.8.0.1/16';
-  private readonly allowedIps = process.env.WG_ALLOWED_IPS || '0.0.0.0/0';
+  private readonly allowedIps = readAllowedIps();
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
   private readonly clientMtu = Number(process.env.WG_MTU || 1420);
 

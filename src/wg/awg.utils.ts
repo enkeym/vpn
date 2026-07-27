@@ -143,23 +143,6 @@ const TRANSPORT_SIGNATURE_MAX = 64;
 /** HeaderProtectionKey — обычный 32-байтный ключ в base64, как PrivateKey */
 const HEADER_PROTECTION_KEY_BYTES = 32;
 
-/**
- * Версия протокола, под которую собирается конфиг.
- *
- * 3 — полный набор: диапазоны H1..H4, S3/S4, header protection. Требует
- * AmneziaVPN >= 5.0.0.5 (AmneziaWG >= 3.0.1) у клиента.
- * 2 — совместимость со старыми клиентами: H1..H4 одиночными числами, без S3/S4
- * и без параметров AWG 3. Клиент постарше на конфиге версии 3 не подключится
- * вообще, причём молча — сервер отбрасывает его пакеты как «unknown type».
- */
-export type TAwgVersion = 2 | 3;
-
-export function readAwgVersion(
-  env: NodeJS.ProcessEnv = process.env,
-): TAwgVersion {
-  return env.AWG_VERSION?.trim() === '2' ? 2 : 3;
-}
-
 const SIZE_ENV_KEYS: Record<TAwgSizeKey, string> = {
   jc: 'AWG_JC',
   jmin: 'AWG_JMIN',
@@ -182,17 +165,14 @@ const HEADER_ENV_KEYS: Record<TAwgHeaderKey, string> = {
  * по себе сигнатура для DPI, поэтому набор генерируется один раз при создании
  * awg0.conf и дальше читается из файла.
  */
-export function generateObfuscation(
-  version: TAwgVersion = 3,
-): IAwgObfuscation {
+export function generateObfuscation(): IAwgObfuscation {
   const s1 = randomInt(15, 133);
   let s2 = randomInt(15, 133);
   while (s1 + HANDSHAKE_SIZE_DELTA === s2) {
     s2 = randomInt(15, 133);
   }
 
-  const [h1, h2, h3, h4] =
-    version === 3 ? generateHeaderRanges() : generateHeaderNumbers();
+  const [h1, h2, h3, h4] = generateHeaderRanges();
 
   return {
     jc: randomInt(4, 13),
@@ -200,14 +180,10 @@ export function generateObfuscation(
     jmax: 70,
     s1,
     s2,
-    // S3/S4 появились в AWG 3: клиент версии 2 их не знает
-    s3: version === 3 ? randomInt(15, 133) : 0,
+    s3: randomInt(15, 133),
     // Транспортных пакетов на порядки больше, чем хендшейков: добивка мелкая,
     // иначе она съедает полезный MTU на каждом пакете
-    s4:
-      version === 3
-        ? randomInt(HEADER_PROTECTION_MIN_SIGNATURE, TRANSPORT_SIGNATURE_MAX + 1)
-        : 0,
+    s4: randomInt(HEADER_PROTECTION_MIN_SIGNATURE, TRANSPORT_SIGNATURE_MAX + 1),
     h1,
     h2,
     h3,
@@ -230,21 +206,6 @@ function generateHeaderRanges(): [string, string, string, string] {
   });
 
   return ranges as [string, string, string, string];
-}
-
-/**
- * Четыре различных типа заголовков в формате AWG 2 — одиночные числа. Берутся
- * из тех же четырёх сегментов, что и диапазоны: так значения гарантированно
- * различны, а проверка на пересечение проходит без особого случая.
- */
-function generateHeaderNumbers(): [string, string, string, string] {
-  const segment = Math.floor((HEADER_MAX - HEADER_MIN) / 4);
-
-  const numbers = [0, 1, 2, 3].map((index) =>
-    String(HEADER_MIN + segment * index + randomInt(0, segment)),
-  );
-
-  return numbers as [string, string, string, string];
 }
 
 /** Ключ header protection. Один на сервер: у клиента он обязан быть тем же */
@@ -319,43 +280,6 @@ export function upgradeToAwg3(
   }
 
   return upgraded;
-}
-
-/**
- * Приводит конфиг обратно к формату AWG 2: убирает header protection и прочие
- * поля третьей версии, обнуляет S3/S4 и сворачивает диапазоны H1..H4 в числа.
- *
- * Берётся именно нижняя граница диапазона: клиент версии 2 разбирает
- * «89422501-89522501» как 89422501, поэтому после свёртки уже выданные
- * клиентские конфиги остаются рабочими и перевыпускать их не нужно.
- * Возвращает список убранных полей — пустой, если конфиг уже в формате 2.
- */
-export function downgradeToAwg2(config: IAwgServerConfig): string[] {
-  const removed: string[] = [];
-
-  for (const { field, conf } of AWG3_FIELDS) {
-    if (config.awg3[field]) {
-      delete config.awg3[field];
-      removed.push(conf);
-    }
-  }
-
-  for (const key of ['s3', 's4'] as const) {
-    if (config.obfuscation[key] !== 0) {
-      config.obfuscation[key] = 0;
-      removed.push(key.toUpperCase());
-    }
-  }
-
-  const headers = ['h1', 'h2', 'h3', 'h4'] as const;
-  if (headers.some((key) => config.obfuscation[key].includes('-'))) {
-    for (const key of headers) {
-      config.obfuscation[key] = config.obfuscation[key].split('-')[0].trim();
-    }
-    removed.push('H1..H4');
-  }
-
-  return removed;
 }
 
 /** `5-100` или `5`; границы нужны, чтобы проверить пересечения диапазонов */
@@ -707,9 +631,8 @@ export function obfuscationLines(
     `Jmax = ${o.jmax}`,
     `S1 = ${o.s1}`,
     `S2 = ${o.s2}`,
-    // Нули не пишем: в формате AWG 2 этих ключей быть не должно вовсе
-    ...(o.s3 ? [`S3 = ${o.s3}`] : []),
-    ...(o.s4 ? [`S4 = ${o.s4}`] : []),
+    `S3 = ${o.s3}`,
+    `S4 = ${o.s4}`,
     `H1 = ${o.h1}`,
     `H2 = ${o.h2}`,
     `H3 = ${o.h3}`,

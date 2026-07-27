@@ -11,6 +11,22 @@ export async function parseWgConfig(filePath: string): Promise<WgConfig> {
   return config;
 }
 
+/**
+ * AllowedIPs клиентского конфига из WG_ALLOWED_IPS, нормализованный к виду
+ * «0.0.0.0/0, ::/0» — с пробелом после запятой. Это не косметика: AmneziaVPN
+ * определяет «полный туннель» точным сравнением со строкой
+ * «AllowedIPs = 0.0.0.0/0, ::/0» (serversUiController.cpp), и при любом другом
+ * написании блокирует своё раздельное туннелирование с тостом
+ * «Сервер по умолчанию не поддерживает раздельное туннелирование».
+ */
+export function readAllowedIps(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.WG_ALLOWED_IPS || '0.0.0.0/0, ::/0')
+    .split(',')
+    .map((ip) => ip.trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 /** '10.8.0.1/16' → '10.8' — первые два октета подсети интерфейса */
 export function getSubnetPrefix(address: string): string {
   const [first, second] = address.split('/')[0].split('.');
