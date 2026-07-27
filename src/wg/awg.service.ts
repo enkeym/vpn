@@ -68,11 +68,15 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
 
   /**
-   * Единственный параметр AWG 3, который обязан совпасть с клиентом, поэтому
-   * его можно выключить, пока не все обновили приложение.
+   * Единственный параметр AWG 3, который обязан совпасть с клиентом. По
+   * умолчанию выключен: AmneziaVPN при импорте .conf-файла отбрасывает
+   * HeaderProtectionKey (importController переносит только Jc/S1..S4/H1..H4/
+   * I1..I5), клиент шлёт хендшейк без шифрования заголовков и виснет.
+   * Включать только если все клиенты — приложение AmneziaWG >= 3.0.1,
+   * передающее .conf в туннель как есть.
    */
   private readonly headerProtection =
-    process.env.AWG_HEADER_PROTECTION !== 'false';
+    process.env.AWG_HEADER_PROTECTION === 'true';
 
   /**
    * Апгрейд существующего awg0.conf до AWG 3 перевыпускает параметры обфускации

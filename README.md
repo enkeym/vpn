@@ -86,6 +86,14 @@ docker compose build --build-arg AWG_GO_REF=<sha> --build-arg AWG_TOOLS_REF=<sha
 | `AWG_I1..AWG_I5` | client-side | пакеты-имитации DNS/QUIC/SIP перед хендшейком |
 
 Header protection использует `S1..S4` как nonce, поэтому все четыре обязаны быть ≥ 8.
+
+> ⚠️ **AmneziaVPN теряет `HeaderProtectionKey` при импорте `.conf`-файла**:
+> `importController` переносит из нативного конфига только
+> `Jc/Jmin/Jmax/S1..S4/H1..H4/I1..I5`, поэтому клиент шлёт хендшейк без
+> шифрования заголовков, сервер отбрасывает его пакеты и подключение висит.
+> Держите `AWG_HEADER_PROTECTION=false`, пока конфиги раздаются файлами.
+> Надпись «(version 2)» при импорте — норма: в клиенте протокол AWG 3
+> маркируется как «AmneziaWG 2.0», версия определяется по наличию `S3`/`S4`.
 `AWG_J1..AWG_J3` и `AWG_ITIME` из версии 1.5 удалены — `amneziawg-tools` их больше
 не разбирает, их роль перешла к тегам внутри `I1..I5`.
 
