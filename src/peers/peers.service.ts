@@ -19,7 +19,13 @@ import {
   lte,
   sql,
 } from 'drizzle-orm';
-import { WgService } from 'src/wg/wg.service';
+import { TunnelRegistry } from 'src/wg/tunnel.registry';
+import {
+  VPN_PROTOCOLS,
+  type IPeerRuntimeStats,
+  type ITunnelService,
+  type TVpnProtocol,
+} from 'src/wg/tunnel.types';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
@@ -68,7 +74,7 @@ export class PeersService {
 
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
-    private readonly wgService: WgService,
+    private readonly tunnels: TunnelRegistry,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -209,6 +215,37 @@ export class PeersService {
     this.cacheService.delete(CACHE_NAMESPACES.PEER_BY_NAME, peerName);
   }
 
+  /** Туннель, которому принадлежит пир (wg0 или awg0) */
+  private tunnelFor(peer: { protocol: TVpnProtocol }): ITunnelService {
+    return this.tunnels.get(peer.protocol);
+  }
+
+  /**
+   * Можно ли выдавать новые конфиги этого протокола: awg0 поднимается только
+   * если в образе есть amneziawg-go, иначе бот не должен его предлагать.
+   */
+  isProtocolAvailable(protocol: TVpnProtocol): boolean {
+    return this.tunnels.isEnabled(protocol);
+  }
+
+  /**
+   * Батч-операции выполняются по каждому интерфейсу отдельно:
+   * у wg0 и awg0 свои конфиги и свой syncconf.
+   */
+  private groupByProtocol<T extends { protocol: TVpnProtocol }>(
+    items: T[],
+  ): Map<TVpnProtocol, T[]> {
+    const grouped = new Map<TVpnProtocol, T[]>();
+
+    for (const item of items) {
+      const bucket = grouped.get(item.protocol);
+      if (bucket) bucket.push(item);
+      else grouped.set(item.protocol, [item]);
+    }
+
+    return grouped;
+  }
+
   private async syncWgWithDb() {
     let lastError: Error | null = null;
 
@@ -220,14 +257,19 @@ export class PeersService {
 
         if (!activePeers) return;
 
-        const peers = activePeers.map((peer) => ({
-          name: peer.name,
-          publicKey: peer.publicKey,
-          presharedKey: peer.presharedKey!,
-          ip: peer.ip,
-        }));
+        // Каждый интерфейс восстанавливается из своего среза БД
+        for (const protocol of VPN_PROTOCOLS) {
+          const peers = activePeers
+            .filter((peer) => peer.protocol === protocol)
+            .map((peer) => ({
+              name: peer.name,
+              publicKey: peer.publicKey,
+              presharedKey: peer.presharedKey!,
+              ip: peer.ip,
+            }));
 
-        await this.wgService.restoreConfigs(peers);
+          await this.tunnels.get(protocol).restoreConfigs(peers);
+        }
 
         // Успешная синхронизация
         if (attempt > 1) {
@@ -385,9 +427,11 @@ export class PeersService {
         ? (3 as SubscriptionDuration)
         : dto.durationDays;
 
+      const protocol: TVpnProtocol = dto.protocol ?? 'wg';
+      const tunnel = this.tunnels.getForNewPeer(protocol);
+
       const usedIps = await this.getUsedIps();
-      const credentials =
-        await this.wgService.generateClientCredentials(usedIps);
+      const credentials = await tunnel.generateClientCredentials(usedIps);
 
       const expiresAt = durationDays ? calculateExpiresAt(durationDays) : null;
 
@@ -395,11 +439,12 @@ export class PeersService {
         telegramId: dto.telegramId,
         username: dto.username || null,
         name: peerName,
+        protocol,
         publicKey: credentials.publicKey,
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
         ip: credentials.ip,
-        endpoint: `${this.wgService.host}:${this.wgService.port}`,
+        endpoint: `${tunnel.host}:${tunnel.port}`,
         paused: false,
         pausedReason: null,
         expiresAt,
@@ -417,7 +462,7 @@ export class PeersService {
       this.addIpToCache(credentials.ip);
 
       try {
-        const config = await this.wgService.createClientConfig(
+        const config = await tunnel.createClientConfig(
           newPeer.name,
           credentials,
         );
@@ -494,14 +539,16 @@ export class PeersService {
     this.invalidatePeerCache(peerName);
     this.invalidateUserPeersCache(peer.telegramId);
 
+    const tunnel = this.tunnelFor(peer);
+
     try {
       if (shouldPause) {
-        await this.wgService.removePeer(peer.publicKey);
+        await tunnel.removePeer(peer.publicKey);
       } else {
         if (!peer.presharedKey)
           throw new InternalServerErrorException('Нет presharedKey');
 
-        await this.wgService.createClientConfig(peer.name, {
+        await tunnel.createClientConfig(peer.name, {
           publicKey: peer.publicKey,
           privateKey: peer.privateKey,
           presharedKey: peer.presharedKey,
@@ -541,9 +588,9 @@ export class PeersService {
 
     if (!peer.paused) {
       try {
-        await this.wgService.removePeer(peer.publicKey);
+        await this.tunnelFor(peer).removePeer(peer.publicKey);
       } catch (error) {
-        this.logger.error(`Не удалось удалить пир из WG: ${error}`);
+        this.logger.error(`Не удалось удалить пир из туннеля: ${error}`);
       }
     }
 
@@ -564,6 +611,7 @@ export class PeersService {
         telegramId: true,
         publicKey: true,
         paused: true,
+        protocol: true,
       },
       where: inArray(schema.peers.name, peerNames),
     });
@@ -582,12 +630,16 @@ export class PeersService {
       this.invalidateUserPeersCache(p.telegramId);
     }
 
-    const activeKeys = peers.filter((p) => !p.paused).map((p) => p.publicKey);
-    if (activeKeys.length > 0) {
+    const activePeers = peers.filter((p) => !p.paused);
+    for (const [protocol, group] of this.groupByProtocol(activePeers)) {
       try {
-        await this.wgService.removePeers(activeKeys);
+        await this.tunnels
+          .get(protocol)
+          .removePeers(group.map((p) => p.publicKey));
       } catch (error) {
-        this.logger.error(`Не удалось удалить пиры из WG: ${error}`);
+        this.logger.error(
+          `Не удалось удалить пиры из туннеля ${protocol}: ${error}`,
+        );
       }
     }
   }
@@ -875,7 +927,13 @@ export class PeersService {
     const now = new Date();
 
     const expiredPeers = await this.db.query.peers.findMany({
-      columns: { id: true, name: true, publicKey: true, telegramId: true },
+      columns: {
+        id: true,
+        name: true,
+        publicKey: true,
+        telegramId: true,
+        protocol: true,
+      },
       where: and(
         eq(schema.peers.paused, false),
         isNotNull(schema.peers.expiresAt),
@@ -888,7 +946,6 @@ export class PeersService {
     }
 
     const ids = expiredPeers.map((p) => p.id);
-    const publicKeys = expiredPeers.map((p) => p.publicKey);
     const affectedTelegramIds = new Set(expiredPeers.map((p) => p.telegramId));
 
     try {
@@ -897,7 +954,11 @@ export class PeersService {
         .set({ paused: true, pausedAt: new Date(), pausedReason: 'expired' })
         .where(inArray(schema.peers.id, ids));
 
-      await this.wgService.removePeers(publicKeys);
+      for (const [protocol, group] of this.groupByProtocol(expiredPeers)) {
+        await this.tunnels
+          .get(protocol)
+          .removePeers(group.map((p) => p.publicKey));
+      }
 
       for (const peer of expiredPeers) {
         this.invalidatePeerCache(peer.name);
@@ -1082,7 +1143,14 @@ export class PeersService {
   }
 
   async refreshPeerTrafficStats(): Promise<number> {
-    const runtimeStats = await this.wgService.getPeerRuntimeStats();
+    // Статистика собирается со всех интерфейсов: публичный ключ уникален глобально
+    const runtimeStats = new Map<string, IPeerRuntimeStats>();
+    for (const tunnel of this.tunnels.all()) {
+      for (const [publicKey, stats] of await tunnel.getPeerRuntimeStats()) {
+        runtimeStats.set(publicKey, stats);
+      }
+    }
+
     if (runtimeStats.size === 0) {
       return 0;
     }
@@ -1391,12 +1459,17 @@ export class PeersService {
       // Сохраняем текущий срок действия (expiresAt) - это важно!
       const currentExpiresAt = oldPeer.expiresAt;
 
-      // Удаляем старый пир из WireGuard (если не на паузе)
+      // Замена не меняет протокол — остаёмся на том же интерфейсе
+      const tunnel = this.tunnelFor(oldPeer);
+
+      // Удаляем старый пир из туннеля (если не на паузе)
       if (!oldPeer.paused) {
         try {
-          await this.wgService.removePeer(oldPeer.publicKey);
+          await tunnel.removePeer(oldPeer.publicKey);
         } catch (error) {
-          this.logger.error(`Ошибка удаления старого пира из WG: ${error}`);
+          this.logger.error(
+            `Ошибка удаления старого пира из туннеля: ${error}`,
+          );
         }
       }
 
@@ -1405,8 +1478,7 @@ export class PeersService {
       // Исключаем старый IP из списка занятых
       usedIps.delete(oldPeer.ip);
 
-      const credentials =
-        await this.wgService.generateClientCredentials(usedIps);
+      const credentials = await tunnel.generateClientCredentials(usedIps);
 
       // Обновляем запись в БД с новыми ключами, но сохраняем срок
       const [updatedPeer] = await this.db
@@ -1416,7 +1488,7 @@ export class PeersService {
           privateKey: credentials.privateKey,
           presharedKey: credentials.presharedKey,
           ip: credentials.ip,
-          endpoint: `${this.wgService.host}:${this.wgService.port}`,
+          endpoint: `${tunnel.host}:${tunnel.port}`,
           paused: false, // Активируем конфиг при замене
           pausedAt: null,
           pausedReason: null,
@@ -1441,10 +1513,7 @@ export class PeersService {
 
       // Создаём новый конфиг в WireGuard
       try {
-        const config = await this.wgService.createClientConfig(
-          peerName,
-          credentials,
-        );
+        const config = await tunnel.createClientConfig(peerName, credentials);
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
         return { peer: updatedPeer, config };
@@ -1490,22 +1559,13 @@ export class PeersService {
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    // Получаем публичный ключ сервера через WgService (с кешированием)
-    const serverPublicKey = await this.wgService.getServerPublicKey();
-
-    return `[Interface]
-PrivateKey = ${peer.privateKey}
-Address = ${peer.ip}/32
-DNS = 1.1.1.1, 8.8.8.8
-MTU = 1420
-
-[Peer]
-PublicKey = ${serverPublicKey}
-PresharedKey = ${peer.presharedKey}
-Endpoint = ${peer.endpoint}
-AllowedIPs = ${process.env.WG_ALLOWED_IPS || '0.0.0.0/0'}
-PersistentKeepalive = 25
-`;
+    // Сборка конфига живёт в туннеле: у AmneziaWG в [Interface] ещё и параметры обфускации
+    return await this.tunnelFor(peer).buildClientConfig({
+      privateKey: peer.privateKey,
+      presharedKey: peer.presharedKey,
+      ip: peer.ip,
+      endpoint: peer.endpoint,
+    });
   }
 
   /**

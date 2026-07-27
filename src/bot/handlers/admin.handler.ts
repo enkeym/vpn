@@ -5,6 +5,7 @@ import { PeersService } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
+import type { TVpnProtocol } from 'src/wg/tunnel.types';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 
 // Состояние ожидания ввода telegramId для поиска клиента
@@ -638,7 +639,33 @@ export class AdminHandler {
     });
   }
 
-  async createClientConfig(ctx: Context, telegramId: string, duration: string) {
+  /**
+   * Выбор протокола перед созданием конфига клиенту.
+   * Если AmneziaWG на сервере не поднят — выбирать не из чего, шаг пропускается.
+   */
+  async showClientProtocolOptions(
+    ctx: Context,
+    telegramId: string,
+    duration: string,
+  ): Promise<boolean> {
+    if (!this.peersService.isProtocolAvailable('awg')) return false;
+
+    await ctx.editMessageText(BotUi.selectProtocolTitle, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.selectProtocolKeyboard(
+        `admin_dc:${telegramId}:${duration}`,
+        `admin_cc:${telegramId}`,
+      ),
+    });
+    return true;
+  }
+
+  async createClientConfig(
+    ctx: Context,
+    telegramId: string,
+    duration: string,
+    protocol: TVpnProtocol = 'wg',
+  ) {
     try {
       // Показываем сообщение о создании
       await ctx.editMessageText('⏳ *Создаю конфигурацию...*', {
@@ -655,6 +682,7 @@ export class AdminHandler {
       const { config, peer } = await this.peersService.createPeer({
         telegramId,
         durationDays,
+        protocol,
       });
 
       // Отправляем конфиг клиенту
@@ -667,6 +695,7 @@ export class AdminHandler {
               peer.name,
               peer.ip,
               peer.expiresAt,
+              peer.protocol,
             ),
             parse_mode: 'Markdown',
           },

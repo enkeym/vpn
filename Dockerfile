@@ -46,7 +46,33 @@ RUN pnpm run build
 RUN CI=true pnpm prune --prod
 
 # ============================================
-# Stage 4: Production image
+# Stage 4: AmneziaWG (обфусцированный WireGuard)
+# ============================================
+# amneziawg-go — userspace-реализация: работает через /dev/net/tun и не требует
+# модуля ядра на хосте. amneziawg-tools даёт awg/awg-quick (аналоги wg/wg-quick).
+FROM golang:1.25-alpine AS awg-build
+
+# Ревизии можно закрепить при сборке: --build-arg AWG_GO_REF=v0.2.13
+ARG AWG_GO_REF=master
+ARG AWG_TOOLS_REF=master
+
+RUN apk add --no-cache git build-base bash linux-headers
+
+RUN git clone --depth=1 --branch "$AWG_GO_REF" \
+      https://github.com/amnezia-vpn/amneziawg-go /src/amneziawg-go \
+    && cd /src/amneziawg-go \
+    && go build -trimpath -ldflags="-s -w" -o /out/usr/bin/amneziawg-go
+
+RUN git clone --depth=1 --branch "$AWG_TOOLS_REF" \
+      https://github.com/amnezia-vpn/amneziawg-tools /src/amneziawg-tools \
+    && cd /src/amneziawg-tools/src \
+    && make \
+    # WITH_WGQUICK=yes обязателен: без него ставится только awg, без awg-quick
+    && make DESTDIR=/out WITH_WGQUICK=yes WITH_BASHCOMPLETION=no \
+            WITH_SYSTEMDUNITS=no install
+
+# ============================================
+# Stage 5: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -59,10 +85,16 @@ RUN apk add --no-cache \
     iproute2 \
     openresolv \
     sudo \
+    # awg-quick — bash-скрипт
+    bash \
     # Для healthcheck
     wget \
     # Для отладки (опционально, можно убрать)
     curl
+
+# awg, awg-quick и amneziawg-go. Без них приложение работает,
+# но интерфейс awg0 не поднимается и бот не предлагает AmneziaWG.
+COPY --from=awg-build /out/ /
 
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
@@ -79,6 +111,7 @@ LABEL version="1.0"
 
 # Порты
 EXPOSE 51820/udp
+EXPOSE 51821/udp
 EXPOSE 3000
 
 # Health check внутри контейнера

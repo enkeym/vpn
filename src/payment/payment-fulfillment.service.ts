@@ -132,6 +132,8 @@ export class PaymentFulfillmentService {
           telegramId: payment.telegramId,
           durationDays,
           isTrial: false,
+          // Протокол выбран пользователем до оплаты
+          protocol: payment.protocol,
         });
 
         if (isPromo && (durationDays === 60 || durationDays === 90)) {

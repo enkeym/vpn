@@ -29,6 +29,13 @@
       "when": 1779979200000,
       "tag": "0003_peer_activity_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785143251619,
+      "tag": "0004_oval_eternals",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { InlineKeyboard } from 'grammy';
 import { TFamilyMember } from 'src/family/family.service';
 import { TPeer } from 'src/peers/peers.service';
+import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
@@ -59,6 +60,14 @@ function getPeerStatusIcon(peer: TPeer): string {
   if (peer.paused) return '🔴';
   if (isExpired(peer)) return '🟡';
   return '🟢';
+}
+
+/**
+ * Подпись протокола: у AmneziaWG другое приложение и другая инструкция.
+ * У конфигов, созданных до появления awg, поле может быть не заполнено — это wg.
+ */
+function getProtocolLabel(protocol?: TVpnProtocol): string {
+  return protocol === 'awg' ? '🥷 AmneziaWG' : '🛡 WireGuard';
 }
 
 function getMemberDisplayName(member: TFamilyMember, escape = false): string {
@@ -262,6 +271,26 @@ export const BotUi = {
 
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
+  // === Выбор протокола ===
+
+  selectProtocolTitle:
+    '🔐 *Выберите тип подключения*\n\n' +
+    '🛡 *WireGuard* — обычный вариант. Быстрый, работает в официальном приложении WireGuard на любой платформе.\n\n' +
+    '🥷 *AmneziaWG* — тот же VPN, но трафик замаскирован. Берите, если обычный конфиг блокируется или отваливается.\n' +
+    '⚠️ _Требует приложение AmneziaVPN — официальный клиент WireGuard такой конфиг не откроет._',
+
+  /**
+   * `actionPrefix` — всё до протокола в callback_data (напр. `create_config:30`),
+   * к нему добавляется `:wg` или `:awg`.
+   */
+  selectProtocolKeyboard: (actionPrefix: string, backCallback = 'main_menu') =>
+    new InlineKeyboard()
+      .text('🛡 WireGuard', `${actionPrefix}:wg`)
+      .row()
+      .text('🥷 AmneziaWG (обход блокировок)', `${actionPrefix}:awg`)
+      .row()
+      .text('« Назад', backCallback),
+
   // Меню оплаты для обычных пользователей (30, 60, 90 дней)
   paymentPlansTitle: (hasDiscount: boolean, testPayment = false) =>
     '💳 *Тарифы TUNEL VPN*\n\n' +
@@ -351,7 +380,10 @@ export const BotUi = {
 
     peers.forEach((peer) => {
       const status = getPeerStatusIcon(peer);
-      keyboard.text(`${status} ${peer.name}`, `manage_peer:${peer.name}`).row();
+      const protocol = peer.protocol === 'awg' ? ' 🥷' : '';
+      keyboard
+        .text(`${status} ${peer.name}${protocol}`, `manage_peer:${peer.name}`)
+        .row();
     });
     keyboard.text('« Назад в меню', 'main_menu');
     return keyboard;
@@ -443,8 +475,18 @@ export const BotUi = {
     '• Или выбрать тариф 30, 60 или 90 дней\n\n' +
     'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
 
-  configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ *Конфиг ${name} создан!*\n\n` + `🌐 IP: \`${ip}\`\n`;
+  configCreated: (
+    name: string,
+    ip: string,
+    expiresAt?: Date | null,
+    protocol: TVpnProtocol = 'wg',
+  ) => {
+    const app = protocol === 'awg' ? 'AmneziaVPN' : 'WireGuard';
+
+    let msg =
+      `✅ *Конфиг ${name} создан!*\n\n` +
+      `🔐 Тип: ${getProtocolLabel(protocol)}\n` +
+      `🌐 IP: \`${ip}\`\n`;
     if (expiresAt) {
       msg += `📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}\n\n`;
     } else {
@@ -452,9 +494,12 @@ export const BotUi = {
     }
     msg +=
       '*Дальнейшие шаги:*\n' +
-      '1. Откройте файл в приложении WireGuard\n' +
+      `1. Откройте файл в приложении ${app}\n` +
       '2. Нажмите «Подключить» в приложении\n' +
       '3. Готово — VPN активен\n\n' +
+      (protocol === 'awg'
+        ? '⚠️ _Этот конфиг открывается только в AmneziaVPN — официальный клиент WireGuard его не примет._\n\n'
+        : '') +
       '_Подробная инструкция для каждой платформы — в разделе «Инструкция»._\n\n' +
       '_На телефоне можно использовать кнопку «QR-код» в карточке конфига для быстрой настройки._';
     return msg;
@@ -500,6 +545,7 @@ export const BotUi = {
     let text =
       `⚙️ *Управление конфигом*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
+      `🔐 Тип: ${getProtocolLabel(peer.protocol)}\n` +
       `🌐 IP: \`${peer.ip}\`\n` +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
@@ -712,12 +758,23 @@ export const BotUi = {
       .text('« Назад', `f_m:${mId}`);
   },
 
-  memberConfigCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\nIP: \`${ip}\``;
+  memberConfigCreated: (
+    name: string,
+    ip: string,
+    expiresAt?: Date | null,
+    protocol?: TVpnProtocol,
+  ) => {
+    let msg =
+      `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\n` +
+      `🔐 Тип: ${getProtocolLabel(protocol)}\nIP: \`${ip}\``;
     if (expiresAt) {
       msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
     } else {
       msg += '\n⏳ Срок: ♾️ Бессрочно';
+    }
+    if (protocol === 'awg') {
+      msg +=
+        '\n\n⚠️ _Открывается только в приложении AmneziaVPN, не в WireGuard._';
     }
     return msg;
   },

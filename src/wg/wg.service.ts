@@ -2,58 +2,60 @@ import {
   Injectable,
   OnModuleInit,
   Logger,
-  BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { WgConfig } from 'wireguard-tools';
 import * as path from 'path';
-import * as os from 'os';
 import { existsSync } from 'fs';
-import { writeFile, unlink } from 'fs/promises';
-import { getNextFreeIp, parseWgConfig } from './wg.utils';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import {
+  derivePublicKey,
+  generateKeys,
+  getNextFreeIp,
+  getSubnetPrefix,
+  parseWgConfig,
+} from './wg.utils';
+import {
+  bringInterfaceUp,
+  isInterfaceUp,
+  readRuntimeStats,
+  syncInterface,
+  type ITunnelBinaries,
+} from './tunnel.runtime';
+import type {
+  IClientConfigInput,
+  IDbPeer,
+  IPeerRuntimeStats,
+  ITunnelCredentials,
+  ITunnelService,
+} from './tunnel.types';
 import { Mutex } from 'async-mutex';
-
-const execAsync = promisify(exec);
-
-interface ICredentialsProps {
-  publicKey: string;
-  privateKey: string;
-  presharedKey: string;
-  ip: string;
-}
-
-export interface IDbPeer {
-  name: string;
-  publicKey: string;
-  presharedKey: string;
-  ip: string;
-}
-
-export interface IWgPeerRuntimeStats {
-  publicKey: string;
-  latestHandshakeAt: Date | null;
-  rxBytes: number;
-  txBytes: number;
-}
 
 interface ParsedConfigCache {
   config: WgConfig;
   timestamp: number;
 }
 
+/** Классический WireGuard на wg0 — базовый туннель, обслуживает всех клиентов по умолчанию */
 @Injectable()
-export class WgService implements OnModuleInit {
+export class WgService implements ITunnelService, OnModuleInit {
+  readonly protocol = 'wg' as const;
+
   private readonly logger = new Logger(WgService.name);
 
   private readonly filePath = path.join(process.cwd(), '/configs/wg0.conf');
   private readonly interfaceAddress = '10.8.0.1/16';
   private readonly allowedIps = process.env.WG_ALLOWED_IPS || '0.0.0.0/0';
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
+  private readonly clientMtu = Number(process.env.WG_MTU || 1420);
+
+  private readonly binaries: ITunnelBinaries = {
+    cli: 'wg',
+    quick: 'wg-quick',
+    interfaceName: 'wg0',
+  };
 
   public readonly port = Number(process.env.WG_PORT || 51820);
-  public readonly host = process.env.WG_HOST;
+  public readonly host = process.env.WG_HOST as string;
 
   private _serverPublicKeyCache: string | null = null;
   private readonly configMutex = new Mutex();
@@ -129,6 +131,11 @@ export class WgService implements OnModuleInit {
     this.configCache = null;
   }
 
+  /** wg0 обязателен: без него onModuleInit бросает и приложение не стартует */
+  isEnabled(): boolean {
+    return true;
+  }
+
   public async getServerPublicKey(): Promise<string> {
     if (this._serverPublicKeyCache) {
       return this._serverPublicKeyCache;
@@ -143,30 +150,9 @@ export class WgService implements OnModuleInit {
       );
     }
 
-    const WG_KEY_REGEX = /^[A-Za-z0-9+/]{42,43}={0,2}$/;
-    if (!WG_KEY_REGEX.test(privateKey)) {
-      throw new InternalServerErrorException(
-        'Неверный формат приватного ключа',
-      );
-    }
-
     try {
-      const publicKey = await new Promise<string>((resolve, reject) => {
-        const proc = spawn('wg', ['pubkey'], {
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-        let stdout = '';
-        proc.stdout?.on('data', (chunk) => (stdout += chunk));
-        proc.on('error', reject);
-        proc.on('close', (code) => {
-          if (code === 0) resolve(stdout.trim());
-          else reject(new Error(`wg pubkey exited with code ${code}`));
-        });
-        proc.stdin?.write(privateKey + '\n');
-        proc.stdin?.end();
-      });
-      this._serverPublicKeyCache = publicKey;
-      return publicKey;
+      this._serverPublicKeyCache = await derivePublicKey(privateKey);
+      return this._serverPublicKeyCache;
     } catch (error) {
       throw new InternalServerErrorException(
         `Ошибка получения публичного ключа: ${error}`,
@@ -174,82 +160,30 @@ export class WgService implements OnModuleInit {
     }
   }
 
-  private async isInterfaceUp() {
-    try {
-      await execAsync('ip link show wg0');
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   private async syncSystem() {
-    const tmpConfigPath = path.join(
-      os.tmpdir(),
-      `wg0-stripped-${Date.now()}-${process.pid}.conf`,
-    );
-
     try {
-      const { stdout: stripped } = await execAsync(
-        `wg-quick strip ${this.filePath}`,
-      );
-      await writeFile(tmpConfigPath, stripped);
-      await execAsync(`sudo wg syncconf wg0 ${tmpConfigPath}`);
+      await syncInterface(this.binaries, this.filePath);
       this.logger.log('Интерфейс wg0 синхронизирован');
     } catch (error) {
       this.logger.error(
         `Ошибка синхронизации WireGuard: ${error instanceof Error ? error.message : error}`,
       );
-    } finally {
-      await unlink(tmpConfigPath).catch(() => {});
     }
   }
 
   private async startInterfaceUp() {
-    if (await this.isInterfaceUp()) {
+    if (await isInterfaceUp(this.binaries.interfaceName)) {
       this.logger.log('Интерфейс wg0 уже активен');
       return;
     }
 
-    try {
-      await execAsync(`sudo wg-quick up ${this.filePath}`);
-      this.logger.log('Интерфейс wg0 успешно поднят');
-    } catch (error) {
-      try {
-        await execAsync(`sudo wg-quick down ${this.filePath}`);
-      } catch {}
-
-      throw new Error(
-        `Не удалось поднять интерфейс: ${error instanceof Error ? error.message : error}`,
-      );
-    }
+    await bringInterfaceUp(this.binaries, this.filePath);
+    this.logger.log('Интерфейс wg0 успешно поднят');
   }
 
-  async getPeerRuntimeStats(): Promise<Map<string, IWgPeerRuntimeStats>> {
+  async getPeerRuntimeStats(): Promise<Map<string, IPeerRuntimeStats>> {
     try {
-      const { stdout } = await execAsync('wg show wg0 dump');
-      const lines = stdout.trim().split('\n').filter(Boolean);
-      const stats = new Map<string, IWgPeerRuntimeStats>();
-
-      for (const line of lines.slice(1)) {
-        const fields = line.split('\t');
-        const publicKey = fields[0];
-        const latestHandshake = Number(fields[4] || 0);
-        const rxBytes = Number(fields[5] || 0);
-        const txBytes = Number(fields[6] || 0);
-
-        if (!publicKey) continue;
-
-        stats.set(publicKey, {
-          publicKey,
-          latestHandshakeAt:
-            latestHandshake > 0 ? new Date(latestHandshake * 1000) : null,
-          rxBytes: Number.isFinite(rxBytes) ? rxBytes : 0,
-          txBytes: Number.isFinite(txBytes) ? txBytes : 0,
-        });
-      }
-
-      return stats;
+      return await readRuntimeStats(this.binaries);
     } catch (error) {
       this.logger.error(
         `Ошибка получения статистики WireGuard: ${error instanceof Error ? error.message : error}`,
@@ -260,34 +194,19 @@ export class WgService implements OnModuleInit {
 
   async generateClientCredentials(
     usedIpsFromDb: Set<string>,
-  ): Promise<ICredentialsProps> {
+  ): Promise<ITunnelCredentials> {
     const server = await this.getConfig();
-    const serverIps =
-      server.wgInterface.address?.map((address) => address.split('/')[0]) || [];
+    const addresses = server.wgInterface.address ?? [];
 
-    serverIps.forEach((ip) => usedIpsFromDb.add(ip));
+    // Адреса самого интерфейса заняты сервером
+    addresses.forEach((address) => usedIpsFromDb.add(address.split('/')[0]));
 
-    const clientIp = getNextFreeIp(usedIpsFromDb);
-    const clientWg = new WgConfig({});
-    await clientWg.generateKeys({ preSharedKey: true });
+    const prefix = getSubnetPrefix(addresses[0] ?? this.interfaceAddress);
 
-    if (
-      !clientWg.publicKey ||
-      !clientWg.wgInterface.privateKey ||
-      !clientWg.preSharedKey
-    ) {
-      throw new BadRequestException('Не удалось сгенерировать ключи клиента');
-    }
-
-    return {
-      publicKey: clientWg.publicKey,
-      privateKey: clientWg.wgInterface.privateKey,
-      presharedKey: clientWg.preSharedKey,
-      ip: clientIp,
-    };
+    return await generateKeys(getNextFreeIp(usedIpsFromDb, prefix));
   }
 
-  async createClientConfig(name: string, credentials: ICredentialsProps) {
+  async createClientConfig(name: string, credentials: ITunnelCredentials) {
     return await this.configMutex.runExclusive(async () => {
       // Инвалидируем кеш перед изменениями
       this.invalidateConfigCache();
@@ -309,20 +228,40 @@ export class WgService implements OnModuleInit {
 
       await this.syncSystem();
 
-      return `[Interface]
-PrivateKey = ${credentials.privateKey}
-Address = ${credentials.ip}/32
+      return this.renderClientConfig(
+        {
+          privateKey: credentials.privateKey,
+          presharedKey: credentials.presharedKey,
+          ip: credentials.ip,
+          endpoint: `${this.host}:${this.port}`,
+        },
+        serverPublicKey,
+      );
+    });
+  }
+
+  /** Конфиг существующего пира — ключи в БД, публичный ключ сервера берём из wg0.conf */
+  async buildClientConfig(peer: IClientConfigInput): Promise<string> {
+    return this.renderClientConfig(peer, await this.getServerPublicKey());
+  }
+
+  private renderClientConfig(
+    peer: IClientConfigInput,
+    serverPublicKey: string,
+  ): string {
+    return `[Interface]
+PrivateKey = ${peer.privateKey}
+Address = ${peer.ip}/32
 DNS = ${this.clientDns}
-MTU = 1420
+MTU = ${this.clientMtu}
 
 [Peer]
 PublicKey = ${serverPublicKey}
-PresharedKey = ${credentials.presharedKey}
-Endpoint = ${this.host}:${this.port}
+PresharedKey = ${peer.presharedKey ?? ''}
+Endpoint = ${peer.endpoint}
 AllowedIPs = ${this.allowedIps}
 PersistentKeepalive = 25
 `;
-    });
   }
 
   async removePeer(publicKey: string) {

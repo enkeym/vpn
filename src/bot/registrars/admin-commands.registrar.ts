@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Bot } from 'grammy';
 import { AdminHandler } from '../handlers/admin.handler';
 import { ensureAdmin } from './admin-guard';
+import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 /**
  * Регистрация callback-кнопок административной панели (только для админов).
@@ -171,13 +172,35 @@ export class AdminCommandsRegistrar {
     });
 
     // Создать конфиг для клиента (admin_dc = admin_do_create, u = unlimited)
-    bot.callbackQuery(/^admin_dc:(.+):(.+)$/, async (ctx) => {
-      if (!(await ensureAdmin(ctx, isAdmin))) return;
-      // Сразу отвечаем, т.к. создание конфига может занять время
-      await ctx.answerCallbackQuery();
-      const duration = ctx.match[2] === 'u' ? 'unlimited' : ctx.match[2];
-      await this.adminHandler.createClientConfig(ctx, ctx.match[1], duration);
-    });
+    bot.callbackQuery(
+      /^admin_dc:([^:]+):(u|30|60|90)(?::(wg|awg))?$/,
+      async (ctx) => {
+        if (!(await ensureAdmin(ctx, isAdmin))) return;
+        // Сразу отвечаем, т.к. создание конфига может занять время
+        await ctx.answerCallbackQuery();
+
+        const telegramId = ctx.match[1];
+        const rawDuration = ctx.match[2];
+        const protocol = ctx.match[3] as TVpnProtocol | undefined;
+
+        if (!protocol) {
+          const asked = await this.adminHandler.showClientProtocolOptions(
+            ctx,
+            telegramId,
+            rawDuration,
+          );
+          if (asked) return;
+        }
+
+        const duration = rawDuration === 'u' ? 'unlimited' : rawDuration;
+        await this.adminHandler.createClientConfig(
+          ctx,
+          telegramId,
+          duration,
+          protocol ?? 'wg',
+        );
+      },
+    );
 
     // Блокировка клиента
     bot.callbackQuery(/^admin_block:(.+)$/, async (ctx) => {

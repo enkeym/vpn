@@ -5,6 +5,7 @@ import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
+import type { TVpnProtocol } from 'src/wg/tunnel.types';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 
 // Состояние ожидания ввода для добавления члена группы
@@ -710,7 +711,30 @@ export class FamilyHandler {
     }
   }
 
-  async createMemberConfig(ctx: Context, memberId: string, duration: string) {
+  /** Выбор протокола перед созданием конфига участнику группы */
+  async showMemberProtocolOptions(
+    ctx: Context,
+    memberId: string,
+    duration: string,
+  ): Promise<boolean> {
+    if (!this.peersService.isProtocolAvailable('awg')) return false;
+
+    await ctx.editMessageText(BotUi.selectProtocolTitle, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.selectProtocolKeyboard(
+        `f_dc:${memberId}:${duration}`,
+        `f_cc:${memberId}`,
+      ),
+    });
+    return true;
+  }
+
+  async createMemberConfig(
+    ctx: Context,
+    memberId: string,
+    duration: string,
+    protocol: TVpnProtocol = 'wg',
+  ) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
 
     let member;
@@ -742,6 +766,7 @@ export class FamilyHandler {
       const { config, peer } = await this.peersService.createPeer({
         telegramId: member.telegramId,
         durationDays,
+        protocol,
       });
 
       // Отправляем конфиг клиенту
@@ -754,6 +779,7 @@ export class FamilyHandler {
               peer.name,
               peer.ip,
               peer.expiresAt,
+              peer.protocol,
             ),
             parse_mode: 'Markdown',
           },
