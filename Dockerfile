@@ -52,20 +52,30 @@ RUN CI=true pnpm prune --prod
 # модуля ядра на хосте. amneziawg-tools даёт awg/awg-quick (аналоги wg/wg-quick).
 FROM golang:1.25-alpine AS awg-build
 
-# Ревизии можно закрепить при сборке: --build-arg AWG_GO_REF=v0.2.13
-ARG AWG_GO_REF=master
-ARG AWG_TOOLS_REF=master
+# Ревизии закреплены намеренно: ветки Amnezia переписываются force-push'ем, а
+# версия протокола на сервере обязана совпадать с той, что раздана клиентам.
+# AWG_GO_REF — коммит «feat: amneziawg 3.0» (24.07.2026).
+# AWG_TOOLS_REF — ветка feat/awg3: только она разбирает HeaderProtectionKey,
+# ContentPaddingAddition, S3/S4 и тайминги — в master этих ключей ещё нет.
+ARG AWG_GO_REF=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
+ARG AWG_TOOLS_REF=05434cab7d91bbbc607d18ec5fade91f4b83774c
 
 RUN apk add --no-cache git build-base bash linux-headers
 
-RUN git clone --depth=1 --branch "$AWG_GO_REF" \
-      https://github.com/amnezia-vpn/amneziawg-go /src/amneziawg-go \
+# fetch по SHA вместо clone --branch: --branch принимает только имена веток и тегов
+RUN git init /src/amneziawg-go \
     && cd /src/amneziawg-go \
+    && git remote add origin https://github.com/amnezia-vpn/amneziawg-go \
+    && git fetch --depth=1 origin "$AWG_GO_REF" \
+    && git checkout FETCH_HEAD \
     && go build -trimpath -ldflags="-s -w" -o /out/usr/bin/amneziawg-go
 
-RUN git clone --depth=1 --branch "$AWG_TOOLS_REF" \
-      https://github.com/amnezia-vpn/amneziawg-tools /src/amneziawg-tools \
-    && cd /src/amneziawg-tools/src \
+RUN git init /src/amneziawg-tools \
+    && cd /src/amneziawg-tools \
+    && git remote add origin https://github.com/amnezia-vpn/amneziawg-tools \
+    && git fetch --depth=1 origin "$AWG_TOOLS_REF" \
+    && git checkout FETCH_HEAD \
+    && cd src \
     && make \
     # WITH_WGQUICK=yes обязателен: без него ставится только awg, без awg-quick
     && make DESTDIR=/out WITH_WGQUICK=yes WITH_BASHCOMPLETION=no \

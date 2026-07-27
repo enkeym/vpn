@@ -5,12 +5,16 @@ import { readFile, writeFile } from 'fs/promises';
 import { Mutex } from 'async-mutex';
 import { WgConfig } from 'wireguard-tools';
 import {
+  assertValidObfuscation,
+  generateHeaderProtectionKey,
   generateObfuscation,
   obfuscationLines,
   parseAwgConfig,
   readAdvancedFromEnv,
+  readAwg3FromEnv,
   readObfuscationFromEnv,
   serializeAwgConfig,
+  upgradeToAwg3,
   type IAwgServerConfig,
 } from './awg.utils';
 import {
@@ -36,14 +40,18 @@ import type {
 } from './tunnel.types';
 
 /**
- * AmneziaWG — форк WireGuard, маскирующий трафик мусорными пакетами и подменой
- * заголовков. Живёт на отдельном интерфейсе awg0: интерфейс с включённой
- * обфускацией несовместим с обычными WireGuard-клиентами, поэтому wg0 остаётся
- * нетронутым и продолжает обслуживать всех, кто пришёл раньше.
+ * AmneziaWG 3 — форк WireGuard, маскирующий трафик мусорными пакетами, пакетами-
+ * имитациями чужих протоколов и шифрованием заголовков. Живёт на отдельном
+ * интерфейсе awg0: интерфейс с включённой обфускацией несовместим с обычными
+ * WireGuard-клиентами, поэтому wg0 остаётся нетронутым и продолжает обслуживать
+ * всех, кто пришёл раньше.
  *
  * Работает поверх userspace-реализации amneziawg-go (через /dev/net/tun) —
  * модуль ядра на хосте не нужен. Если бинарей нет, туннель остаётся выключенным,
  * приложение при этом стартует штатно.
+ *
+ * Клиенты: AmneziaVPN ≥ 5.0.0.5 или AmneziaWG ≥ 3.0.1 — более старые не понимают
+ * диапазоны заголовков и header protection.
  */
 @Injectable()
 export class AwgService implements ITunnelService, OnModuleInit {
@@ -57,6 +65,17 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
   /** Junk-пакеты добавляют объём — клиентский MTU ниже, чем у чистого WireGuard */
   private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
+
+  /**
+   * Единственный параметр AWG 3, который обязан совпасть с клиентом, поэтому
+   * его можно выключить, пока не все обновили приложение.
+   */
+  private readonly headerProtection =
+    process.env.AWG_HEADER_PROTECTION !== 'false';
+
+  /** AWG 3 принимает и диапазон `22-30`: ровный интервал keepalive — тоже сигнатура */
+  private readonly persistentKeepalive =
+    process.env.AWG_PERSISTENT_KEEPALIVE || '25';
 
   private readonly binaries: ITunnelBinaries = {
     cli: 'awg',
@@ -109,10 +128,12 @@ export class AwgService implements ITunnelService, OnModuleInit {
       });
 
       this.enabled = true;
-      const { obfuscation } = await this.getConfig();
+      const { obfuscation, awg3 } = await this.getConfig();
       this.logger.log(
-        `AmneziaWG активен: ${this.binaries.interfaceName} на :${this.port}, ` +
-          `Jc=${obfuscation.jc} S1=${obfuscation.s1} S2=${obfuscation.s2}`,
+        `AmneziaWG 3 активен: ${this.binaries.interfaceName} на :${this.port}, ` +
+          `Jc=${obfuscation.jc} S1=${obfuscation.s1} S2=${obfuscation.s2} ` +
+          `S3=${obfuscation.s3} S4=${obfuscation.s4}, header protection: ` +
+          (awg3.headerProtectionKey ? 'включена' : 'выключена'),
       );
     } catch (error) {
       // Падение awg0 не должно ронять бота и рабочий wg0
@@ -129,6 +150,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private async generateServerConfig(): Promise<void> {
     if (existsSync(this.filePath)) {
       this.logger.log(`Конфиг AmneziaWG найден: ${this.filePath}`);
+      await this.upgradeExistingConfig();
       return;
     }
 
@@ -143,6 +165,13 @@ export class AwgService implements ITunnelService, OnModuleInit {
     // Параметры из .env, иначе — уникальные для этого сервера (одинаковые
     // у всех значения сами по себе становятся сигнатурой для DPI)
     const obfuscation = readObfuscationFromEnv() ?? generateObfuscation();
+    const awg3 = readAwg3FromEnv();
+    if (this.headerProtection && !awg3.headerProtectionKey) {
+      awg3.headerProtectionKey = generateHeaderProtectionKey();
+    }
+    // В .env могли приехать короткие S1..S4 — с header protection они не работают
+    assertValidObfuscation(obfuscation, awg3);
+
     const iface = this.binaries.interfaceName;
 
     await this.writeConfig({
@@ -151,6 +180,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
       listenPort: this.port,
       obfuscation,
       advanced: readAdvancedFromEnv(),
+      awg3,
       postUp: [
         `iptables -A FORWARD -i ${iface} -j ACCEPT`,
         'iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE',
@@ -163,6 +193,27 @@ export class AwgService implements ITunnelService, OnModuleInit {
     });
 
     this.logger.log(`Конфигурация AmneziaWG создана: ${this.filePath}`);
+  }
+
+  /**
+   * Конфиг, созданный до AWG 3, поднимется и так, но обфускация останется на
+   * уровне первой версии — дозаполняем недостающие поля на месте.
+   */
+  private async upgradeExistingConfig(): Promise<void> {
+    const config = await this.getConfig();
+    const upgraded = upgradeToAwg3(
+      config,
+      this.headerProtection,
+      readAwg3FromEnv(),
+    );
+
+    if (upgraded.length === 0) return;
+
+    await this.writeConfig(config);
+    this.logger.warn(
+      `Конфиг AmneziaWG обновлён до AWG 3 (${upgraded.join(', ')}). ` +
+        'Старые выданные файлы больше не подключатся: клиентам нужно заново скачать конфиг из бота.',
+    );
   }
 
   private async getConfig(): Promise<IAwgServerConfig> {
@@ -247,21 +298,21 @@ export class AwgService implements ITunnelService, OnModuleInit {
 
   async buildClientConfig(peer: IClientConfigInput): Promise<string> {
     const serverPublicKey = await this.getServerPublicKey();
-    const { obfuscation, advanced } = await this.getConfig();
+    const { obfuscation, advanced, awg3 } = await this.getConfig();
 
     return `[Interface]
 PrivateKey = ${peer.privateKey}
 Address = ${peer.ip}/32
 DNS = ${this.clientDns}
 MTU = ${this.clientMtu}
-${obfuscationLines(obfuscation, advanced)}
+${obfuscationLines(obfuscation, advanced, awg3)}
 
 [Peer]
 PublicKey = ${serverPublicKey}
 PresharedKey = ${peer.presharedKey ?? ''}
 Endpoint = ${peer.endpoint}
 AllowedIPs = ${this.allowedIps}
-PersistentKeepalive = 25
+PersistentKeepalive = ${this.persistentKeepalive}
 `;
   }
 
