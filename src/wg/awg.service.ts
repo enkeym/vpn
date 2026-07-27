@@ -6,15 +6,18 @@ import { Mutex } from 'async-mutex';
 import { WgConfig } from 'wireguard-tools';
 import {
   assertValidObfuscation,
+  downgradeToAwg2,
   generateHeaderProtectionKey,
   generateObfuscation,
   obfuscationLines,
   parseAwgConfig,
   readAdvancedFromEnv,
   readAwg3FromEnv,
+  readAwgVersion,
   readObfuscationFromEnv,
   serializeAwgConfig,
   upgradeToAwg3,
+  type IAwg3Options,
   type IAwgServerConfig,
 } from './awg.utils';
 import {
@@ -66,12 +69,24 @@ export class AwgService implements ITunnelService, OnModuleInit {
   /** Junk-пакеты добавляют объём — клиентский MTU ниже, чем у чистого WireGuard */
   private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
 
+  /** 2 — формат для клиентов старее AmneziaVPN 5.0.0.5, 3 — полный набор */
+  private readonly awgVersion = readAwgVersion();
+
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом, поэтому
-   * его можно выключить, пока не все обновили приложение.
+   * его можно выключить, пока не все обновили приложение. В формате версии 2
+   * его нет по определению.
    */
   private readonly headerProtection =
-    process.env.AWG_HEADER_PROTECTION !== 'false';
+    this.awgVersion === 3 && process.env.AWG_HEADER_PROTECTION !== 'false';
+
+  /**
+   * Апгрейд существующего awg0.conf до AWG 3 перевыпускает параметры обфускации
+   * и разом отключает всех, кому конфиг уже выдан. Поэтому только по явному
+   * запросу: молча ломать рабочий сервер при обновлении образа нельзя.
+   */
+  private readonly allowConfigUpgrade =
+    process.env.AWG_ALLOW_CONFIG_UPGRADE === 'true';
 
   /** AWG 3 принимает и диапазон `22-30`: ровный интервал keepalive — тоже сигнатура */
   private readonly persistentKeepalive =
@@ -150,7 +165,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private async generateServerConfig(): Promise<void> {
     if (existsSync(this.filePath)) {
       this.logger.log(`Конфиг AmneziaWG найден: ${this.filePath}`);
-      await this.upgradeExistingConfig();
+      await this.syncConfigFormat();
       return;
     }
 
