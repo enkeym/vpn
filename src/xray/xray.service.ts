@@ -28,6 +28,13 @@ const execFileAsync = promisify(execFile);
  */
 const RELOAD_DEBOUNCE_MS = 1500;
 
+/**
+ * XTLS Vision для Reality-канала. Значение должно совпадать в трёх местах:
+ * инбаунд сервера, прямая vless://-ссылка и sing-box-подписка
+ * (SubscriptionService) — при рассогласовании клиент не подключится вообще.
+ */
+export const XRAY_REALITY_FLOW = 'xtls-rprx-vision';
+
 /** Пир и его активные IP из ответа `xray api statsonlineiplist`. */
 interface IOnlineIpEntry {
   email: string;
@@ -90,6 +97,8 @@ interface IXrayInboundClient {
   id: string;
   /** Ключ статистики трафика в StatsService (user>>>{email}>>>traffic>>>...). */
   email: string;
+  /** Только для Reality (TCP): XTLS Vision. На WS-инбаунде flow не поддерживается. */
+  flow?: string;
 }
 
 /**
@@ -149,7 +158,24 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly internalWsPort = Number(
     process.env.XRAY_INTERNAL_WS_PORT || 8880,
   );
-  public readonly realityPort = Number(process.env.REALITY_PORT || 8443);
+  /**
+   * Порт Reality в клиентских ссылках — 443. Xray сам предупреждает при старте
+   * («REALITY: Listening on non-443 ports may get your IP blocked by the GFW»):
+   * TLS на нестандартном порту для DPI — самостоятельный маркер, мобильные
+   * операторы режут такое агрессивнее всего.
+   */
+  public readonly realityPort = Number(process.env.REALITY_PORT || 443);
+  /**
+   * Внутренний порт Reality-инбаунда. Наружу 443 слушает nginx в режиме stream
+   * и разводит по SNI (см. docker/nginx.conf): домен CDN — на TLS-сервер nginx,
+   * всё остальное — сюда. Реальный IP клиента доезжает через PROXY protocol
+   * (proxy_protocol в nginx + tcpSettings.acceptProxyProtocol в инбаунде),
+   * иначе Xray видел бы 127.0.0.1 и лимит устройств с getOnlineIps() считал бы
+   * всех одним клиентом.
+   */
+  private readonly internalRealityPort = Number(
+    process.env.XRAY_INTERNAL_REALITY_PORT || 8443,
+  );
   /** Внутренний порт StatsService API — только localhost, наружу не публикуется. */
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
@@ -443,6 +469,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       security: 'reality',
       encryption: 'none',
       pbk: this.realityParams.publicKey,
+      flow: XRAY_REALITY_FLOW,
       // Тот же отпечаток, что и в sing-box-подписке (SubscriptionService) —
       // единый uTLS-fingerprint для одного Reality-канала, иначе DPI видит
       // рассогласование ClientHello между прямой ссылкой и подпиской.
@@ -497,7 +524,8 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           }
           if (merged.size > 0) result.set(client.name, [...merged]);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           if (message.includes('NotFound')) return;
 
           this.logger.warn(
@@ -631,6 +659,15 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       email: client.name,
     }));
 
+    // Тот же список, но с XTLS Vision — только для Reality (network: tcp).
+    // Без flow внутри Reality идёт обычный TLS, то есть TLS-in-TLS, который DPI
+    // узнаёт по паттерну размеров пакетов даже при идеальной маскировке
+    // сертификата. На ws-инбаунде flow, наоборот, недопустим — Xray откажется
+    // стартовать, поэтому наборы клиентов разные.
+    const realityClients: IXrayInboundClient[] = inboundClients.map(
+      (client) => ({ ...client, flow: XRAY_REALITY_FLOW }),
+    );
+
     return {
       log: { loglevel: 'warning' },
       // Резолвим имена на сервере только через IPv4 (исходящий IPv6 на VPS
@@ -719,19 +756,29 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
         },
         {
           tag: 'reality-direct',
-          listen: '0.0.0.0',
-          port: this.realityPort,
+          // Только localhost: снаружи 443 слушает nginx (stream + ssl_preread) и
+          // отдаёт сюда всё, чей SNI не равен домену CDN.
+          listen: '127.0.0.1',
+          port: this.internalRealityPort,
           protocol: 'vless',
           settings: {
-            clients: inboundClients,
+            clients: realityClients,
             decryption: 'none',
           },
           streamSettings: {
             network: 'tcp',
             security: 'reality',
+            // Принимаем PROXY protocol от nginx — иначе Xray читает заголовок
+            // "PROXY TCP4 ..." как начало ClientHello и рвёт соединение
+            // ("REALITY: processed invalid connection ... failed to read client
+            // hello"), а source IP у всех был бы 127.0.0.1.
+            tcpSettings: { acceptProxyProtocol: true },
             realitySettings: {
               show: false,
               dest: this.realityDest,
+              // xver — это версия PROXY protocol, которую Reality ШЛЁТ на dest,
+              // а не принимает. Маскировочный сайт про PROXY ничего не знает,
+              // поэтому 0. Приём настроен выше в tcpSettings.
               xver: 0,
               serverNames: [this.realitySni],
               privateKey: this.realityParams.privateKey,
@@ -792,7 +839,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.logger.log(
-      `xray запущен (pid=${proc.pid}): ws-cdn на localhost:${this.internalWsPort} (за nginx:${this.port}), reality-direct на ${this.realityPort}/tcp`,
+      `xray запущен (pid=${proc.pid}): ws-cdn на localhost:${this.internalWsPort} (за nginx:${this.port}), reality-direct на localhost:${this.internalRealityPort} (за nginx:${this.realityPort}, SNI-роутинг)`,
     );
   }
 

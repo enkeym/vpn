@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
-import { XrayService } from 'src/xray/xray.service';
+import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 
 /** Минимальный набор полей пира для сборки любого формата подписки. */
@@ -105,6 +105,9 @@ export class SubscriptionService {
           server: xray.host,
           server_port: xray.realityPort,
           uuid: peer.vlessUuid,
+          // XTLS Vision — обязан совпадать с инбаундом сервера и прямой
+          // vless://-ссылкой (см. XRAY_REALITY_FLOW).
+          flow: XRAY_REALITY_FLOW,
           tls: {
             enabled: true,
             server_name: xray.realitySni,

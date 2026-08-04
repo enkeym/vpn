@@ -71,6 +71,9 @@ WORKDIR /app
 # NestJS (/sub), см. docker/nginx.conf и docker-entrypoint.sh.
 RUN apk add --no-cache \
     nginx \
+    # stream + ssl_preread: разводит внешний 443 по SNI между Reality и
+    # CDN-каналом (см. docker/nginx.conf). В Alpine модуль отдельным пакетом.
+    nginx-mod-stream \
     # Для healthcheck
     wget \
     # Для отладки (опционально, можно убрать)
@@ -88,9 +91,11 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/drizzle ./drizzle
 
-# nginx: терминирует TLS на 443, разводит /sub и остальные NestJS-пути на
-# localhost:3000, всё остальное (VLESS+WS) — на Xray localhost:8880.
-COPY docker/nginx.conf /etc/nginx/nginx.conf
+# nginx: stream на 443 разводит по SNI (Reality / CDN), http на localhost:8444
+# терминирует TLS и раскидывает /sub и остальные NestJS-пути на localhost:3000,
+# всё остальное (VLESS+WS) — на Xray localhost:8880. Домен в шаблоне
+# подставляет entrypoint из XRAY_DOMAIN.
+COPY docker/nginx.conf /etc/nginx/nginx.conf.template
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
@@ -101,9 +106,8 @@ RUN mkdir -p configs data
 LABEL maintainer="vpn-new-bot"
 LABEL version="1.0"
 
-# Порты: 443/tcp — nginx (TLS, VLESS+WS через CDN), 8443/tcp — VLESS+Reality
+# Наружу торчит только 443/tcp: nginx разводит по SNI Reality и CDN-канал.
 EXPOSE 443/tcp
-EXPOSE 8443/tcp
 EXPOSE 3000
 
 # Health check внутри контейнера
