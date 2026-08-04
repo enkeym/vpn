@@ -5,6 +5,8 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  type OnApplicationBootstrap,
+  type OnModuleInit,
 } from '@nestjs/common';
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
@@ -63,7 +65,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 @Injectable()
-export class PeersService {
+export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   private readonly logger = new Logger(PeersService.name);
   private readonly createPeerMutex = new Mutex();
 
@@ -82,9 +84,21 @@ export class PeersService {
   async onModuleInit() {
     // Прогреваем кеш IP адресов при старте
     await this.warmUpIpsCache();
-    await this.syncWgWithDb();
     await this.backfillPausedAt();
     await this.backfillPausedReason();
+  }
+
+  /**
+   * Синхронизация с туннелями — только после того, как отработали onModuleInit
+   * всех модулей: wg0.conf создаёт WgService в своём хуке, а awg0 до конца
+   * своего хука считается выключенным. Порядок хуков между модулями Nest
+   * выбирает по топологии импортов, и forwardRef между BotModule и
+   * PaymentModule утягивает PeersModule глубже WgModule — PeersService
+   * инициализируется первым. onApplicationBootstrap идёт после всех
+   * onModuleInit, поэтому такой гонки не знает.
+   */
+  async onApplicationBootstrap() {
+    await this.syncWgWithDb();
   }
 
   /**

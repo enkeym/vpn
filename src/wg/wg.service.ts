@@ -118,6 +118,11 @@ export class WgService implements ITunnelService, OnModuleInit {
       return this.configCache.config;
     }
 
+    // Страховка на случай обращения до onModuleInit: файла может ещё не быть
+    if (!existsSync(this.filePath)) {
+      await this.generateServerConfig();
+    }
+
     // Парсим конфиг и сохраняем в кеш
     const config = await parseWgConfig(this.filePath);
     this.configCache = { config, timestamp: now };
