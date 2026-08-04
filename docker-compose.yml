@@ -44,7 +44,7 @@ services:
       - /lib/modules:/lib/modules:ro
 
     ports:
-      - '${WG_PORT:-51820}:51820/udp'
+      - '${WG_PORT:-51820}:${WG_PORT:-51820}/udp'
       # AmneziaWG: отдельный интерфейс awg0 рядом с wg0
       - '${AWG_PORT:-51821}:${AWG_PORT:-51821}/udp'
       # Опционально: health check порт (если нужен внешний доступ)
