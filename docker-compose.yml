@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      cache_from:
-        - vpn-bot:latest
     image: vpn-bot:latest
     container_name: vpn-tgbot
     restart: unless-stopped
