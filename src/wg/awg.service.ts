@@ -65,7 +65,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private readonly allowedIps = readAllowedIps();
   private readonly clientDns = '1.1.1.1, 8.8.8.8';
   /** Junk-пакеты добавляют объём — клиентский MTU ниже, чем у чистого WireGuard */
-  private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
+  private readonly clientMtu = Number(process.env.AWG_MTU || 1420);
 
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом. По
