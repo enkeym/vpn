@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: vpn-bot:latest
+    pull_policy: build
     container_name: vpn-tgbot
     restart: unless-stopped
     init: true
@@ -45,10 +46,7 @@ services:
 
     ports:
       - '${WG_PORT:-51820}:${WG_PORT:-51820}/udp'
-      # AmneziaWG: отдельный интерфейс awg0 рядом с wg0
       - '${AWG_PORT:-51821}:${AWG_PORT:-51821}/udp'
-      # Опционально: health check порт (если нужен внешний доступ)
-      # - '3000:3000'
 
     env_file:
       - .env
