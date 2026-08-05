@@ -20,7 +20,7 @@ export async function parseWgConfig(filePath: string): Promise<WgConfig> {
  * «Сервер по умолчанию не поддерживает раздельное туннелирование».
  */
 export function readAllowedIps(env: NodeJS.ProcessEnv = process.env): string {
-  return (env.WG_ALLOWED_IPS || '0.0.0.0/0, ::/0')
+  return (env.WG_ALLOWED_IPS || '0.0.0.0/0')
     .split(',')
     .map((ip) => ip.trim())
     .filter(Boolean)
