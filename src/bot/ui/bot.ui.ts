@@ -519,9 +519,6 @@ export const BotUi = {
     return msg;
   },
 
-  replaceNotAvailable: (hoursLeft: number) =>
-    `⏳ *Замена конфига пока недоступна*\n\nВы можете заменить конфиг раз в 24 часа.\nОсталось: *${hoursLeft} ч.*`,
-
   replacingConfig: '⏳ *Заменяю конфигурацию...*',
 
   configsListTitle: (count: number) =>

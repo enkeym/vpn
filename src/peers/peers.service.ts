@@ -1426,29 +1426,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   /**
    * Проверяет, можно ли заменить конфиг (прошло ли 24 часа с последней замены)
    */
-  canReplacePeer(peer: TPeerSelect): {
-    canReplace: boolean;
-    hoursLeft?: number;
-  } {
-    if (!peer.lastReplacedAt) {
-      return { canReplace: true };
-    }
-
-    const now = new Date();
-    const lastReplaced = new Date(peer.lastReplacedAt);
-    const hoursSinceLastReplace =
-      (now.getTime() - lastReplaced.getTime()) / (1000 * 60 * 60);
-
-    if (hoursSinceLastReplace >= 24) {
-      return { canReplace: true };
-    }
-
-    return {
-      canReplace: false,
-      hoursLeft: Math.ceil(24 - hoursSinceLastReplace),
-    };
-  }
-
   /**
    * Заменяет конфиг: удаляет старый и создаёт новый с теми же параметрами (тариф, срок)
    * Можно заменять только раз в 24 часа
@@ -1458,14 +1435,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   ): Promise<{ peer: TPeerSelect; config: string }> {
     return await this.createPeerMutex.runExclusive(async () => {
       const oldPeer = await this.findPeer(peerName);
-
-      // Проверяем, можно ли заменить
-      const { canReplace, hoursLeft } = this.canReplacePeer(oldPeer);
-      if (!canReplace) {
-        throw new BadRequestException(
-          `Заменить конфиг можно только раз в 24 часа. Осталось: ${hoursLeft} ч.`,
-        );
-      }
 
       // Сохраняем текущий срок действия (expiresAt) - это важно!
       const currentExpiresAt = oldPeer.expiresAt;
