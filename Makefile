@@ -1,17 +1,20 @@
 NAME = vpn-bot
 
 up:
-	docker compose -p $(NAME) up -d || true
+	docker compose -p $(NAME) up -d
 
 down:
-	docker compose -p $(NAME) down || true
+	docker compose -p $(NAME) down
 
 restart:
-	docker compose -p $(NAME) restart || true
+	docker compose -p $(NAME) restart
 
 build:
-	docker compose -p $(NAME) build || true
+	docker compose -p $(NAME) build
 
+# down должен реально завершиться и отпустить порты, прежде чем up попробует
+# их занять снова — || true в шагах выше маскировал такие сбои, и rebuild
+# ехал дальше на build/up с портом, который ещё не освободился.
 rebuild: down clean build up logs
 
 logs:
