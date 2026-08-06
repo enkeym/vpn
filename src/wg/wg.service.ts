@@ -89,7 +89,7 @@ export class WgService implements ITunnelService, OnModuleInit {
   private async generateServerConfig() {
     if (existsSync(this.filePath)) {
       this.logger.log(`Конфиг найден: ${this.filePath}`);
-      await this.syncListenPort();
+      await this.syncServerInterface();
       return;
     }
 
@@ -101,10 +101,15 @@ export class WgService implements ITunnelService, OnModuleInit {
         postUp: [
           'iptables -A FORWARD -i %i -j ACCEPT',
           'iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE',
+          // Без этого хендшейк и мелкие пакеты (DNS, keepalive) проходят, а крупные
+          // TCP-сегменты настоящих сайтов (TLS-сертификат, HTML) не помещаются в
+          // инкапсулированный пакет и тихо теряются — PMTUD внутри туннеля не работает
+          'iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu',
         ],
         postDown: [
           'iptables -D FORWARD -i %i -j ACCEPT',
           'iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE',
+          'iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu',
         ],
       },
     });
@@ -122,16 +127,37 @@ export class WgService implements ITunnelService, OnModuleInit {
    * выдавался бы конфиг с новым Endpoint (он берётся из this.port), и никто
    * никогда бы не сходился. Логика идентична AwgService.upgradeExistingConfig.
    */
-  private async syncListenPort(): Promise<void> {
+  private async syncServerInterface(): Promise<void> {
     const server = await parseWgConfig(this.filePath);
+    let changed = false;
 
-    if (server.wgInterface.listenPort === this.port) return;
+    if (server.wgInterface.listenPort !== this.port) {
+      this.logger.warn(
+        `WG_PORT изменился: ${server.wgInterface.listenPort} → ${this.port}. Обновляю ${this.filePath}.`,
+      );
+      server.wgInterface.listenPort = this.port;
+      changed = true;
+    }
 
-    this.logger.warn(
-      `WG_PORT изменился: ${server.wgInterface.listenPort} → ${this.port}. Обновляю ${this.filePath}.`,
-    );
-    server.wgInterface.listenPort = this.port;
-    await server.writeToFile();
+    // Конфиги, созданные до появления MSS-клэмпинга в generateServerConfig,
+    // сами по себе его не получат — PostUp/PostDown пишутся только при
+    // первом создании файла. Добавляем недостающее правило на месте.
+    if (
+      !(server.wgInterface.postUp ?? []).some((line) => line.includes('TCPMSS'))
+    ) {
+      this.logger.warn(`В ${this.filePath} нет MSS-клэмпинга — добавляю.`);
+      server.wgInterface.postUp = [
+        ...(server.wgInterface.postUp ?? []),
+        'iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu',
+      ];
+      server.wgInterface.postDown = [
+        ...(server.wgInterface.postDown ?? []),
+        'iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu',
+      ];
+      changed = true;
+    }
+
+    if (changed) await server.writeToFile();
   }
 
   /**

@@ -209,10 +209,14 @@ export class AwgService implements ITunnelService, OnModuleInit {
       postUp: [
         `iptables -A FORWARD -i ${iface} -j ACCEPT`,
         'iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE',
+        // См. комментарий в WgService — то же самое для awg0: без клэмпинга MSS
+        // крупные TCP-сегменты настоящих сайтов не помещаются в инкапсуляцию
+        `iptables -t mangle -A FORWARD -o ${iface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`,
       ],
       postDown: [
         `iptables -D FORWARD -i ${iface} -j ACCEPT`,
         'iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE',
+        `iptables -t mangle -D FORWARD -o ${iface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`,
       ],
       peers: [],
     });
@@ -237,11 +241,33 @@ export class AwgService implements ITunnelService, OnModuleInit {
     // (он берётся из this.port), и никто никогда бы не сходился. В отличие
     // от параметров обфускации ниже, порт применяется сразу и безусловно —
     // это явное решение администратора поменять .env, а не дрейф дефолтов.
+    let portOrRulesChanged = false;
+
     if (config.listenPort !== this.port) {
       this.logger.warn(
         `AWG_PORT изменился: ${config.listenPort} → ${this.port}. Обновляю ${this.filePath}.`,
       );
       config.listenPort = this.port;
+      portOrRulesChanged = true;
+    }
+
+    // См. комментарий в WgService.syncServerInterface — тот же класс проблемы:
+    // конфиги, созданные до MSS-клэмпинга, сами по себе его не получат.
+    const iface = this.binaries.interfaceName;
+    if (!config.postUp.some((line) => line.includes('TCPMSS'))) {
+      this.logger.warn(`В ${this.filePath} нет MSS-клэмпинга — добавляю.`);
+      config.postUp = [
+        ...config.postUp,
+        `iptables -t mangle -A FORWARD -o ${iface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`,
+      ];
+      config.postDown = [
+        ...config.postDown,
+        `iptables -t mangle -D FORWARD -o ${iface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`,
+      ];
+      portOrRulesChanged = true;
+    }
+
+    if (portOrRulesChanged) {
       await this.writeConfig(config);
     }
 
