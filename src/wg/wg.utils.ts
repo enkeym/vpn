@@ -12,19 +12,45 @@ export async function parseWgConfig(filePath: string): Promise<WgConfig> {
 }
 
 /**
- * AllowedIPs клиентского конфига из WG_ALLOWED_IPS, нормализованный к виду
- * «0.0.0.0/0, ::/0» — с пробелом после запятой. Это не косметика: AmneziaVPN
- * определяет «полный туннель» точным сравнением со строкой
- * «AllowedIPs = 0.0.0.0/0, ::/0» (serversUiController.cpp), и при любом другом
- * написании блокирует своё раздельное туннелирование с тостом
+ * AllowedIPs для wg0. Только IPv4: туннель чисто четвёртой версии — адрес
+ * интерфейса 10.8.0.1/16, NAT настроен одним iptables, IPv6-адрес клиенту не
+ * выдаётся. С «::/0» официальный клиент WireGuard честно поднимает маршрут по
+ * умолчанию для IPv6 и роняет весь IPv6-трафик в туннель, откуда тот уже никуда
+ * не идёт: сеть без IPv6 работает, а сотовый оператор или домашний провайдер с
+ * IPv6 даёт «подключено, но интернета нет». IPv6 в обход туннеля — осознанный
+ * размен: утечка IPv6-адреса против неработающего VPN.
+ */
+export const WG_DEFAULT_ALLOWED_IPS = '0.0.0.0/0';
+
+/**
+ * AllowedIPs для awg0 — ровно «0.0.0.0/0, ::/0», с пробелом после запятой. Это
+ * не косметика: AmneziaVPN определяет «полный туннель» точным сравнением со
+ * строкой «AllowedIPs = 0.0.0.0/0, ::/0» (serversUiController.cpp), и при любом
+ * другом написании блокирует своё раздельное туннелирование с тостом
  * «Сервер по умолчанию не поддерживает раздельное туннелирование».
  */
-export function readAllowedIps(env: NodeJS.ProcessEnv = process.env): string {
-  return (env.WG_ALLOWED_IPS || '0.0.0.0/0, ::/0')
+export const AWG_DEFAULT_ALLOWED_IPS = '0.0.0.0/0, ::/0';
+
+/** Список через запятую из .env, нормализованный к «a, b» — с пробелом после запятой */
+function normalizeCsv(rawValue: string | undefined, fallback: string): string {
+  return (rawValue || fallback)
     .split(',')
-    .map((ip) => ip.trim())
+    .map((item) => item.trim())
     .filter(Boolean)
     .join(', ');
+}
+
+/** AllowedIPs клиентского конфига: значение из .env либо дефолт своего туннеля */
+export function readAllowedIps(
+  rawValue: string | undefined,
+  fallback: string,
+): string {
+  return normalizeCsv(rawValue, fallback);
+}
+
+/** DNS-серверы клиентского конфига. Только IPv4: у туннеля нет IPv6-маршрута */
+export function readClientDns(rawValue: string | undefined): string {
+  return normalizeCsv(rawValue, '1.1.1.1, 8.8.8.8');
 }
 
 /** '10.8.0.1/16' → '10.8' — первые два октета подсети интерфейса */

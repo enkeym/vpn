@@ -18,11 +18,13 @@ import {
   type IAwgServerConfig,
 } from './awg.utils';
 import {
+  AWG_DEFAULT_ALLOWED_IPS,
   derivePublicKey,
   generateKeys,
   getNextFreeIp,
   getSubnetPrefix,
   readAllowedIps,
+  readClientDns,
 } from './wg.utils';
 import {
   bringInterfaceUp,
@@ -62,9 +64,16 @@ export class AwgService implements ITunnelService, OnModuleInit {
 
   private readonly filePath = path.join(process.cwd(), '/configs/awg0.conf');
   private readonly interfaceAddress = process.env.AWG_ADDRESS || '10.9.0.1/16';
-  private readonly allowedIps = readAllowedIps();
-  private readonly clientDns = '1.1.1.1, 8.8.8.8';
-  /** Junk-пакеты добавляют объём — клиентский MTU ниже, чем у чистого WireGuard */
+  /**
+   * У awg0 свой список: в отличие от wg0 здесь нужно ровно «0.0.0.0/0, ::/0» —
+   * иначе AmneziaVPN блокирует раздельное туннелирование (см. AWG_DEFAULT_ALLOWED_IPS).
+   */
+  private readonly allowedIps = readAllowedIps(
+    process.env.AWG_ALLOWED_IPS,
+    AWG_DEFAULT_ALLOWED_IPS,
+  );
+  private readonly clientDns = readClientDns(process.env.AWG_DNS);
+  /** Как и у wg0 — 1420: junk-пакеты объём добавляют, но на практике запас держит */
   private readonly clientMtu = Number(process.env.AWG_MTU || 1420);
 
   /**
@@ -330,7 +339,6 @@ export class AwgService implements ITunnelService, OnModuleInit {
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
         ip: credentials.ip,
-        endpoint: `${this.host}:${this.port}`,
       });
     });
   }
@@ -338,6 +346,11 @@ export class AwgService implements ITunnelService, OnModuleInit {
   async buildClientConfig(peer: IClientConfigInput): Promise<string> {
     const serverPublicKey = await this.getServerPublicKey();
     const { obfuscation, advanced, awg3 } = await this.getConfig();
+
+    // Пустая строка PresharedKey отвергается парсером как ключ неверной длины
+    const presharedKey = peer.presharedKey
+      ? `PresharedKey = ${peer.presharedKey}\n`
+      : '';
 
     return `[Interface]
 PrivateKey = ${peer.privateKey}
@@ -348,8 +361,7 @@ ${obfuscationLines(obfuscation, advanced, awg3)}
 
 [Peer]
 PublicKey = ${serverPublicKey}
-PresharedKey = ${peer.presharedKey ?? ''}
-Endpoint = ${peer.endpoint}
+${presharedKey}Endpoint = ${this.host}:${this.port}
 AllowedIPs = ${this.allowedIps}
 PersistentKeepalive = ${this.persistentKeepalive}
 `;

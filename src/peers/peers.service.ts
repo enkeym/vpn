@@ -1539,12 +1539,13 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    // Сборка конфига живёт в туннеле: у AmneziaWG в [Interface] ещё и параметры обфускации
+    // Сборка конфига живёт в туннеле: у AmneziaWG в [Interface] ещё и параметры
+    // обфускации, а Endpoint туннель подставляет актуальный — peer.endpoint из
+    // БД хранит лишь тот, что был на момент создания пира.
     return await this.tunnelFor(peer).buildClientConfig({
       privateKey: peer.privateKey,
       presharedKey: peer.presharedKey,
       ip: peer.ip,
-      endpoint: peer.endpoint,
     });
   }
 

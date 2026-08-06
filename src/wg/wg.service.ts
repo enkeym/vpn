@@ -14,6 +14,8 @@ import {
   getSubnetPrefix,
   parseWgConfig,
   readAllowedIps,
+  readClientDns,
+  WG_DEFAULT_ALLOWED_IPS,
 } from './wg.utils';
 import {
   bringInterfaceUp,
@@ -45,8 +47,16 @@ export class WgService implements ITunnelService, OnModuleInit {
 
   private readonly filePath = path.join(process.cwd(), '/configs/wg0.conf');
   private readonly interfaceAddress = '10.8.0.1/16';
-  private readonly allowedIps = readAllowedIps();
-  private readonly clientDns = '1.1.1.1, 8.8.8.8';
+  private readonly allowedIps = readAllowedIps(
+    process.env.WG_ALLOWED_IPS,
+    WG_DEFAULT_ALLOWED_IPS,
+  );
+  private readonly clientDns = readClientDns(process.env.WG_DNS);
+  /**
+   * 1420 — проверено на живых клиентах: работает лучше более осторожных 1280.
+   * Если у конкретного оператора хендшейк проходит, а страницы не грузятся —
+   * это первый кандидат на понижение через WG_MTU.
+   */
   private readonly clientMtu = Number(process.env.WG_MTU || 1420);
 
   private readonly binaries: ITunnelBinaries = {
@@ -239,7 +249,6 @@ export class WgService implements ITunnelService, OnModuleInit {
           privateKey: credentials.privateKey,
           presharedKey: credentials.presharedKey,
           ip: credentials.ip,
-          endpoint: `${this.host}:${this.port}`,
         },
         serverPublicKey,
       );
@@ -255,6 +264,13 @@ export class WgService implements ITunnelService, OnModuleInit {
     peer: IClientConfigInput,
     serverPublicKey: string,
   ): string {
+    // Строку PresharedKey нельзя выводить пустой: официальный клиент WireGuard
+    // (и wg setconf) отвергает конфиг целиком с «key is not the correct length
+    // or format», а не игнорирует её.
+    const presharedKey = peer.presharedKey
+      ? `PresharedKey = ${peer.presharedKey}\n`
+      : '';
+
     return `[Interface]
 PrivateKey = ${peer.privateKey}
 Address = ${peer.ip}/32
@@ -263,8 +279,7 @@ MTU = ${this.clientMtu}
 
 [Peer]
 PublicKey = ${serverPublicKey}
-PresharedKey = ${peer.presharedKey ?? ''}
-Endpoint = ${peer.endpoint}
+${presharedKey}Endpoint = ${this.host}:${this.port}
 AllowedIPs = ${this.allowedIps}
 PersistentKeepalive = 25
 `;

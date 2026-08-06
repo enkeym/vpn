@@ -29,12 +29,18 @@ export interface IPeerRuntimeStats {
   txBytes: number;
 }
 
-/** Данные существующего пира, из которых пересобирается клиентский конфиг */
+/**
+ * Данные существующего пира, из которых пересобирается клиентский конфиг.
+ *
+ * Endpoint сюда не входит намеренно: туннель знает свои host и port из .env и
+ * подставляет их сам. Пока endpoint приходил из БД, смена WG_PORT/AWG_PORT
+ * молча оставляла всех ранее созданных пиров со старым портом — конфиг
+ * скачивался, но подключиться было уже некуда.
+ */
 export interface IClientConfigInput {
   privateKey: string;
   presharedKey: string | null;
   ip: string;
-  endpoint: string;
 }
 
 /**
