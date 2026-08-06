@@ -89,6 +89,7 @@ export class WgService implements ITunnelService, OnModuleInit {
   private async generateServerConfig() {
     if (existsSync(this.filePath)) {
       this.logger.log(`Конфиг найден: ${this.filePath}`);
+      await this.syncListenPort();
       return;
     }
 
@@ -112,6 +113,25 @@ export class WgService implements ITunnelService, OnModuleInit {
     await server.writeToFile();
 
     this.logger.log(`Серверная конфигурация создана: ${this.filePath}`);
+  }
+
+  /**
+   * wg0.conf пишется один раз при первом старте и дальше не трогается сам по
+   * себе — смена WG_PORT в .env иначе осталась бы незамеченной: интерфейс
+   * поднимался бы со старым ListenPort из файла, а клиентам при этом
+   * выдавался бы конфиг с новым Endpoint (он берётся из this.port), и никто
+   * никогда бы не сходился. Логика идентична AwgService.upgradeExistingConfig.
+   */
+  private async syncListenPort(): Promise<void> {
+    const server = await parseWgConfig(this.filePath);
+
+    if (server.wgInterface.listenPort === this.port) return;
+
+    this.logger.warn(
+      `WG_PORT изменился: ${server.wgInterface.listenPort} → ${this.port}. Обновляю ${this.filePath}.`,
+    );
+    server.wgInterface.listenPort = this.port;
+    await server.writeToFile();
   }
 
   /**

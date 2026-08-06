@@ -231,6 +231,20 @@ export class AwgService implements ITunnelService, OnModuleInit {
   private async upgradeExistingConfig(): Promise<void> {
     const config = await this.getConfig();
 
+    // awg0.conf пишется один раз при первом старте — смена AWG_PORT в .env
+    // иначе осталась бы незамеченной: интерфейс поднимался бы со старым
+    // ListenPort из файла, а клиентам выдавался бы конфиг с новым Endpoint
+    // (он берётся из this.port), и никто никогда бы не сходился. В отличие
+    // от параметров обфускации ниже, порт применяется сразу и безусловно —
+    // это явное решение администратора поменять .env, а не дрейф дефолтов.
+    if (config.listenPort !== this.port) {
+      this.logger.warn(
+        `AWG_PORT изменился: ${config.listenPort} → ${this.port}. Обновляю ${this.filePath}.`,
+      );
+      config.listenPort = this.port;
+      await this.writeConfig(config);
+    }
+
     // upgradeToAwg3 правит config на месте, но пока файл не перезаписан, правки
     // живут только в этом локальном объекте — getConfig читает файл заново
     const changes = upgradeToAwg3(
