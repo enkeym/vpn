@@ -7,7 +7,6 @@ import { randomUUID } from 'crypto';
 import { and, desc, eq, ne, notInArray } from 'drizzle-orm';
 import { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../database/schema';
-import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 /** Payload deep link `t.me/bot?start=…` в return_url ЮKassa — по нему бот принудительно синхронизирует платежи. */
 export const YOOKASSA_TELEGRAM_RETURN_START_PARAM = 'syncpay';
@@ -50,7 +49,6 @@ export class PaymentService {
     durationDays: number,
     isPromo = false,
     peerName?: string,
-    protocol: TVpnProtocol = 'wg',
   ) {
     const chargeRub = this.getBilledAmountRub(amount);
     if (this.isTestPayment() && chargeRub !== amount) {
@@ -66,7 +64,6 @@ export class PaymentService {
       isPromo: String(isPromo),
     };
     if (peerName) metadata.peerName = peerName;
-    metadata.protocol = protocol;
 
     try {
       const response = await axios.post(
@@ -103,7 +100,6 @@ export class PaymentService {
         durationDays,
         isPromo,
         peerName: peerName ?? null,
-        protocol,
       });
 
       return paymentData;

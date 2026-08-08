@@ -3,7 +3,6 @@ import * as path from 'path';
 import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { Mutex } from 'async-mutex';
-import { WgConfig } from 'wireguard-tools';
 import {
   assertValidObfuscation,
   generateHeaderProtectionKey,
@@ -18,14 +17,14 @@ import {
   type IAwgServerConfig,
 } from './awg.utils';
 import {
-  AWG_DEFAULT_ALLOWED_IPS,
   derivePublicKey,
   generateKeys,
+  generatePrivateKey,
   getNextFreeIp,
   getSubnetPrefix,
   readAllowedIps,
   readClientDns,
-} from './wg.utils';
+} from './tunnel.utils';
 import {
   bringInterfaceUp,
   isBinaryAvailable,
@@ -39,41 +38,34 @@ import type {
   IDbPeer,
   IPeerRuntimeStats,
   ITunnelCredentials,
-  ITunnelService,
 } from './tunnel.types';
 
 /**
- * AmneziaWG 3 — форк WireGuard, маскирующий трафик мусорными пакетами, пакетами-
- * имитациями чужих протоколов и шифрованием заголовков. Живёт на отдельном
- * интерфейсе awg0: интерфейс с включённой обфускацией несовместим с обычными
- * WireGuard-клиентами, поэтому wg0 остаётся нетронутым и продолжает обслуживать
- * всех, кто пришёл раньше.
+ * AmneziaWG 3 — единственный туннель сервиса: форк WireGuard, маскирующий трафик
+ * мусорными пакетами, пакетами-имитациями чужих протоколов и шифрованием
+ * заголовков. Интерфейс с включённой обфускацией несовместим с обычными
+ * WireGuard-клиентами — конфиги открываются только в AmneziaVPN.
  *
  * Работает поверх userspace-реализации amneziawg-go (через /dev/net/tun) —
  * модуль ядра на хосте не нужен. Если бинарей нет, туннель остаётся выключенным,
- * приложение при этом стартует штатно.
+ * приложение при этом стартует штатно, но выдавать конфиги не может.
  *
  * Клиенты: AmneziaVPN ≥ 5.0.0.5 или AmneziaWG ≥ 3.0.1 — более старые не понимают
  * диапазоны заголовков и header protection.
  */
 @Injectable()
-export class AwgService implements ITunnelService, OnModuleInit {
-  readonly protocol = 'awg' as const;
-
+export class AwgService implements OnModuleInit {
   private readonly logger = new Logger(AwgService.name);
 
   private readonly filePath = path.join(process.cwd(), '/configs/awg0.conf');
   private readonly interfaceAddress = process.env.AWG_ADDRESS || '10.9.0.1/16';
   /**
-   * У awg0 свой список: в отличие от wg0 здесь нужно ровно «0.0.0.0/0, ::/0» —
-   * иначе AmneziaVPN блокирует раздельное туннелирование (см. AWG_DEFAULT_ALLOWED_IPS).
+   * Здесь нужно ровно «0.0.0.0/0, ::/0» — иначе AmneziaVPN блокирует
+   * раздельное туннелирование (см. AWG_DEFAULT_ALLOWED_IPS).
    */
-  private readonly allowedIps = readAllowedIps(
-    process.env.AWG_ALLOWED_IPS,
-    AWG_DEFAULT_ALLOWED_IPS,
-  );
+  private readonly allowedIps = readAllowedIps(process.env.AWG_ALLOWED_IPS);
   private readonly clientDns = readClientDns(process.env.AWG_DNS);
-  /** Как и у wg0 — 1420: junk-пакеты объём добавляют, но на практике запас держит */
+  /** 1420 — проверено на живых клиентах: junk-пакеты объём добавляют, запас держит */
   private readonly clientMtu = Number(process.env.AWG_MTU || 1420);
 
   /**
@@ -136,7 +128,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
     if (missing.length > 0) {
       this.logger.warn(
         `AmneziaWG недоступен — нет бинарей: ${missing.join(', ')}. ` +
-          'Пересоберите образ (docker compose build), чтобы включить обфускацию. WireGuard продолжает работать.',
+          'Пересоберите образ (docker compose build) — без них выдавать конфиги нечем.',
       );
       return;
     }
@@ -158,7 +150,8 @@ export class AwgService implements ITunnelService, OnModuleInit {
           (awg3.headerProtectionKey ? 'включена' : 'выключена'),
       );
     } catch (error) {
-      // Падение awg0 не должно ронять бота и рабочий wg0
+      // Падение awg0 не должно ронять бота: меню, оплаты и админка
+      // остаются доступными, а причина видна в логах
       this.logger.error(
         `AmneziaWG не запущен: ${error instanceof Error ? error.message : error}`,
       );
@@ -176,9 +169,7 @@ export class AwgService implements ITunnelService, OnModuleInit {
       return;
     }
 
-    const server = new WgConfig({});
-    await server.generateKeys();
-    const privateKey = server.wgInterface.privateKey;
+    const privateKey = await generatePrivateKey();
 
     if (!privateKey) {
       throw new Error('Не удалось сгенерировать приватный ключ для AmneziaWG');
@@ -209,8 +200,9 @@ export class AwgService implements ITunnelService, OnModuleInit {
       postUp: [
         `iptables -A FORWARD -i ${iface} -j ACCEPT`,
         'iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE',
-        // См. комментарий в WgService — то же самое для awg0: без клэмпинга MSS
-        // крупные TCP-сегменты настоящих сайтов не помещаются в инкапсуляцию
+        // Без клэмпинга MSS хендшейк и мелкие пакеты (DNS, keepalive) проходят,
+        // а крупные TCP-сегменты настоящих сайтов не помещаются в инкапсуляцию
+        // и тихо теряются — PMTUD внутри туннеля не работает
         `iptables -t mangle -A FORWARD -o ${iface} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu`,
       ],
       postDown: [
@@ -251,8 +243,8 @@ export class AwgService implements ITunnelService, OnModuleInit {
       portOrRulesChanged = true;
     }
 
-    // См. комментарий в WgService.syncServerInterface — тот же класс проблемы:
-    // конфиги, созданные до MSS-клэмпинга, сами по себе его не получат.
+    // Конфиги, созданные до появления MSS-клэмпинга, сами по себе его не
+    // получат: PostUp/PostDown пишутся только при первом создании файла.
     const iface = this.binaries.interfaceName;
     if (!config.postUp.some((line) => line.includes('TCPMSS'))) {
       this.logger.warn(`В ${this.filePath} нет MSS-клэмпинга — добавляю.`);

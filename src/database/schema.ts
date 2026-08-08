@@ -73,10 +73,6 @@ export const peers = sqliteTable(
     fileMessageId: integer('fileMessageId'),
     name: text('name').notNull().unique(),
     description: text('description'),
-    /** Туннель пира: wg — интерфейс wg0, awg — AmneziaWG на awg0 с обфускацией */
-    protocol: text('protocol', { enum: ['wg', 'awg'] })
-      .notNull()
-      .default('wg'),
     publicKey: text('publicKey').notNull(),
     privateKey: text('privateKey').notNull(),
     presharedKey: text('presharedKey'),
@@ -117,8 +113,6 @@ export const peers = sqliteTable(
     index('peers_expiration_idx').on(table.paused, table.expiresAt),
     index('peers_paused_reason_idx').on(table.paused, table.pausedReason),
     index('peers_activity_idx').on(table.paused, table.lastTrafficAt),
-    // Синхронизация и восстановление идут поконфигу каждого интерфейса отдельно
-    index('peers_protocol_idx').on(table.protocol, table.paused),
   ],
 );
 
@@ -137,10 +131,6 @@ export const payments = sqliteTable(
     isPromo: integer('isPromo', { mode: 'boolean' }).notNull().default(false),
     /** Имя конфига для продления (null = новая покупка) */
     peerName: text('peerName'),
-    /** Протокол, выбранный до оплаты — конфиг создаётся уже после, в вебхуке */
-    protocol: text('protocol', { enum: ['wg', 'awg'] })
-      .notNull()
-      .default('wg'),
     invoiceChatId: text('invoiceChatId'),
     invoiceMessageId: integer('invoiceMessageId'),
     createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(

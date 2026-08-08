@@ -188,7 +188,6 @@ export class MainHandler {
       windows: BotUi.instructionWindows,
       macos: BotUi.instructionMacos,
       linux: BotUi.instructionLinux,
-      video: BotUi.instructionVideo,
     };
 
     const text = instructions[platform] || 'Инструкция не найдена';

@@ -45,7 +45,6 @@ services:
       - /lib/modules:/lib/modules:ro
 
     ports:
-      - '${WG_PORT:-51820}:${WG_PORT:-51820}/udp'
       - '${AWG_PORT:-51821}:${AWG_PORT:-51821}/udp'
 
     env_file:

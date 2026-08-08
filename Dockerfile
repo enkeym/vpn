@@ -89,15 +89,7 @@ WORKDIR /app
 
 # Установка runtime-зависимостей
 # --no-cache уменьшает размер образа
-#
-# wireguard-tools ставится из репозитория Alpine без пина версии: node:22-alpine
-# стоит на Alpine 3.24, где лежит последний официальный релиз upstream
-# (v1.0.20260223) вместе с wg-quick. Пин сломал бы сборку на следующем
-# обновлении базового образа, а `docker compose build --pull` и так подтягивает
-# свежую версию — фиксировать нужно только AmneziaWG (stage выше), потому что
-# там версия протокола обязана совпасть с раздатыми клиентам конфигами.
 RUN apk add --no-cache \
-    wireguard-tools \
     iptables \
     iproute2 \
     openresolv \
@@ -109,14 +101,14 @@ RUN apk add --no-cache \
     # Для отладки (опционально, можно убрать)
     curl
 
-# Метапакет wireguard-tools обязан принести и wg-quick: без него wg0 не
-# поднимется, и без этой проверки мы узнали бы об этом только на старте
-# контейнера в проде. Заодно версия видна в логе сборки.
-RUN wg --version && command -v wg-quick >/dev/null
-
-# awg, awg-quick и amneziawg-go. Без них приложение работает,
-# но интерфейс awg0 не поднимается и бот не предлагает AmneziaWG.
+# awg, awg-quick и amneziawg-go. Без них приложение стартует, но интерфейс awg0
+# не поднимается и бот не может выдавать конфиги. Отдельный wireguard-tools в
+# образе не нужен: ключи считает тот же awg (genkey/pubkey/genpsk).
 COPY --from=awg-build /out/ /
+
+# Проверка на этапе сборки: без awg-quick интерфейс не поднимется, и без неё мы
+# узнали бы об этом только на старте контейнера в проде.
+RUN awg --version && command -v awg-quick >/dev/null
 
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
@@ -132,7 +124,6 @@ LABEL maintainer="vpn-bot"
 LABEL version="1.0"
 
 # Порты
-EXPOSE 51820/udp
 EXPOSE 51821/udp
 EXPOSE 3000
 

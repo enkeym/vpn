@@ -14,7 +14,6 @@ import { safeEditMessageText } from '../utils/safe-edit-message';
 import { MainHandler } from '../handlers/main.handler';
 import { MainMenuService } from '../menu/main-menu.service';
 import { MainMenuAnchorStore } from '../menu/main-menu-anchor.store';
-import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 /**
  * Счета ЮKassa: презентация счёта, опрос статуса оплаты и уведомления
@@ -280,7 +279,6 @@ export class InvoiceService {
   async presentNewPurchaseInvoice(
     ctx: Context,
     durationDays: 30 | 60 | 90,
-    protocol: TVpnProtocol = 'wg',
   ): Promise<void> {
     if (!ctx.from) return;
     const telegramId = String(ctx.from.id);
@@ -298,15 +296,12 @@ export class InvoiceService {
       nominalPrice,
       durationDays,
       isPromo,
-      undefined,
-      protocol,
     );
 
     const messageIdAfterEdit = await safeEditMessageText(
       ctx,
       `💳 *Оплата*\n\n` +
         `Тариф: *${durationDays} дней*\n` +
-        `Тип: *${protocol === 'awg' ? 'AmneziaWG' : 'WireGuard'}*\n` +
         `Сумма: *${price} ₽*\n\n` +
         `Нажмите *«Оплатить»* — откроется ЮKassa.\n\n` +
         `Пока счёт не отменён и не оплачен, бот *каждые 5 секунд* проверяет статус в ЮKassa. ` +
@@ -509,7 +504,7 @@ export class InvoiceService {
       const caption =
         `✅ *Оплата прошла успешно!* (${amount} ₽)\n` +
         `Конфиг *${peer.name}* на *${durationDays} дн.*\n\n` +
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt, peer.protocol);
+        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
 
       await this.sendPaidConfigDocument(
         telegramId,
@@ -548,7 +543,7 @@ export class InvoiceService {
       const caption =
         `✅ *Продление прошло успешно!* (${amount} ₽)\n` +
         `Конфиг *${peer.name}* — *${durationDays} дн.*, до *${expiresStr}*\n\n` +
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt, peer.protocol);
+        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
 
       await this.sendPaidConfigDocument(
         telegramId,

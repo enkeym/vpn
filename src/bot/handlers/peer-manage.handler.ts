@@ -48,9 +48,7 @@ export class PeerManageHandler {
     );
 
     if (peers.length === 0) {
-      const userType = await this.mainHandler.getUserType(
-        String(ctx.from.id),
-      );
+      const userType = await this.mainHandler.getUserType(String(ctx.from.id));
       const showGetVpn =
         userType !== 'user' || !this.mainHandler.isUserPaymentMenuHidden();
       return safeEditMessageText(ctx, BotUi.noConfigs, {
@@ -255,7 +253,7 @@ export class PeerManageHandler {
       const message = await ctx.replyWithPhoto(
         new InputFile(qrBuffer, `${peerName}_qr.png`),
         {
-          caption: `📷 *QR-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении WireGuard_`,
+          caption: `📷 *QR-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении AmneziaVPN_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
@@ -282,7 +280,7 @@ export class PeerManageHandler {
       const message = await ctx.replyWithDocument(
         new InputFile(Buffer.from(config), `${peer.name}.conf`),
         {
-          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение WireGuard_`,
+          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение AmneziaVPN_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },

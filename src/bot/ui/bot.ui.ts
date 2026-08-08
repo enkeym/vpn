@@ -1,7 +1,6 @@
 import { InlineKeyboard } from 'grammy';
 import { TFamilyMember } from 'src/family/family.service';
 import { TPeer } from 'src/peers/peers.service';
-import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
@@ -60,14 +59,6 @@ function getPeerStatusIcon(peer: TPeer): string {
   if (peer.paused) return '🔴';
   if (isExpired(peer)) return '🟡';
   return '🟢';
-}
-
-/**
- * Подпись протокола: у AmneziaWG другое приложение и другая инструкция.
- * У конфигов, созданных до появления awg, поле может быть не заполнено — это wg.
- */
-function getProtocolLabel(protocol?: TVpnProtocol): string {
-  return protocol === 'awg' ? '🥷 AmneziaWG' : '🛡 WireGuard';
 }
 
 function getMemberDisplayName(member: TFamilyMember, escape = false): string {
@@ -271,26 +262,6 @@ export const BotUi = {
 
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
-  // === Выбор протокола ===
-
-  selectProtocolTitle:
-    '🔐 *Выберите тип подключения*\n\n' +
-    '🛡 *WireGuard* — обычный вариант. Быстрый, работает в официальном приложении WireGuard на любой платформе.\n\n' +
-    '🥷 *AmneziaWG* — тот же VPN, но трафик замаскирован. Берите, если обычный конфиг блокируется или отваливается.\n' +
-    '⚠️ _Требует приложение AmneziaVPN — официальный клиент WireGuard такой конфиг не откроет._',
-
-  /**
-   * `actionPrefix` — всё до протокола в callback_data (напр. `create_config:30`),
-   * к нему добавляется `:wg` или `:awg`.
-   */
-  selectProtocolKeyboard: (actionPrefix: string, backCallback = 'main_menu') =>
-    new InlineKeyboard()
-      .text('🛡 WireGuard', `${actionPrefix}:wg`)
-      .row()
-      .text('🥷 AmneziaWG (обход блокировок)', `${actionPrefix}:awg`)
-      .row()
-      .text('« Назад', backCallback),
-
   // Меню оплаты для обычных пользователей (30, 60, 90 дней)
   paymentPlansTitle: (hasDiscount: boolean, testPayment = false) =>
     '💳 *Тарифы TUNEL VPN*\n\n' +
@@ -380,10 +351,7 @@ export const BotUi = {
 
     peers.forEach((peer) => {
       const status = getPeerStatusIcon(peer);
-      const protocol = peer.protocol === 'awg' ? ' 🥷' : '';
-      keyboard
-        .text(`${status} ${peer.name}${protocol}`, `manage_peer:${peer.name}`)
-        .row();
+      keyboard.text(`${status} ${peer.name}`, `manage_peer:${peer.name}`).row();
     });
     keyboard.text('« Назад в меню', 'main_menu');
     return keyboard;
@@ -475,18 +443,8 @@ export const BotUi = {
     '• Или выбрать тариф 30, 60 или 90 дней\n\n' +
     'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
 
-  configCreated: (
-    name: string,
-    ip: string,
-    expiresAt?: Date | null,
-    protocol: TVpnProtocol = 'wg',
-  ) => {
-    const app = protocol === 'awg' ? 'AmneziaVPN' : 'WireGuard';
-
-    let msg =
-      `✅ *Конфиг ${name} создан!*\n\n` +
-      `🔐 Тип: ${getProtocolLabel(protocol)}\n` +
-      `🌐 IP: \`${ip}\`\n`;
+  configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
+    let msg = `✅ *Конфиг ${name} создан!*\n\n` + `🌐 IP: \`${ip}\`\n`;
     if (expiresAt) {
       msg += `📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}\n\n`;
     } else {
@@ -494,12 +452,10 @@ export const BotUi = {
     }
     msg +=
       '*Дальнейшие шаги:*\n' +
-      `1. Откройте файл в приложении ${app}\n` +
-      '2. Нажмите «Подключить» в приложении\n' +
+      '1. Установите приложение AmneziaVPN\n' +
+      '2. Откройте в нём этот файл и нажмите «Подключить»\n' +
       '3. Готово — VPN активен\n\n' +
-      (protocol === 'awg'
-        ? '⚠️ _Этот конфиг открывается только в AmneziaVPN — официальный клиент WireGuard его не примет._\n\n'
-        : '') +
+      '⚠️ _Конфиг открывается только в AmneziaVPN — официальный клиент WireGuard его не примет._\n\n' +
       '_Подробная инструкция для каждой платформы — в разделе «Инструкция»._\n\n' +
       '_На телефоне можно использовать кнопку «QR-код» в карточке конфига для быстрой настройки._';
     return msg;
@@ -542,7 +498,6 @@ export const BotUi = {
     let text =
       `⚙️ *Управление конфигом*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
-      `🔐 Тип: ${getProtocolLabel(peer.protocol)}\n` +
       `🌐 IP: \`${peer.ip}\`\n` +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
@@ -755,24 +710,15 @@ export const BotUi = {
       .text('« Назад', `f_m:${mId}`);
   },
 
-  memberConfigCreated: (
-    name: string,
-    ip: string,
-    expiresAt?: Date | null,
-    protocol?: TVpnProtocol,
-  ) => {
-    let msg =
-      `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\n` +
-      `🔐 Тип: ${getProtocolLabel(protocol)}\nIP: \`${ip}\``;
+  memberConfigCreated: (name: string, ip: string, expiresAt?: Date | null) => {
+    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\nIP: \`${ip}\``;
     if (expiresAt) {
       msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
     } else {
       msg += '\n⏳ Срок: ♾️ Бессрочно';
     }
-    if (protocol === 'awg') {
-      msg +=
-        '\n\n⚠️ _Открывается только в приложении AmneziaVPN, не в WireGuard._';
-    }
+    msg +=
+      '\n\n⚠️ _Открывается только в приложении AmneziaVPN, не в официальном клиенте WireGuard._';
     return msg;
   },
 
@@ -1087,13 +1033,13 @@ export const BotUi = {
       `admin_peer:${peerName}:${telegramId}`,
     ),
 
-  // === Инструкции по установке WireGuard ===
+  // === Инструкции по установке AmneziaVPN ===
 
   instructionsMenuTitle:
-    '📖 *Инструкция по установке WireGuard*\n\n' +
+    '📖 *Инструкция по установке AmneziaVPN*\n\n' +
     'Выберите вашу платформу — откроется пошаговая инструкция с прямыми ссылками на приложение.\n\n' +
     '⏱ _Обычно настройка занимает 2–3 минуты_\n' +
-    '🎬 _Есть видео-инструкции — кнопка ниже_',
+    '⚠️ _Конфиг открывается только в AmneziaVPN: официальный клиент WireGuard его не примет._',
 
   instructionsMenuKeyboard: () =>
     new InlineKeyboard()
@@ -1105,8 +1051,6 @@ export const BotUi = {
       .row()
       .text('🐧 Linux', 'instruction:linux')
       .row()
-      .text('🎬 Видео-инструкции', 'instruction:video')
-      .row()
       .text('« Назад в меню', 'main_menu'),
 
   backToInstructionsKeyboard: () =>
@@ -1115,107 +1059,86 @@ export const BotUi = {
       .row()
       .text('« В меню', 'main_menu'),
 
-  instructionVideo:
-    '🎬 *Видео-инструкции по WireGuard*\n\n' +
-    'Полезные видео для наглядной настройки:\n\n' +
-    '📺 *Общая настройка (на русском):*\n' +
-    '[WireGuard VPN — полная настройка](https://www.youtube.com/watch?v=5Aql0V-ta8A)\n\n' +
-    '📺 *Официальные ресурсы:*\n' +
-    '• [Сайт WireGuard](https://www.wireguard.com/)\n' +
-    '• [Страница загрузки](https://www.wireguard.com/install/)\n\n' +
-    '_Выберите платформу для текстовой инструкции с прямыми ссылками_',
-
   instructionAndroid:
-    '📱 *Установка WireGuard на Android*\n\n' +
+    '📱 *Установка AmneziaVPN на Android*\n\n' +
     '*Шаг 1: Установите приложение*\n' +
-    '• [WireGuard в Google Play](https://play.google.com/store/apps/details?id=com.wireguard.android)\n' +
-    '• Или найдите "WireGuard" в Play Store\n' +
-    '• Установите приложение от WireGuard Development Team\n\n' +
+    '• [AmneziaVPN в Google Play](https://play.google.com/store/apps/details?id=org.amnezia.vpn)\n' +
+    '• Или APK со [страницы загрузки](https://amnezia.org/downloads)\n' +
+    '• Нужна версия *5.0.0.5* или новее\n\n' +
     '*Шаг 2: Импортируйте конфиг*\n' +
-    '• Откройте WireGuard\n' +
-    '• Нажмите кнопку "+" внизу справа\n' +
-    '• Выберите "Импорт из файла или архива"\n' +
-    '• Найдите скачанный файл .conf (в папке "Загрузки" или "Downloads")\n\n' +
+    '• Скачайте файл .conf из бота\n' +
+    '• Откройте AmneziaVPN → «У меня есть данные для подключения»\n' +
+    '• Выберите «Файл с настройками» и укажите скачанный .conf\n' +
+    '• Либо отсканируйте QR-код из карточки конфига\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Включите переключатель рядом с конфигом\n' +
+    '• Нажмите кнопку подключения\n' +
     '• Разрешите создание VPN-соединения\n' +
     '• Готово! 🎉\n\n' +
-    '_💡 Совет: Для автоподключения удерживайте конфиг и включите "Auto-activate"_\n\n' +
-    '📺 [Видео-инструкция](https://www.youtube.com/watch?v=5Aql0V-ta8A)',
+    '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._',
 
   instructionIos:
-    '🍎 *Установка WireGuard на iOS / iPhone*\n\n' +
+    '🍎 *Установка AmneziaVPN на iOS / iPhone*\n\n' +
     '*Шаг 1: Установите приложение*\n' +
-    '• [WireGuard в App Store](https://apps.apple.com/app/wireguard/id1441195209)\n' +
-    '• Или найдите "WireGuard" в App Store\n\n' +
+    '• [AmneziaVPN в App Store](https://apps.apple.com/app/amneziavpn/id1600529900)\n' +
+    '• Или найдите "AmneziaVPN" в App Store\n\n' +
     '*Шаг 2: Импортируйте конфиг*\n\n' +
-    '_Способ 1 (через файл):_\n' +
+    '_Способ 1 (через QR-код — быстрее):_\n' +
+    '• Откройте AmneziaVPN → «У меня есть данные для подключения»\n' +
+    '• Выберите импорт по QR-коду и отсканируйте код из бота\n\n' +
+    '_Способ 2 (через файл):_\n' +
     '• Скачайте файл .conf из бота\n' +
-    '• Нажмите на файл → "Поделиться"\n' +
-    '• Выберите "WireGuard"\n\n' +
-    '_Способ 2 (через QR-код — быстрее):_\n' +
-    '• Откройте WireGuard\n' +
-    '• Нажмите "+" → "Создать из QR-кода"\n' +
-    '• Отсканируйте QR-код из бота\n\n' +
+    '• Нажмите на файл → «Поделиться» → AmneziaVPN\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Включите переключатель рядом с конфигом\n' +
+    '• Нажмите кнопку подключения\n' +
     '• Разрешите добавление VPN-конфигурации\n' +
     '• Готово! 🎉\n\n' +
-    '_💡 Совет: Добавьте виджет WireGuard для быстрого подключения_\n\n' +
-    '📺 [Видео-инструкция](https://www.youtube.com/watch?v=5Aql0V-ta8A)',
+    '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._',
 
   instructionWindows:
-    '🪟 *Установка WireGuard на Windows*\n\n' +
+    '🪟 *Установка AmneziaVPN на Windows*\n\n' +
     '*Шаг 1: Скачайте и установите*\n' +
-    '• [Скачать установщик](https://download.wireguard.com/windows-client/wireguard-installer.exe)\n' +
-    '• Или [все версии на wireguard.com](https://www.wireguard.com/install/)\n' +
+    '• [Страница загрузки Amnezia](https://amnezia.org/downloads)\n' +
+    '• Или [релизы на GitHub](https://github.com/amnezia-vpn/amnezia-client/releases)\n' +
     '• Запустите установщик и следуйте подсказкам\n\n' +
     '*Шаг 2: Импортируйте конфиг*\n' +
-    '• Запустите WireGuard\n' +
-    '• Нажмите "Импортировать туннель из файла"\n' +
+    '• Запустите AmneziaVPN\n' +
+    '• «У меня есть данные для подключения» → «Файл с настройками»\n' +
     '• Выберите скачанный из бота файл .conf\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Выберите конфиг в списке слева\n' +
-    '• Нажмите "Подключить" — появится зелёный щит\n' +
+    '• Нажмите кнопку подключения\n' +
+    '• Подтвердите установку VPN-адаптера, если система спросит\n' +
     '• Готово! 🎉\n\n' +
-    '_💡 Совет: В настройках включите "Запускать при входе в систему"_\n\n' +
-    '📺 [Видео-инструкция](https://www.youtube.com/watch?v=5Aql0V-ta8A)',
+    '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._',
 
   instructionMacos:
-    '🍏 *Установка WireGuard на macOS*\n\n' +
+    '🍏 *Установка AmneziaVPN на macOS*\n\n' +
     '*Шаг 1: Установите приложение*\n' +
-    '• [WireGuard в App Store для Mac](https://apps.apple.com/app/wireguard/id1451685025)\n' +
-    '• Или найдите "WireGuard" в App Store\n\n' +
+    '• [Страница загрузки Amnezia](https://amnezia.org/downloads)\n' +
+    '• Или [релизы на GitHub](https://github.com/amnezia-vpn/amnezia-client/releases)\n\n' +
     '*Шаг 2: Импортируйте конфиг*\n' +
-    '• Запустите WireGuard\n' +
-    '• Нажмите "Импортировать туннель(и) из файла"\n' +
-    '• Или перетащите файл .conf в окно приложения\n\n' +
+    '• Запустите AmneziaVPN\n' +
+    '• «У меня есть данные для подключения» → «Файл с настройками»\n' +
+    '• Укажите скачанный из бота файл .conf\n\n' +
     '*Шаг 3: Подключитесь*\n' +
-    '• Выберите конфиг в списке\n' +
-    '• Нажмите "Активировать"\n' +
+    '• Нажмите кнопку подключения\n' +
     '• Разрешите добавление VPN-конфигурации\n' +
     '• Готово! 🎉\n\n' +
-    '_💡 Совет: Иконка в меню-баре позволяет быстро включать/выключать VPN_\n\n' +
-    '📺 [Видео-инструкция](https://www.youtube.com/watch?v=5Aql0V-ta8A)',
+    '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._',
 
   instructionLinux:
-    '🐧 *Установка WireGuard на Linux*\n\n' +
-    '*Пакеты (выберите для вашего дистрибутива):*\n\n' +
-    '_Ubuntu / Debian:_\n' +
-    '```\nsudo apt update\nsudo apt install wireguard\n```\n\n' +
-    '_Fedora:_\n' +
-    '```\nsudo dnf install wireguard-tools\n```\n\n' +
-    '_Arch Linux:_\n' +
-    '```\nsudo pacman -S wireguard-tools\n```\n\n' +
-    '*Настройка:*\n' +
-    '1. Скачайте файл .conf из бота\n' +
-    '2. Скопируйте в /etc/wireguard/\n' +
-    '```\nsudo cp путь/к/файлу.conf /etc/wireguard/wg0.conf\n```\n' +
+    '🐧 *Установка на Linux*\n\n' +
+    '*Вариант 1: приложение AmneziaVPN (проще)*\n' +
+    '• Скачайте сборку со [страницы загрузки](https://amnezia.org/downloads) ' +
+    'или из [релизов на GitHub](https://github.com/amnezia-vpn/amnezia-client/releases)\n' +
+    '• Запустите приложение и импортируйте файл .conf из бота\n\n' +
+    '*Вариант 2: консольные amneziawg-tools*\n' +
+    '1. Соберите/установите [amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools) ' +
+    'и [amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go)\n' +
+    '2. Скопируйте конфиг:\n' +
+    '```\nsudo cp путь/к/файлу.conf /etc/amnezia/amneziawg/awg0.conf\n```\n' +
     '3. Запустите VPN:\n' +
-    '```\nsudo wg-quick up wg0\n```\n' +
+    '```\nsudo awg-quick up awg0\n```\n' +
     '4. Для автозапуска:\n' +
-    '```\nsudo systemctl enable wg-quick@wg0\n```\n\n' +
-    '_💡 Для GUI: установите network-manager-wireguard_\n\n' +
-    '📖 [Официальная документация](https://www.wireguard.com/install/)\n' +
-    '📺 [Видео на русском](https://www.youtube.com/watch?v=5Aql0V-ta8A)',
+    '```\nsudo systemctl enable awg-quick@awg0\n```\n\n' +
+    '⚠️ _Обычный `wg-quick` этот конфиг не поднимет: нужны awg-бинари._',
 };

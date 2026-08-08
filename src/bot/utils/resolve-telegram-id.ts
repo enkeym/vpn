@@ -28,7 +28,8 @@ export function resolveTelegramIdInput(
     return { kind: 'not_from_user' };
   }
 
-  const legacyFrom = (message as { forward_from?: { id: number } }).forward_from;
+  const legacyFrom = (message as { forward_from?: { id: number } })
+    .forward_from;
   if (legacyFrom) {
     const id = String(legacyFrom.id);
     if (adminId && id === adminId) return { kind: 'admin_self' };

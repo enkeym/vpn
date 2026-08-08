@@ -1,5 +1,4 @@
 import { IsString, IsOptional, IsBoolean, IsIn } from 'class-validator';
-import { VPN_PROTOCOLS, type TVpnProtocol } from 'src/wg/tunnel.types';
 
 export type SubscriptionDuration = 3 | 30 | 60 | 90;
 
@@ -21,11 +20,6 @@ export class CreatePeerDto {
   @IsOptional()
   @IsBoolean()
   isTrial?: boolean;
-
-  /** Туннель конфига: wg (по умолчанию) или awg — AmneziaWG с обфускацией */
-  @IsOptional()
-  @IsIn(VPN_PROTOCOLS, { message: 'protocol должен быть wg или awg' })
-  protocol?: TVpnProtocol;
 }
 
 export interface ICreatePeer {
@@ -33,5 +27,4 @@ export interface ICreatePeer {
   username?: string;
   durationDays?: SubscriptionDuration;
   isTrial?: boolean;
-  protocol?: TVpnProtocol;
 }

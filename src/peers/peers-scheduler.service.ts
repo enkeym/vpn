@@ -27,7 +27,7 @@ export class PeersSchedulerService {
     }
   }
 
-  /** Раз в день обновляем runtime-статистику WireGuard */
+  /** Раз в день обновляем runtime-статистику AmneziaWG */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handlePeerTrafficStats() {
     this.logger.log('Запуск обновления статистики трафика конфигов...');

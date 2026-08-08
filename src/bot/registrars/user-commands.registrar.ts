@@ -9,7 +9,6 @@ import { InvoiceService } from '../invoice/invoice.service';
 import { MainMenuService } from '../menu/main-menu.service';
 import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
-import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 /**
  * Регистрация пользовательских команд и callback-кнопок:
@@ -67,23 +66,9 @@ export class UserCommandsRegistrar {
       await this.mainMenuService.presentMainMenuAnchored(ctx);
     });
 
-    // Без суффикса — спрашиваем протокол, с суффиксом — сразу создаём
-    bot.callbackQuery(/^create_trial_config(?::(wg|awg))?$/, async (ctx) => {
+    bot.callbackQuery('create_trial_config', async (ctx) => {
       await ctx.answerCallbackQuery();
-      const protocol = ctx.match[1] as TVpnProtocol | undefined;
-
-      if (!protocol) {
-        const asked = await this.peerCreateHandler.showProtocolOptions(
-          ctx,
-          'create_trial_config',
-        );
-        if (asked) return;
-      }
-
-      await this.peerCreateHandler.handleCreateTrialConfig(
-        ctx,
-        protocol ?? 'wg',
-      );
+      await this.peerCreateHandler.handleCreateTrialConfig(ctx);
     });
 
     bot.callbackQuery('show_create_options', async (ctx) => {
@@ -108,29 +93,12 @@ export class UserCommandsRegistrar {
       }
     });
 
-    bot.callbackQuery(/^pay_plan:(30|60|90)(?::(wg|awg))?$/, async (ctx) => {
+    bot.callbackQuery(/^pay_plan:(30|60|90)$/, async (ctx) => {
       if (!ctx.from) return;
       const days = Number(ctx.match[1]) as 30 | 60 | 90;
-      const protocol = ctx.match[2] as TVpnProtocol | undefined;
       try {
-        // Протокол выбирается до счёта: конфиг создастся уже после оплаты, без диалога
-        if (!protocol) {
-          await ctx.answerCallbackQuery();
-          const asked = await this.peerCreateHandler.showProtocolOptions(
-            ctx,
-            `pay_plan:${days}`,
-            'show_create_options',
-          );
-          if (asked) return;
-        } else {
-          await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
-        }
-
-        await this.invoiceService.presentNewPurchaseInvoice(
-          ctx,
-          days,
-          protocol ?? 'wg',
-        );
+        await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+        await this.invoiceService.presentNewPurchaseInvoice(ctx, days);
       } catch (error) {
         this.logger.error('Error in pay_plan', error);
         await ctx
@@ -158,47 +126,27 @@ export class UserCommandsRegistrar {
       }
     });
 
-    bot.callbackQuery(
-      /^create_config:(unlimited|30|60|90)(?::(wg|awg))?$/,
-      async (ctx) => {
-        await ctx.answerCallbackQuery();
-        const userId = String(ctx.from?.id);
+    bot.callbackQuery(/^create_config:(unlimited|30|60|90)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const userId = String(ctx.from?.id);
 
-        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверка прав
-        if (!isAdmin(userId)) {
-          const userType = await this.mainHandler.getUserType(userId);
-          if (userType === 'user') {
-            return ctx.reply(
-              '❌ Этот метод создания доступен только администраторам. Пожалуйста, используйте меню оплаты.',
-            );
-          }
-        }
-
-        const duration = ctx.match[1];
-        const protocol = ctx.match[2] as TVpnProtocol | undefined;
-
-        if (!protocol) {
-          const asked = await this.peerCreateHandler.showProtocolOptions(
-            ctx,
-            `create_config:${duration}`,
-            'show_create_options',
+      // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверка прав
+      if (!isAdmin(userId)) {
+        const userType = await this.mainHandler.getUserType(userId);
+        if (userType === 'user') {
+          return ctx.reply(
+            '❌ Этот метод создания доступен только администраторам. Пожалуйста, используйте меню оплаты.',
           );
-          if (asked) return;
         }
+      }
 
-        const durationDays =
-          duration === 'unlimited'
-            ? undefined
-            : (Number(duration) as 30 | 60 | 90);
-        await this.peerCreateHandler.handleCreateConfig(
-          ctx,
-          durationDays,
-          false,
-          undefined,
-          protocol ?? 'wg',
-        );
-      },
-    );
+      const duration = ctx.match[1];
+      const durationDays =
+        duration === 'unlimited'
+          ? undefined
+          : (Number(duration) as 30 | 60 | 90);
+      await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
+    });
 
     // Список конфигов (подсказка «Загрузка…» — мгновенный отклик при задержке)
     bot.callbackQuery('list_configs', async (ctx) => {

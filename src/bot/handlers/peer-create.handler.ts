@@ -6,7 +6,6 @@ import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { PaymentService } from 'src/payment/payment.service';
-import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 @Injectable()
 export class PeerCreateHandler {
@@ -67,34 +66,10 @@ export class PeerCreateHandler {
     });
   }
 
-  /**
-   * Экран выбора протокола. Если AmneziaWG на сервере не поднят, выбирать не из
-   * чего — возвращаем false, и вызывающая сторона идёт по обычному пути с WireGuard.
-   */
-  async showProtocolOptions(
-    ctx: Context,
-    actionPrefix: string,
-    backCallback = 'main_menu',
-  ): Promise<boolean> {
-    if (!this.peersService.isProtocolAvailable('awg')) return false;
-
-    await safeEditMessageText(ctx, BotUi.selectProtocolTitle, {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.selectProtocolKeyboard(actionPrefix, backCallback),
-    });
-    return true;
-  }
-
   /** Пробный период: конфиг на 3 дня, доступен только один раз */
-  async handleCreateTrialConfig(ctx: Context, protocol: TVpnProtocol = 'wg') {
+  async handleCreateTrialConfig(ctx: Context) {
     if (!ctx.from) return;
-    await this.handleCreateConfig(
-      ctx,
-      3 as SubscriptionDuration,
-      true,
-      undefined,
-      protocol,
-    );
+    await this.handleCreateConfig(ctx, 3 as SubscriptionDuration, true);
   }
 
   async handleCreateConfig(
@@ -102,7 +77,6 @@ export class PeerCreateHandler {
     durationDays?: SubscriptionDuration,
     isTrial = false,
     usedPromoDiscount?: 60 | 90,
-    protocol: TVpnProtocol = 'wg',
   ) {
     if (!ctx.from) return;
 
@@ -116,7 +90,6 @@ export class PeerCreateHandler {
         username: ctx.from.username,
         durationDays,
         isTrial,
-        protocol,
       });
 
       if (usedPromoDiscount) {
@@ -138,12 +111,7 @@ export class PeerCreateHandler {
       const message = await ctx.replyWithDocument(
         new InputFile(Buffer.from(config), `${peer.name}.conf`),
         {
-          caption: BotUi.configCreated(
-            peer.name,
-            peer.ip,
-            peer.expiresAt,
-            peer.protocol,
-          ),
+          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
           parse_mode: 'Markdown',
           reply_markup: BotUi.configDeliveredKeyboard(peer.name),
         },

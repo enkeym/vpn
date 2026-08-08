@@ -21,13 +21,7 @@ import {
   lte,
   sql,
 } from 'drizzle-orm';
-import { TunnelRegistry } from 'src/wg/tunnel.registry';
-import {
-  VPN_PROTOCOLS,
-  type IPeerRuntimeStats,
-  type ITunnelService,
-  type TVpnProtocol,
-} from 'src/wg/tunnel.types';
+import { AwgService } from 'src/wg/awg.service';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import { Mutex } from 'async-mutex';
@@ -73,7 +67,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
-    private readonly tunnels: TunnelRegistry,
+    private readonly tunnel: AwgService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -86,13 +80,12 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /**
-   * Синхронизация с туннелями — только после того, как отработали onModuleInit
-   * всех модулей: wg0.conf создаёт WgService в своём хуке, а awg0 до конца
-   * своего хука считается выключенным. Порядок хуков между модулями Nest
-   * выбирает по топологии импортов, и forwardRef между BotModule и
-   * PaymentModule утягивает PeersModule глубже WgModule — PeersService
-   * инициализируется первым. onApplicationBootstrap идёт после всех
-   * onModuleInit, поэтому такой гонки не знает.
+   * Синхронизация с туннелем — только после того, как отработали onModuleInit
+   * всех модулей: awg0 до конца своего хука считается выключенным. Порядок
+   * хуков между модулями Nest выбирает по топологии импортов, и forwardRef
+   * между BotModule и PaymentModule утягивает PeersModule глубже WgModule —
+   * PeersService инициализируется первым. onApplicationBootstrap идёт после
+   * всех onModuleInit, поэтому такой гонки не знает.
    */
   async onApplicationBootstrap() {
     await this.syncWgWithDb();
@@ -226,35 +219,12 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     this.cacheService.delete(CACHE_NAMESPACES.PEER_BY_NAME, peerName);
   }
 
-  /** Туннель, которому принадлежит пир (wg0 или awg0) */
-  private tunnelFor(peer: { protocol: TVpnProtocol }): ITunnelService {
-    return this.tunnels.get(peer.protocol);
-  }
-
   /**
-   * Можно ли выдавать новые конфиги этого протокола: awg0 поднимается только
-   * если в образе есть amneziawg-go, иначе бот не должен его предлагать.
+   * Можно ли выдавать новые конфиги: awg0 поднимается только если в образе
+   * есть amneziawg-go, иначе бот не должен предлагать выдачу конфига.
    */
-  isProtocolAvailable(protocol: TVpnProtocol): boolean {
-    return this.tunnels.isEnabled(protocol);
-  }
-
-  /**
-   * Батч-операции выполняются по каждому интерфейсу отдельно:
-   * у wg0 и awg0 свои конфиги и свой syncconf.
-   */
-  private groupByProtocol<T extends { protocol: TVpnProtocol }>(
-    items: T[],
-  ): Map<TVpnProtocol, T[]> {
-    const grouped = new Map<TVpnProtocol, T[]>();
-
-    for (const item of items) {
-      const bucket = grouped.get(item.protocol);
-      if (bucket) bucket.push(item);
-      else grouped.set(item.protocol, [item]);
-    }
-
-    return grouped;
+  isTunnelAvailable(): boolean {
+    return this.tunnel.isEnabled();
   }
 
   private async syncWgWithDb() {
@@ -268,19 +238,14 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
         if (!activePeers) return;
 
-        // Каждый интерфейс восстанавливается из своего среза БД
-        for (const protocol of VPN_PROTOCOLS) {
-          const peers = activePeers
-            .filter((peer) => peer.protocol === protocol)
-            .map((peer) => ({
-              name: peer.name,
-              publicKey: peer.publicKey,
-              presharedKey: peer.presharedKey!,
-              ip: peer.ip,
-            }));
-
-          await this.tunnels.get(protocol).restoreConfigs(peers);
-        }
+        await this.tunnel.restoreConfigs(
+          activePeers.map((peer) => ({
+            name: peer.name,
+            publicKey: peer.publicKey,
+            presharedKey: peer.presharedKey!,
+            ip: peer.ip,
+          })),
+        );
 
         // Успешная синхронизация
         if (attempt > 1) {
@@ -305,7 +270,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
     // Все попытки исчерпаны - отправляем уведомление админам
     const errorDetails = [
-      `Не удалось синхронизировать конфигурацию WireGuard с базой данных после ${SYNC_MAX_RETRIES} попыток.`,
+      `Не удалось синхронизировать конфигурацию AmneziaWG с базой данных после ${SYNC_MAX_RETRIES} попыток.`,
       ``,
       `*Ошибка:* \`${lastError?.message || 'Неизвестная ошибка'}\``,
       ``,
@@ -313,7 +278,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     ].join('\n');
 
     await this.notificationService.notifyCriticalError(
-      'Сбой синхронизации WireGuard',
+      'Сбой синхронизации AmneziaWG',
       errorDetails,
       SYNC_MAX_RETRIES,
     );
@@ -438,8 +403,14 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         ? (3 as SubscriptionDuration)
         : dto.durationDays;
 
-      const protocol: TVpnProtocol = dto.protocol ?? 'wg';
-      const tunnel = this.tunnels.getForNewPeer(protocol);
+      const tunnel = this.tunnel;
+
+      // Без поднятого awg0 ключи сгенерируются, но конфиг некуда применить
+      if (!tunnel.isEnabled()) {
+        throw new BadRequestException(
+          'VPN сейчас недоступен: туннель AmneziaWG не поднят. Попробуйте позже.',
+        );
+      }
 
       const usedIps = await this.getUsedIps();
       const credentials = await tunnel.generateClientCredentials(usedIps);
@@ -450,7 +421,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         telegramId: dto.telegramId,
         username: dto.username || null,
         name: peerName,
-        protocol,
         publicKey: credentials.publicKey,
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
@@ -550,16 +520,14 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     this.invalidatePeerCache(peerName);
     this.invalidateUserPeersCache(peer.telegramId);
 
-    const tunnel = this.tunnelFor(peer);
-
     try {
       if (shouldPause) {
-        await tunnel.removePeer(peer.publicKey);
+        await this.tunnel.removePeer(peer.publicKey);
       } else {
         if (!peer.presharedKey)
           throw new InternalServerErrorException('Нет presharedKey');
 
-        await tunnel.createClientConfig(peer.name, {
+        await this.tunnel.createClientConfig(peer.name, {
           publicKey: peer.publicKey,
           privateKey: peer.privateKey,
           presharedKey: peer.presharedKey,
@@ -599,7 +567,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
     if (!peer.paused) {
       try {
-        await this.tunnelFor(peer).removePeer(peer.publicKey);
+        await this.tunnel.removePeer(peer.publicKey);
       } catch (error) {
         this.logger.error(`Не удалось удалить пир из туннеля: ${error}`);
       }
@@ -622,7 +590,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         telegramId: true,
         publicKey: true,
         paused: true,
-        protocol: true,
       },
       where: inArray(schema.peers.name, peerNames),
     });
@@ -642,15 +609,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     const activePeers = peers.filter((p) => !p.paused);
-    for (const [protocol, group] of this.groupByProtocol(activePeers)) {
+    if (activePeers.length > 0) {
       try {
-        await this.tunnels
-          .get(protocol)
-          .removePeers(group.map((p) => p.publicKey));
+        await this.tunnel.removePeers(activePeers.map((p) => p.publicKey));
       } catch (error) {
-        this.logger.error(
-          `Не удалось удалить пиры из туннеля ${protocol}: ${error}`,
-        );
+        this.logger.error(`Не удалось удалить пиры из туннеля: ${error}`);
       }
     }
   }
@@ -943,7 +906,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         name: true,
         publicKey: true,
         telegramId: true,
-        protocol: true,
       },
       where: and(
         eq(schema.peers.paused, false),
@@ -965,11 +927,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         .set({ paused: true, pausedAt: new Date(), pausedReason: 'expired' })
         .where(inArray(schema.peers.id, ids));
 
-      for (const [protocol, group] of this.groupByProtocol(expiredPeers)) {
-        await this.tunnels
-          .get(protocol)
-          .removePeers(group.map((p) => p.publicKey));
-      }
+      await this.tunnel.removePeers(expiredPeers.map((p) => p.publicKey));
 
       for (const peer of expiredPeers) {
         this.invalidatePeerCache(peer.name);
@@ -1154,13 +1112,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   async refreshPeerTrafficStats(): Promise<number> {
-    // Статистика собирается со всех интерфейсов: публичный ключ уникален глобально
-    const runtimeStats = new Map<string, IPeerRuntimeStats>();
-    for (const tunnel of this.tunnels.all()) {
-      for (const [publicKey, stats] of await tunnel.getPeerRuntimeStats()) {
-        runtimeStats.set(publicKey, stats);
-      }
-    }
+    const runtimeStats = await this.tunnel.getPeerRuntimeStats();
 
     if (runtimeStats.size === 0) {
       return 0;
@@ -1243,7 +1195,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     });
 
     let paidNotified = 0;
-    let unlimitedNotified = 0;
+    const unlimitedNotified = 0;
 
     // // [ВРЕМЕННО ОТКЛЮЧЕНО] Паузa бессрочных конфигов за неактивность
     // const unlimitedToPause = activePeers.filter((peer) => {
@@ -1439,8 +1391,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       // Сохраняем текущий срок действия (expiresAt) - это важно!
       const currentExpiresAt = oldPeer.expiresAt;
 
-      // Замена не меняет протокол — остаёмся на том же интерфейсе
-      const tunnel = this.tunnelFor(oldPeer);
+      const tunnel = this.tunnel;
 
       // Удаляем старый пир из туннеля (если не на паузе)
       if (!oldPeer.paused) {
@@ -1491,15 +1442,15 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       this.invalidatePeerCache(peerName);
       this.invalidateUserPeersCache(oldPeer.telegramId);
 
-      // Создаём новый конфиг в WireGuard
+      // Создаём новый конфиг в туннеле
       try {
         const config = await tunnel.createClientConfig(peerName, credentials);
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
         return { peer: updatedPeer, config };
       } catch (error) {
-        // Если не удалось создать конфиг в WG, откатываем изменения
-        this.logger.error(`Ошибка создания нового конфига в WG: ${error}`);
+        // Если не удалось создать конфиг в туннеле, откатываем изменения
+        this.logger.error(`Ошибка создания нового конфига в туннеле: ${error}`);
         await this.db
           .update(schema.peers)
           .set({
@@ -1534,15 +1485,15 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /**
-   * Генерирует строку конфига WireGuard для существующего пира
+   * Генерирует строку конфига AmneziaWG для существующего пира
    */
   async getPeerConfigString(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
 
-    // Сборка конфига живёт в туннеле: у AmneziaWG в [Interface] ещё и параметры
+    // Сборка конфига живёт в туннеле: в [Interface] идут ещё и параметры
     // обфускации, а Endpoint туннель подставляет актуальный — peer.endpoint из
     // БД хранит лишь тот, что был на момент создания пира.
-    return await this.tunnelFor(peer).buildClientConfig({
+    return await this.tunnel.buildClientConfig({
       privateKey: peer.privateKey,
       presharedKey: peer.presharedKey,
       ip: peer.ip,

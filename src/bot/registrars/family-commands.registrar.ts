@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { Bot } from 'grammy';
 import { FamilyHandler } from '../handlers/family.handler';
 import { ensureAdmin } from './admin-guard';
-import type { TVpnProtocol } from 'src/wg/tunnel.types';
 
 /**
  * Регистрация callback-кнопок меню группы «Семья» (только для админов).
@@ -158,34 +157,16 @@ export class FamilyCommandsRegistrar {
     });
 
     // Создать конфиг (f_dc = family_do_create, u = unlimited)
-    bot.callbackQuery(
-      /^f_dc:([^:]+):(u|30|60|90)(?::(wg|awg))?$/,
-      async (ctx) => {
-        if (!(await ensureAdmin(ctx, isAdmin))) return;
-        // Сразу отвечаем, чтобы кнопка не зависала во время создания конфига
-        await ctx.answerCallbackQuery();
+    bot.callbackQuery(/^f_dc:([^:]+):(u|30|60|90)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      // Сразу отвечаем, чтобы кнопка не зависала во время создания конфига
+      await ctx.answerCallbackQuery();
 
-        const memberId = ctx.match[1];
-        const rawDuration = ctx.match[2];
-        const protocol = ctx.match[3] as TVpnProtocol | undefined;
+      const memberId = ctx.match[1];
+      const rawDuration = ctx.match[2];
+      const duration = rawDuration === 'u' ? 'unlimited' : rawDuration;
 
-        if (!protocol) {
-          const asked = await this.familyHandler.showMemberProtocolOptions(
-            ctx,
-            memberId,
-            rawDuration,
-          );
-          if (asked) return;
-        }
-
-        const duration = rawDuration === 'u' ? 'unlimited' : rawDuration;
-        await this.familyHandler.createMemberConfig(
-          ctx,
-          memberId,
-          duration,
-          protocol ?? 'wg',
-        );
-      },
-    );
+      await this.familyHandler.createMemberConfig(ctx, memberId, duration);
+    });
   }
 }
