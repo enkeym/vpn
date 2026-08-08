@@ -425,7 +425,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
         ip: credentials.ip,
-        endpoint: `${tunnel.host}:${tunnel.port}`,
+        endpoint: `${tunnel.host}:${tunnel.publicPort}`,
         paused: false,
         pausedReason: null,
         expiresAt,
@@ -1393,20 +1393,10 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
       const tunnel = this.tunnel;
 
-      // Удаляем старый пир из туннеля (если не на паузе)
-      if (!oldPeer.paused) {
-        try {
-          await tunnel.removePeer(oldPeer.publicKey);
-        } catch (error) {
-          this.logger.error(
-            `Ошибка удаления старого пира из туннеля: ${error}`,
-          );
-        }
-      }
-
-      // Генерируем новые ключи
+      // Генерируем новые ключи. Старый IP освобождаем: замена старого пира на
+      // нового идёт одной записью конфига, поэтому переиспользовать адрес
+      // безопасно — состояния с двумя пирами на одном IP не возникает.
       const usedIps = await this.getUsedIps();
-      // Исключаем старый IP из списка занятых
       usedIps.delete(oldPeer.ip);
 
       const credentials = await tunnel.generateClientCredentials(usedIps);
@@ -1419,7 +1409,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
           privateKey: credentials.privateKey,
           presharedKey: credentials.presharedKey,
           ip: credentials.ip,
-          endpoint: `${tunnel.host}:${tunnel.port}`,
+          endpoint: `${tunnel.host}:${tunnel.publicPort}`,
           paused: false, // Активируем конфиг при замене
           pausedAt: null,
           pausedReason: null,
@@ -1442,9 +1432,15 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       this.invalidatePeerCache(peerName);
       this.invalidateUserPeersCache(oldPeer.telegramId);
 
-      // Создаём новый конфиг в туннеле
+      // Заменяем пира в туннеле одной операцией: старый остаётся на месте до
+      // самой записи конфига, поэтому сбой оставляет рабочим прежний конфиг,
+      // а не выключает клиента до следующего старта приложения
       try {
-        const config = await tunnel.createClientConfig(peerName, credentials);
+        const config = await tunnel.replaceClientConfig(
+          peerName,
+          oldPeer.publicKey,
+          credentials,
+        );
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
         return { peer: updatedPeer, config };

@@ -247,18 +247,23 @@ export class PeerManageHandler {
     if (!ctx.chat) return;
 
     try {
+      const startedAt = Date.now();
       const qrBuffer = await this.peersService.generatePeerQrCode(peerName);
-      const peer = await this.peersService.findPeer(peerName);
+      const generatedAt = Date.now();
 
       const message = await ctx.replyWithPhoto(
         new InputFile(qrBuffer, `${peerName}_qr.png`),
         {
-          caption: `📷 *QR-код для конфига* \`${peer.name}\`\n\n_Отсканируйте в приложении AmneziaVPN_`,
+          caption: `📷 *QR-код для конфига* \`${peerName}\`\n\n_Отсканируйте в приложении AmneziaVPN_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
       );
-      await this.peersService.setQrMessageId(peer.name, message.message_id);
+      this.logger.log(
+        `QR ${peerName}: генерация ${generatedAt - startedAt}мс, ` +
+          `отправка в Telegram ${Date.now() - generatedAt}мс`,
+      );
+      await this.peersService.setQrMessageId(peerName, message.message_id);
     } catch (error) {
       this.logger.error(`Ошибка генерации QR: ${error}`);
       await ctx.answerCallbackQuery({
@@ -274,18 +279,23 @@ export class PeerManageHandler {
     if (!ctx.chat) return;
 
     try {
+      const startedAt = Date.now();
       const config = await this.peersService.getPeerConfigString(peerName);
-      const peer = await this.peersService.findPeer(peerName);
+      const builtAt = Date.now();
 
       const message = await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${peer.name}.conf`),
+        new InputFile(Buffer.from(config), `${peerName}.conf`),
         {
-          caption: `📄 *Файл конфига* \`${peer.name}\`\n\n_Импортируйте в приложение AmneziaVPN_`,
+          caption: `📄 *Файл конфига* \`${peerName}\`\n\n_Импортируйте в приложение AmneziaVPN_`,
           parse_mode: 'Markdown',
           reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
         },
       );
-      await this.peersService.setFileMessageId(peer.name, message.message_id);
+      this.logger.log(
+        `Файл ${peerName}: сборка конфига ${builtAt - startedAt}мс, ` +
+          `отправка в Telegram ${Date.now() - builtAt}мс`,
+      );
+      await this.peersService.setFileMessageId(peerName, message.message_id);
     } catch (error) {
       this.logger.error(`Ошибка отправки файла конфига: ${error}`);
       await ctx.answerCallbackQuery({

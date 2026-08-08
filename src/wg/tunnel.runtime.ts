@@ -2,7 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
 import * as path from 'path';
-import { writeFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink } from 'fs/promises';
 import type { IPeerRuntimeStats } from './tunnel.types';
 
 const execAsync = promisify(exec);
@@ -47,17 +47,43 @@ export async function bringInterfaceUp(
     await execAsync(withEnv(bin, `${bin.quick} up ${filePath}`));
   } catch (error) {
     // Интерфейс мог остаться в полуподнятом состоянии — убираем за собой
-    try {
-      await execAsync(withEnv(bin, `${bin.quick} down ${filePath}`));
-    } catch {
-      // Уже опущен
-    }
+    await bringInterfaceDown(bin, filePath).catch(() => {});
 
     throw new Error(
       `Не удалось поднять интерфейс ${bin.interfaceName}: ${
         error instanceof Error ? error.message : error
       }`,
     );
+  }
+}
+
+/**
+ * Опускает интерфейс вместе с правилами из PostDown. Нужен не только для уборки
+ * после сбоя: Address, ListenPort и правила фаервола применяются исключительно
+ * в `up` — syncconf их не видит, поэтому смена любого из них требует
+ * пересоздания интерфейса.
+ */
+export async function bringInterfaceDown(
+  bin: ITunnelBinaries,
+  filePath: string,
+): Promise<void> {
+  await execAsync(withEnv(bin, `${bin.quick} down ${filePath}`));
+}
+
+/**
+ * Доступен ли IPv6 в сетевом пространстве контейнера. Если ядро собрано без v6
+ * или он выключен, `ip -6 address add` внутри awg-quick завершится ошибкой и
+ * уронит подъём всего интерфейса — поэтому адрес добавляется только по факту.
+ */
+export async function isIpv6Available(): Promise<boolean> {
+  try {
+    const disabled = await readFile(
+      '/proc/sys/net/ipv6/conf/all/disable_ipv6',
+      'utf8',
+    );
+    return disabled.trim() === '0';
+  } catch {
+    return false;
   }
 }
 

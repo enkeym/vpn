@@ -32,13 +32,57 @@ export function readClientDns(rawValue: string | undefined): string {
   return normalizeCsv(rawValue, '1.1.1.1, 8.8.8.8');
 }
 
+/**
+ * Первый IPv4-адрес из Address интерфейса, без маски. Address может быть списком
+ * («10.9.0.1/16, fd42:9::1/64»), поэтому разбирать его как одиночный адрес нельзя.
+ */
+export function getIpv4Address(address: string): string {
+  const ipv4 = address
+    .split(',')
+    .map((entry) => entry.trim().split('/')[0])
+    .find((entry) => entry.includes('.'));
+
+  if (!ipv4) {
+    throw new Error(`В адресе интерфейса нет IPv4: ${address}`);
+  }
+
+  return ipv4;
+}
+
 /** '10.9.0.1/16' → '10.9' — первые два октета подсети интерфейса */
 export function getSubnetPrefix(address: string): string {
-  const [first, second] = address.split('/')[0].split('.');
+  const [first, second] = getIpv4Address(address).split('.');
   if (!first || !second) {
     throw new Error(`Некорректный адрес интерфейса: ${address}`);
   }
   return `${first}.${second}`;
+}
+
+/**
+ * Адрес клиента в IPv6-подсети туннеля, выведенный из его IPv4: при префиксе
+ * fd42:9::1/64 клиент 10.9.0.2 получает fd42:9::2. Пара считается на лету и в
+ * БД не хранится — один и тот же IPv4 всегда даёт один и тот же IPv6, поэтому
+ * отдельный учёт занятых v6-адресов не нужен.
+ */
+export function deriveClientIpv6(
+  interfaceAddress6: string,
+  clientIpv4: string,
+): string {
+  const base = interfaceAddress6.split('/')[0].trim();
+  const lastColon = base.lastIndexOf(':');
+  if (lastColon < 0) {
+    throw new Error(`Некорректный IPv6-адрес интерфейса: ${interfaceAddress6}`);
+  }
+
+  const octets = clientIpv4.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) {
+    throw new Error(`Некорректный IPv4-адрес клиента: ${clientIpv4}`);
+  }
+
+  // Те же два младших октета, что задают адрес внутри /16, — только в hex
+  const offset = ((octets[2] << 8) | octets[3]).toString(16);
+
+  return `${base.slice(0, lastColon + 1)}${offset}`;
 }
 
 /** Свободный IP внутри подсети `prefix` */

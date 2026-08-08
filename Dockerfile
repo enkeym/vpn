@@ -91,6 +91,9 @@ WORKDIR /app
 # --no-cache уменьшает размер образа
 RUN apk add --no-cache \
     iptables \
+    # В Alpine ip6tables — отдельный пакет: без него правила PostUp для IPv6
+    # не применяются, и NAT66 в туннеле не работает
+    ip6tables \
     iproute2 \
     openresolv \
     sudo \

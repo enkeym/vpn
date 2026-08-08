@@ -16,12 +16,21 @@ services:
       - /dev/net/tun:/dev/net/tun
     sysctls:
       - net.ipv4.ip_forward=1
+      # IPv6 в туннеле: клиенту выдаётся «AllowedIPs = …, ::/0», и без forwarding
+      # его v6-трафик не получает даже ICMPv6 unreachable — дуалстек-сайты висят
+      # до таймаута. Если ядро хоста собрано без IPv6, контейнер не стартует:
+      # тогда уберите обе строки и задайте AWG_ADDRESS6= (пусто) в .env.
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv6.conf.all.forwarding=1
 
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 512M
+          # amneziawg-go шифрует каждый пакет в userspace: при лимите в одно ядро
+          # в него же упираются и бот, и sqlite, и генерация QR — потолок скорости
+          # туннеля и скачки задержек брались именно отсюда
+          cpus: '2.0'
+          memory: 1G
         reservations:
           cpus: '0.25'
           memory: 128M
@@ -44,7 +53,16 @@ services:
       - ./data:/app/data
       - /lib/modules:/lib/modules:ro
 
+    # Наружу — AWG_PUBLIC_PORT (по умолчанию 4500/udp, порт IPsec NAT-T: его
+    # пропускают мобильные операторы, которые режут нестандартные UDP-порты),
+    # внутрь контейнера — ListenPort интерфейса. Тот же публичный порт должен
+    # быть открыт в фаерволе VPS.
     ports:
+      - '${AWG_PUBLIC_PORT:-4500}:${AWG_PORT:-51821}/udp'
+      # Переходная проброска для конфигов, выданных до появления AWG_PUBLIC_PORT:
+      # в них Endpoint всё ещё указывает на ListenPort. Убрать, когда все клиенты
+      # перекачают конфиг из бота. AWG_PUBLIC_PORT при этом обязан отличаться от
+      # AWG_PORT — иначе docker получит два одинаковых проброса.
       - '${AWG_PORT:-51821}:${AWG_PORT:-51821}/udp'
 
     env_file:
