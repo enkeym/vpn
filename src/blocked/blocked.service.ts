@@ -8,7 +8,7 @@ import {
 import * as schema from '../database/schema';
 import { DRIZZLE } from 'src/database/database.module';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 
 export type TBlockedUser = typeof schema.blockedUsers.$inferSelect;
 
@@ -138,6 +138,16 @@ export class BlockedUsersService implements OnModuleInit, OnModuleDestroy {
     });
 
     return isBlocked;
+  }
+
+  /**
+   * Список всех заблокированных пользователей — бан-лист в админ-панели.
+   */
+  async getAllBlocked(): Promise<TBlockedUser[]> {
+    return this.db
+      .select()
+      .from(schema.blockedUsers)
+      .orderBy(desc(schema.blockedUsers.createdAt));
   }
 
   /**

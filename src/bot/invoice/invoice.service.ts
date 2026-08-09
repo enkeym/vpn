@@ -276,11 +276,31 @@ export class InvoiceService {
     }
   }
 
+  /**
+   * Финальная проверка перед выставлением счёта — единая точка защиты от
+   * гонки с переключателем «Оплата» в админ-панели: неважно, с какой кнопки
+   * (могла быть отрисована до отключения) пользователь сюда попал, счёт не
+   * создастся, если оплата выключена именно сейчас.
+   */
+  private async guardPaymentEnabled(
+    ctx: Context,
+    backKeyboard: ReturnType<typeof BotUi.backToMenuKeyboard>,
+  ): Promise<boolean> {
+    if (await this.paymentService.isPaymentEnabled()) return true;
+    await safeEditMessageText(ctx, BotUi.paymentMenuUnavailable, {
+      parse_mode: 'Markdown',
+      reply_markup: backKeyboard,
+    });
+    return false;
+  }
+
   async presentNewPurchaseInvoice(
     ctx: Context,
     durationDays: 30 | 60 | 90,
   ): Promise<void> {
     if (!ctx.from) return;
+    if (!(await this.guardPaymentEnabled(ctx, BotUi.backToMenuKeyboard())))
+      return;
     const telegramId = String(ctx.from.id);
     const hasUsedDiscount =
       await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
@@ -289,7 +309,7 @@ export class InvoiceService {
     const nominalPrice = isPromo
       ? BotUi.paymentPlanDiscountedPrices[durationDays]
       : BotUi.paymentPlanPrices[durationDays];
-    const price = this.paymentService.getBilledAmountRub(nominalPrice);
+    const price = await this.paymentService.getBilledAmountRub(nominalPrice);
 
     const payment = await this.paymentService.createPayment(
       telegramId,
@@ -344,6 +364,13 @@ export class InvoiceService {
     peerName: string,
   ): Promise<void> {
     if (!ctx.from) return;
+    if (
+      !(await this.guardPaymentEnabled(
+        ctx,
+        BotUi.backToOwnPeerKeyboard(peerName),
+      ))
+    )
+      return;
     const telegramId = String(ctx.from.id);
     const hasUsedDiscount =
       await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
@@ -352,7 +379,7 @@ export class InvoiceService {
     const nominalPrice = isPromo
       ? BotUi.paymentPlanDiscountedPrices[durationDays]
       : BotUi.paymentPlanPrices[durationDays];
-    const price = this.paymentService.getBilledAmountRub(nominalPrice);
+    const price = await this.paymentService.getBilledAmountRub(nominalPrice);
 
     const payment = await this.paymentService.createPayment(
       telegramId,

@@ -5,9 +5,15 @@ import { PaymentController } from './payment.controller';
 import { PeersModule } from '../peers/peers.module';
 import { BotModule } from '../bot/bot.module';
 import { DatabaseModule } from '../database/database.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [DatabaseModule, PeersModule, forwardRef(() => BotModule)],
+  imports: [
+    DatabaseModule,
+    PeersModule,
+    SettingsModule,
+    forwardRef(() => BotModule),
+  ],
   providers: [PaymentService, PaymentFulfillmentService],
   controllers: [PaymentController],
   exports: [PaymentService, PaymentFulfillmentService],

@@ -43,6 +43,13 @@
       "when": 1786185118069,
       "tag": "0005_funny_la_nuit",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786279678872,
+      "tag": "0006_curious_vampiro",
+      "breakpoints": true
     }
   ]
 }

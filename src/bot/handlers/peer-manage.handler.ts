@@ -50,7 +50,8 @@ export class PeerManageHandler {
     if (peers.length === 0) {
       const userType = await this.mainHandler.getUserType(String(ctx.from.id));
       const showGetVpn =
-        userType !== 'user' || !this.mainHandler.isUserPaymentMenuHidden();
+        userType !== 'user' ||
+        !(await this.mainHandler.isUserPaymentMenuHidden());
       return safeEditMessageText(ctx, BotUi.noConfigs, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.emptyConfigsKeyboard(showGetVpn),

@@ -96,7 +96,8 @@ export const BotUi = {
       .text('📖 Инструкция', 'show_instructions');
   },
 
-  // Главное меню для админов (2 кнопки в ряд — чтобы всё было видно на мобильных)
+  // Главное меню для админов: тот же набор, что у обычного пользователя,
+  // плюс отдельная точка входа в панель администратора внизу.
   adminMenuKeyboard: (showTrial = false) => {
     const kb = new InlineKeyboard();
     if (showTrial) {
@@ -106,14 +107,76 @@ export const BotUi = {
     return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
+      .text('📖 Инструкция', 'show_instructions')
+      .row()
+      .text('🛠 Панель администратора', 'admin_panel');
+  },
+
+  // === Панель администратора ===
+
+  adminPanelTitle: '🛠 *Панель администратора*\n\nВыберите раздел:',
+
+  adminPanelKeyboard: () =>
+    new InlineKeyboard()
       .text('👨‍👩‍👧‍👦 Семья', 'family_menu')
       .text('🔍 Поиск клиента', 'admin_search')
       .row()
       .text('📊 Статистика', 'admin_stats')
       .text('📈 Аналитика', 'admin_analytics')
       .row()
-      .text('📖 Инструкция', 'show_instructions');
+      .text('📢 Рупор', 'admin_broadcast')
+      .text('⚙️ Параметры', 'admin_settings')
+      .row()
+      .text('🚫 Бан-лист', 'admin_blocked_list')
+      .row()
+      .text('« В главное меню', 'main_menu'),
+
+  backToAdminPanelKeyboard: () =>
+    new InlineKeyboard().text('« К панели администратора', 'admin_panel'),
+
+  // === Бан-лист ===
+
+  blockedListTitle: (count: number) =>
+    `🚫 *Заблокированные пользователи*\n\n` +
+    (count > 0 ? `Всего: *${count}*` : '_Список пуст_'),
+
+  blockedListKeyboard: (
+    blocked: { telegramId: string; reason: string | null }[],
+  ) => {
+    const keyboard = new InlineKeyboard();
+    blocked.forEach((u) => {
+      const label = u.reason
+        ? `🚫 ${u.telegramId} — ${u.reason}`
+        : `🚫 ${u.telegramId}`;
+      keyboard.text(label.slice(0, 64), `admin_client:${u.telegramId}`).row();
+    });
+    keyboard.text('« К панели администратора', 'admin_panel');
+    return keyboard;
   },
+
+  // === Параметры (runtime-переключатели) ===
+
+  adminSettingsTitle: (paymentEnabled: boolean, testPayment: boolean) =>
+    '⚙️ *Параметры*\n\n' +
+    `💳 Приём оплаты: *${paymentEnabled ? 'включён' : 'выключен'}*\n` +
+    `🧪 Тестовая оплата: *${testPayment ? 'включена (1 ₽ за любой тариф)' : 'выключена'}*\n\n` +
+    'Изменения применяются мгновенно, без перезапуска бота.',
+
+  adminSettingsKeyboard: (paymentEnabled: boolean, testPayment: boolean) =>
+    new InlineKeyboard()
+      .text(
+        paymentEnabled ? '💳 Оплата: ВКЛ ✅' : '💳 Оплата: ВЫКЛ ⛔',
+        'admin_toggle_payment',
+      )
+      .row()
+      .text(
+        testPayment
+          ? '🧪 Тестовая оплата: ВКЛ ✅'
+          : '🧪 Тестовая оплата: ВЫКЛ ⭕',
+        'admin_toggle_test_payment',
+      )
+      .row()
+      .text('« К панели администратора', 'admin_panel'),
 
   adminStatsText: (stats: {
     totalConfigs: number;
@@ -135,7 +198,8 @@ export const BotUi = {
     `👨‍👩‍👧‍👦 В группе «Семья»: *${stats.familyMembersCount}*\n` +
     `🚫 Заблокировано: *${stats.blockedUsersCount}*`,
 
-  adminStatsKeyboard: () => new InlineKeyboard().text('« В меню', 'main_menu'),
+  adminStatsKeyboard: () =>
+    new InlineKeyboard().text('« В меню', 'admin_panel'),
 
   // === Аналитика конфигов (для админа) ===
 
@@ -153,7 +217,7 @@ export const BotUi = {
       .row()
       .text('⏰ Истекают скоро', 'admin_analytics_expiring')
       .row()
-      .text('« В меню', 'main_menu'),
+      .text('« В меню', 'admin_panel'),
 
   analyticsOverviewText: (data: {
     totalConfigs: number;
@@ -401,11 +465,9 @@ export const BotUi = {
 
   welcomeMessageAdmin:
     '👋 *Добро пожаловать, Администратор!*\n\n' +
-    '🔧 Вы имеете полный доступ к управлению TUNEL VPN:\n' +
-    '• Создание и управление конфигами\n' +
-    '• Управление группой «Семья»\n' +
-    '• Поиск и управление клиентами\n' +
-    '• Блокировка/разблокировка пользователей\n\n' +
+    '🔧 Вы имеете полный доступ к управлению TUNEL VPN.\n\n' +
+    '🛠 Группа «Семья», поиск и управление клиентами, статистика, аналитика, ' +
+    'Рупор и Параметры — в разделе *«Панель администратора»* внизу меню.\n\n' +
     'Выберите действие:',
 
   welcomeMessageFamily:
@@ -538,7 +600,7 @@ export const BotUi = {
       keyboard.text(`👤 ${displayName}`, `f_m:${mId}`).row();
     });
 
-    keyboard.text('« Назад в меню', 'main_menu');
+    keyboard.text('« Назад в меню', 'admin_panel');
     return keyboard;
   },
 
@@ -855,7 +917,7 @@ export const BotUi = {
       .row()
       .text('🔍 Искать другого', 'admin_search')
       .row()
-      .text('« В меню', 'main_menu'),
+      .text('« В меню', 'admin_panel'),
 
   cancelClientSearchKeyboard: () =>
     new InlineKeyboard().text('❌ Отмена', 'admin_cancel_search'),
@@ -864,18 +926,52 @@ export const BotUi = {
     new InlineKeyboard()
       .text('🔍 Искать снова', 'admin_search')
       .row()
-      .text('« В меню', 'main_menu'),
+      .text('« В меню', 'admin_panel'),
+
+  // === Рупор (рассылка всем пользователям) ===
+
+  broadcastPrompt:
+    '📢 *Рупор*\n\n' +
+    'Введите текст сообщения — бот отправит его всем пользователям с конфигами (кроме заблокированных):',
+
+  broadcastConfirmText: (text: string, usersCount: number) =>
+    '📢 *Подтверждение рассылки*\n\n' +
+    `Получателей: *${usersCount}*\n\n` +
+    'Текст сообщения:\n\n' +
+    escapeMarkdown(text),
+
+  broadcastEmptyText: '📢 *Рупор*\n\nНет пользователей для рассылки',
+
+  broadcastSendingText: '📢 *Отправка...*',
+
+  broadcastResultText: (sent: number, failed: number) =>
+    '📢 *Рассылка завершена*\n\n' +
+    `✅ Отправлено: *${sent}*` +
+    (failed > 0 ? `\n❌ Не доставлено: *${failed}*` : ''),
+
+  cancelBroadcastKeyboard: () =>
+    new InlineKeyboard().text('❌ Отмена', 'admin_cancel_broadcast'),
+
+  broadcastConfirmKeyboard: () =>
+    new InlineKeyboard()
+      .text('✅ Отправить', 'admin_confirm_broadcast')
+      .text('❌ Отмена', 'admin_cancel_broadcast'),
 
   clientDetailsText: (
     telegramId: string,
     configsCount: number,
     isBlocked: boolean,
+    hasUsedDiscount: boolean,
   ) => {
     const blockedText = isBlocked ? '\n🚫 *Статус: ЗАБЛОКИРОВАН*' : '';
+    const discountText = hasUsedDiscount
+      ? '\n🎁 Скидка на первую покупку: *использована*'
+      : '\n🎁 Скидка на первую покупку: *доступна*';
     return (
       `👤 *Информация о клиенте*\n\n` +
       `🆔 Telegram ID: \`${telegramId}\`\n` +
       `📂 Конфигов: ${configsCount}` +
+      discountText +
       blockedText
     );
   },
@@ -884,6 +980,7 @@ export const BotUi = {
     telegramId: string,
     peers: TPeer[],
     isBlocked: boolean,
+    hasUsedDiscount: boolean,
   ) => {
     const keyboard = new InlineKeyboard();
 
@@ -892,6 +989,15 @@ export const BotUi = {
 
     if (peers.length > 0) {
       keyboard.text('📂 Конфиги', `admin_client_configs:${telegramId}`).row();
+      keyboard
+        .text('🗑 Удалить все конфиги', `admin_delete_all_peers:${telegramId}`)
+        .row();
+    }
+
+    if (hasUsedDiscount) {
+      keyboard
+        .text('🎁 Сбросить скидку', `admin_reset_discount:${telegramId}`)
+        .row();
     }
 
     // Кнопка блокировки/разблокировки
@@ -904,7 +1010,7 @@ export const BotUi = {
     keyboard
       .text('🔍 Искать другого', 'admin_search')
       .row()
-      .text('« В меню', 'main_menu');
+      .text('« В меню', 'admin_panel');
 
     return keyboard;
   },

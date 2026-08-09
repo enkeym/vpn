@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { type Api, type Context } from 'grammy';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
+import { PaymentService } from 'src/payment/payment.service';
 import { BotUi } from '../ui/bot.ui';
 import {
   isMessageNotModifiedError,
@@ -30,6 +31,8 @@ export class MainHandler {
     private readonly configService: ConfigService,
     private readonly familyService: FamilyService,
     private readonly peersService: PeersService,
+    @Inject(forwardRef(() => PaymentService))
+    private readonly paymentService: PaymentService,
   ) {
     const whiteList = this.configService.get<string>(
       'TELEGRAM_ALLOWED_IDS',
@@ -45,9 +48,9 @@ export class MainHandler {
     return this.adminIds.includes(userId);
   }
 
-  /** Временный флаг: скрывает меню оплаты (и кнопки входа в него) для обычных пользователей */
-  isUserPaymentMenuHidden(): boolean {
-    return this.configService.get<string>('HIDE_USER_PAYMENT_MENU') === 'true';
+  /** Скрывает меню оплаты (и кнопки входа в него) для обычных пользователей — переключается в «Параметры» админ-панели */
+  async isUserPaymentMenuHidden(): Promise<boolean> {
+    return !(await this.paymentService.isPaymentEnabled());
   }
 
   async getUserType(userId: string): Promise<UserType> {
@@ -68,7 +71,7 @@ export class MainHandler {
     }
   }
 
-  private getMenuKeyboard(userType: UserType, showTrial: boolean) {
+  private async getMenuKeyboard(userType: UserType, showTrial: boolean) {
     switch (userType) {
       case 'admin':
         return BotUi.adminMenuKeyboard(showTrial);
@@ -77,13 +80,18 @@ export class MainHandler {
       default:
         return BotUi.mainMenuKeyboard(
           showTrial,
-          !this.isUserPaymentMenuHidden(),
+          !(await this.isUserPaymentMenuHidden()),
         );
     }
   }
 
   invalidateMainMenuCache(userId: string): void {
     this.mainMenuCache.delete(userId);
+  }
+
+  /** Сброс кеша меню для всех пользователей — вызывается при переключении настроек в админ-панели */
+  invalidateAllMainMenuCaches(): void {
+    this.mainMenuCache.clear();
   }
 
   private async getMainMenuView(userId: string): Promise<MainMenuView> {
@@ -99,7 +107,7 @@ export class MainHandler {
     const showTrial = !hasUsedTrial;
     const view = {
       userType,
-      keyboard: this.getMenuKeyboard(userType, showTrial),
+      keyboard: await this.getMenuKeyboard(userType, showTrial),
       welcomeMessage: this.getWelcomeMessage(userType),
     };
 

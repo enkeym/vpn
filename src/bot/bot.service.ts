@@ -252,6 +252,15 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
+      // Если админ ожидает ввода текста рассылки (Рупор)
+      if (
+        this.isAdmin(userId) &&
+        this.adminHandler.isAwaitingBroadcastMessage(userId)
+      ) {
+        await this.adminHandler.handleBroadcastInput(ctx);
+        return;
+      }
+
       // Если админ ожидает ввода описания конфига клиента
       if (
         this.isAdmin(userId) &&

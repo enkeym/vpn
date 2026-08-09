@@ -60,6 +60,30 @@ export const userPromoUsage = sqliteTable(
   (table) => [index('user_promo_telegram_idx').on(table.telegramId)],
 );
 
+/** Учёт выдачи пробного периода — переживает удаление peer'а (retention policy), поэтому триал не выдаётся повторно. */
+export const userTrialUsage = sqliteTable(
+  'user_trial_usage',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    telegramId: text('telegramId').notNull().unique(),
+    createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
+      () => new Date(),
+    ),
+  },
+  (table) => [index('user_trial_telegram_idx').on(table.telegramId)],
+);
+
+/** Runtime-настройки бота (оплата вкл/выкл, тестовая оплата) — переключаются из админ-панели без рестарта. */
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updatedAt', { mode: 'timestamp' })
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
+});
+
 export const peers = sqliteTable(
   'peers',
   {

@@ -1,11 +1,24 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
 import { resolveTelegramIdInput } from '../utils/resolve-telegram-id';
 import { PeersService } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
+import { PaymentService } from 'src/payment/payment.service';
+import { MainHandler } from './main.handler';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
+
+// Состояние ожидания ввода текста рассылки («Рупор»)
+// adminId -> { promptMessageId: number, chatId: number }
+const awaitingBroadcastMessage = new Map<
+  string,
+  { promptMessageId: number; chatId: number }
+>();
+
+// Текст рассылки, ожидающий подтверждения
+// adminId -> текст сообщения
+const pendingBroadcastText = new Map<string, string>();
 
 // Состояние ожидания ввода telegramId для поиска клиента
 // adminId -> { promptMessageId: number, chatId: number }
@@ -33,7 +46,199 @@ export class AdminHandler {
   constructor(
     private readonly peersService: PeersService,
     private readonly blockedUsersService: BlockedUsersService,
+    private readonly mainHandler: MainHandler,
+    @Inject(forwardRef(() => PaymentService))
+    private readonly paymentService: PaymentService,
   ) {}
+
+  // === Панель администратора ===
+
+  async showAdminPanel(ctx: Context) {
+    try {
+      await ctx.editMessageText(BotUi.adminPanelTitle, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.adminPanelKeyboard(),
+      });
+    } catch {
+      await ctx.reply(BotUi.adminPanelTitle, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.adminPanelKeyboard(),
+      });
+    }
+  }
+
+  // === Параметры (оплата / тестовая оплата) ===
+
+  async showSettings(ctx: Context) {
+    const [paymentEnabled, testPayment] = await Promise.all([
+      this.paymentService.isPaymentEnabled(),
+      this.paymentService.isTestPayment(),
+    ]);
+    const text = BotUi.adminSettingsTitle(paymentEnabled, testPayment);
+    const keyboard = BotUi.adminSettingsKeyboard(paymentEnabled, testPayment);
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
+    } catch {
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+    }
+  }
+
+  async togglePayment(ctx: Context) {
+    const current = await this.paymentService.isPaymentEnabled();
+    await this.paymentService.setPaymentEnabled(!current);
+    this.mainHandler.invalidateAllMainMenuCaches();
+    this.logger.log(
+      `Приём оплаты переключён админом ${ctx.from ? String(ctx.from.id) : '?'}: ${!current ? 'включён' : 'выключен'}`,
+    );
+    await this.showSettings(ctx);
+  }
+
+  async toggleTestPayment(ctx: Context) {
+    const current = await this.paymentService.isTestPayment();
+    await this.paymentService.setTestPayment(!current);
+    this.logger.log(
+      `Тестовая оплата переключена админом ${ctx.from ? String(ctx.from.id) : '?'}: ${!current ? 'включена' : 'выключена'}`,
+    );
+    await this.showSettings(ctx);
+  }
+
+  // === Рупор (рассылка всем пользователям) ===
+
+  isAwaitingBroadcastMessage(userId: string): boolean {
+    return awaitingBroadcastMessage.has(userId);
+  }
+
+  private setAwaitingBroadcastMessage(
+    userId: string,
+    state: { promptMessageId: number; chatId: number } | null,
+  ) {
+    if (state) {
+      awaitingBroadcastMessage.set(userId, state);
+    } else {
+      awaitingBroadcastMessage.delete(userId);
+    }
+  }
+
+  async showBroadcastPrompt(ctx: Context) {
+    if (!ctx.from || !ctx.chat) return;
+
+    const result = await ctx.editMessageText(BotUi.broadcastPrompt, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.cancelBroadcastKeyboard(),
+    });
+
+    if (result && typeof result === 'object' && 'message_id' in result) {
+      this.setAwaitingBroadcastMessage(String(ctx.from.id), {
+        promptMessageId: result.message_id,
+        chatId: ctx.chat.id,
+      });
+    }
+  }
+
+  async handleBroadcastInput(ctx: Context) {
+    if (!ctx.from || !ctx.message?.text || !ctx.chat) return;
+
+    const adminId = String(ctx.from.id);
+    const state = awaitingBroadcastMessage.get(adminId);
+    this.setAwaitingBroadcastMessage(adminId, null);
+
+    const text = ctx.message.text.trim();
+
+    try {
+      await ctx.api.deleteMessage(ctx.chat.id, ctx.message.message_id);
+    } catch {
+      // Игнорируем ошибку удаления
+    }
+
+    if (state) {
+      try {
+        await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
+      } catch {
+        // Игнорируем ошибку удаления
+      }
+    }
+
+    const userIds = await this.peersService.getBroadcastUserIds();
+    if (userIds.length === 0) {
+      await ctx.reply(BotUi.broadcastEmptyText, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAdminPanelKeyboard(),
+      });
+      return;
+    }
+
+    pendingBroadcastText.set(adminId, text);
+    await ctx.reply(BotUi.broadcastConfirmText(text, userIds.length), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.broadcastConfirmKeyboard(),
+    });
+  }
+
+  async confirmBroadcast(ctx: Context) {
+    if (!ctx.from) return;
+
+    const adminId = String(ctx.from.id);
+    const text = pendingBroadcastText.get(adminId);
+    pendingBroadcastText.delete(adminId);
+
+    if (!text) {
+      try {
+        await ctx.editMessageText(
+          '❌ Текст рассылки не найден, начните заново',
+          { reply_markup: BotUi.backToAdminPanelKeyboard() },
+        );
+      } catch {
+        // Игнорируем ошибку редактирования
+      }
+      return;
+    }
+
+    try {
+      await ctx.editMessageText(BotUi.broadcastSendingText, {
+        parse_mode: 'Markdown',
+      });
+    } catch {
+      // Игнорируем ошибку редактирования
+    }
+
+    const userIds = await this.peersService.getBroadcastUserIds();
+    let sent = 0;
+    let failed = 0;
+    for (const userId of userIds) {
+      try {
+        await ctx.api.sendMessage(userId, text);
+        sent++;
+      } catch (error) {
+        failed++;
+        this.logger.warn(`Рассылка не доставлена ${userId}: ${error}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    this.logger.log(`Рассылка завершена: отправлено ${sent}, ошибок ${failed}`);
+
+    const resultText = BotUi.broadcastResultText(sent, failed);
+    try {
+      await ctx.editMessageText(resultText, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAdminPanelKeyboard(),
+      });
+    } catch {
+      await ctx.reply(resultText, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToAdminPanelKeyboard(),
+      });
+    }
+  }
+
+  async cancelBroadcast(ctx: Context) {
+    if (!ctx.from) return;
+    this.setAwaitingBroadcastMessage(String(ctx.from.id), null);
+    await this.showAdminPanel(ctx);
+  }
 
   // === Поиск клиента ===
 
@@ -134,18 +339,7 @@ export class AdminHandler {
   async cancelSearch(ctx: Context) {
     if (!ctx.from) return;
     this.setAwaitingClientSearch(String(ctx.from.id), null);
-    // Возвращаемся в главное меню
-    try {
-      await ctx.editMessageText(BotUi.welcomeMessage, {
-        reply_markup: BotUi.adminMenuKeyboard(),
-        parse_mode: 'Markdown',
-      });
-    } catch {
-      await ctx.reply(BotUi.welcomeMessage, {
-        reply_markup: BotUi.adminMenuKeyboard(),
-        parse_mode: 'Markdown',
-      });
-    }
+    await this.showAdminPanel(ctx);
   }
 
   // === Статистика ===
@@ -288,16 +482,105 @@ export class AdminHandler {
   // === Управление клиентом ===
 
   async showClientDetails(ctx: Context, telegramId: string) {
-    const peers = await this.peersService.getPeersByTelegramId(telegramId);
-    const isBlocked = await this.blockedUsersService.isBlocked(telegramId);
+    const [peers, isBlocked, hasUsedDiscount] = await Promise.all([
+      this.peersService.getPeersByTelegramId(telegramId),
+      this.blockedUsersService.isBlocked(telegramId),
+      this.peersService.hasUsedFirstPurchaseDiscount(telegramId),
+    ]);
 
     await ctx.editMessageText(
-      BotUi.clientDetailsText(telegramId, peers.length, isBlocked),
+      BotUi.clientDetailsText(
+        telegramId,
+        peers.length,
+        isBlocked,
+        hasUsedDiscount,
+      ),
       {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.clientDetailsKeyboard(telegramId, peers, isBlocked),
+        reply_markup: BotUi.clientDetailsKeyboard(
+          telegramId,
+          peers,
+          isBlocked,
+          hasUsedDiscount,
+        ),
       },
     );
+  }
+
+  // === Сброс скидки на первую покупку ===
+
+  async resetClientDiscount(ctx: Context, telegramId: string) {
+    try {
+      await this.peersService.resetPromoUsage(telegramId);
+      this.logger.log(
+        `Скидка на первую покупку сброшена для ${telegramId} админом ${ctx.from ? String(ctx.from.id) : '?'}`,
+      );
+      await this.showClientDetails(ctx, telegramId);
+    } catch (error) {
+      this.logger.error(`Ошибка сброса скидки: ${error}`);
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка сброса скидки',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
+    }
+  }
+
+  // === Удаление всех конфигов клиента ===
+
+  async deleteAllClientPeers(ctx: Context, telegramId: string) {
+    try {
+      const peers = await this.peersService.getPeersByTelegramId(telegramId);
+      if (peers.length === 0) {
+        await this.showClientDetails(ctx, telegramId);
+        return;
+      }
+
+      // Связанные сообщения удаляем в фоне (не блокируя отрисовку меню):
+      // часть из них может быть старше 48 ч и боту недоступна для удаления.
+      for (const peer of peers) {
+        void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
+          peer.configMessageId,
+          peer.qrMessageId,
+          peer.fileMessageId,
+        ]);
+      }
+
+      await this.peersService.deletePeersByNames(peers.map((p) => p.name));
+      this.logger.log(
+        `Удалены все конфиги клиента ${telegramId} (${peers.length}) админом ${ctx.from ? String(ctx.from.id) : '?'}`,
+      );
+      await this.showClientDetails(ctx, telegramId);
+    } catch (error) {
+      this.logger.error(`Ошибка удаления всех конфигов клиента: ${error}`);
+      try {
+        await ctx.answerCallbackQuery({
+          text: 'Ошибка удаления конфигов',
+          show_alert: true,
+        });
+      } catch {
+        // Игнорируем если callback уже был отвечен
+      }
+    }
+  }
+
+  // === Бан-лист ===
+
+  async showBlockedList(ctx: Context) {
+    const blocked = await this.blockedUsersService.getAllBlocked();
+    const text = BotUi.blockedListTitle(blocked.length);
+    const keyboard = BotUi.blockedListKeyboard(blocked);
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
+    } catch {
+      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
+    }
   }
 
   // === Блокировка/Разблокировка ===

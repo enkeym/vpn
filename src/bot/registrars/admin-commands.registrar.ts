@@ -11,6 +11,74 @@ export class AdminCommandsRegistrar {
   constructor(private readonly adminHandler: AdminHandler) {}
 
   register(bot: Bot, isAdmin: (userId: string) => boolean): void {
+    // Панель администратора
+    bot.callbackQuery('admin_panel', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showAdminPanel(ctx);
+    });
+
+    // Параметры (оплата / тестовая оплата)
+    bot.callbackQuery('admin_settings', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showSettings(ctx);
+    });
+
+    bot.callbackQuery('admin_toggle_payment', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.togglePayment(ctx);
+    });
+
+    bot.callbackQuery('admin_toggle_test_payment', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.toggleTestPayment(ctx);
+    });
+
+    // Рупор (рассылка всем пользователям)
+    bot.callbackQuery('admin_broadcast', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showBroadcastPrompt(ctx);
+    });
+
+    bot.callbackQuery('admin_confirm_broadcast', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      // Сразу отвечаем, т.к. рассылка может занять время
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.confirmBroadcast(ctx);
+    });
+
+    bot.callbackQuery('admin_cancel_broadcast', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.cancelBroadcast(ctx);
+    });
+
+    // Бан-лист
+    bot.callbackQuery('admin_blocked_list', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showBlockedList(ctx);
+    });
+
+    // Сброс скидки на первую покупку
+    bot.callbackQuery(/^admin_reset_discount:(.+)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.resetClientDiscount(ctx, ctx.match[1]);
+    });
+
+    // Удаление всех конфигов клиента
+    bot.callbackQuery(/^admin_delete_all_peers:(.+)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      // Сразу отвечаем, т.к. операция может занять время
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.deleteAllClientPeers(ctx, ctx.match[1]);
+    });
+
     // Поиск клиента
     bot.callbackQuery('admin_search', async (ctx) => {
       if (!(await ensureAdmin(ctx, isAdmin))) return;
@@ -20,6 +88,7 @@ export class AdminCommandsRegistrar {
 
     // Отмена поиска
     bot.callbackQuery('admin_cancel_search', async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
       await ctx.answerCallbackQuery();
       await this.adminHandler.cancelSearch(ctx);
     });

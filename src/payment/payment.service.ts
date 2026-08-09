@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { and, desc, eq, ne, notInArray } from 'drizzle-orm';
 import { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../database/schema';
+import { SettingsService } from 'src/settings/settings.service';
 
 /** Payload deep link `t.me/bot?start=…` в return_url ЮKassa — по нему бот принудительно синхронизирует платежи. */
 export const YOOKASSA_TELEGRAM_RETURN_START_PARAM = 'syncpay';
@@ -20,6 +21,7 @@ export class PaymentService {
     private readonly configService: ConfigService,
     @Inject(DRIZZLE)
     private readonly db: BetterSQLite3Database<typeof schema>,
+    private readonly settingsService: SettingsService,
   ) {}
 
   private get authHeader() {
@@ -28,12 +30,25 @@ export class PaymentService {
     return `Basic ${Buffer.from(`${shopId}:${secretKey}`).toString('base64')}`;
   }
 
-  isTestPayment(): boolean {
-    return this.configService.get<string>('TEST_PAYMENT') === 'true';
+  /** Приём оплаты включён/выключен из админ-панели («Параметры»), применяется мгновенно. */
+  isPaymentEnabled(): Promise<boolean> {
+    return this.settingsService.isPaymentEnabled();
   }
 
-  getBilledAmountRub(nominalRub: number): number {
-    return this.isTestPayment() ? 1 : nominalRub;
+  setPaymentEnabled(value: boolean): Promise<void> {
+    return this.settingsService.setPaymentEnabled(value);
+  }
+
+  isTestPayment(): Promise<boolean> {
+    return this.settingsService.isTestPayment();
+  }
+
+  setTestPayment(value: boolean): Promise<void> {
+    return this.settingsService.setTestPayment(value);
+  }
+
+  async getBilledAmountRub(nominalRub: number): Promise<number> {
+    return (await this.isTestPayment()) ? 1 : nominalRub;
   }
 
   getYookassaReturnUrl(): string {
@@ -50,8 +65,8 @@ export class PaymentService {
     isPromo = false,
     peerName?: string,
   ) {
-    const chargeRub = this.getBilledAmountRub(amount);
-    if (this.isTestPayment() && chargeRub !== amount) {
+    const chargeRub = await this.getBilledAmountRub(amount);
+    if ((await this.isTestPayment()) && chargeRub !== amount) {
       this.logger.warn(
         `TEST_PAYMENT: тариф ${amount} ₽ → списание ${chargeRub} ₽ (ЮKassa + БД)`,
       );

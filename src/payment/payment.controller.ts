@@ -138,7 +138,7 @@ export class PaymentController {
   @Post('test/complete-succeeded')
   @HttpCode(HttpStatus.OK)
   async completeSucceededForTest(@Body() body: Record<string, unknown>) {
-    if (!this.paymentService.isTestPayment()) {
+    if (!(await this.paymentService.isTestPayment())) {
       throw new NotFoundException();
     }
 

@@ -27,13 +27,20 @@ export class PeerCreateHandler {
   /** Меню тарифов для обычных пользователей (оплата 30/60/90 дней) */
   async showPaymentPlans(ctx: Context, hasUsedDiscount?: boolean) {
     if (!ctx.from) return;
+    if (!(await this.paymentService.isPaymentEnabled())) {
+      await safeEditMessageText(ctx, BotUi.paymentMenuUnavailable, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToMenuKeyboard(),
+      });
+      return;
+    }
     const hasDiscount =
       hasUsedDiscount !== undefined
         ? !hasUsedDiscount
         : !(await this.peersService.hasUsedFirstPurchaseDiscount(
             String(ctx.from.id),
           ));
-    const testPayment = this.paymentService.isTestPayment();
+    const testPayment = await this.paymentService.isTestPayment();
     await safeEditMessageText(
       ctx,
       BotUi.paymentPlansTitle(hasDiscount, testPayment),
@@ -47,6 +54,13 @@ export class PeerCreateHandler {
   /** Меню тарифов для продления существующего конфига */
   async showPaymentPlansForExtend(ctx: Context, peerName: string) {
     if (!ctx.from) return;
+    if (!(await this.paymentService.isPaymentEnabled())) {
+      await safeEditMessageText(ctx, BotUi.paymentMenuUnavailable, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+      });
+      return;
+    }
     const hasDiscount = !(await this.peersService.hasUsedFirstPurchaseDiscount(
       String(ctx.from.id),
     ));
@@ -61,7 +75,7 @@ export class PeerCreateHandler {
       reply_markup: BotUi.paymentPlansKeyboardForExtend(
         peerName,
         hasDiscount,
-        this.paymentService.isTestPayment(),
+        await this.paymentService.isTestPayment(),
       ),
     });
   }

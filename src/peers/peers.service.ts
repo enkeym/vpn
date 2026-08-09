@@ -300,11 +300,8 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     );
     if (cached !== null) return cached;
 
-    const existing = await this.db.query.peers.findFirst({
-      where: and(
-        eq(schema.peers.telegramId, key),
-        eq(schema.peers.isTrial, true),
-      ),
+    const existing = await this.db.query.userTrialUsage.findFirst({
+      where: eq(schema.userTrialUsage.telegramId, key),
       columns: { id: true },
     });
     const result = !!existing;
@@ -352,6 +349,20 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       telegramId: String(telegramId),
       usedDiscountTier: tier,
     });
+    this.cacheService.delete(
+      CACHE_NAMESPACES.HAS_USED_DISCOUNT,
+      String(telegramId),
+    );
+  }
+
+  /**
+   * Сбросить использование скидки на первую покупку — админ вручную
+   * возвращает клиенту право на скидку при следующей покупке 60/90 дней.
+   */
+  async resetPromoUsage(telegramId: string): Promise<void> {
+    await this.db
+      .delete(schema.userPromoUsage)
+      .where(eq(schema.userPromoUsage.telegramId, String(telegramId)));
     this.cacheService.delete(
       CACHE_NAMESPACES.HAS_USED_DISCOUNT,
       String(telegramId),
@@ -451,6 +462,12 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         // Инвалидируем кеши
         this.invalidateUserPeersCache(dto.telegramId);
         if (isTrial) {
+          // Фиксируем факт выдачи триала отдельно от peers: запись переживёт
+          // удаление конфига по retention policy, и триал не выдастся повторно.
+          await this.db
+            .insert(schema.userTrialUsage)
+            .values({ telegramId: telegramIdStr })
+            .onConflictDoNothing();
           this.cacheService.delete(
             CACHE_NAMESPACES.HAS_USED_TRIAL,
             String(dto.telegramId),
@@ -619,6 +636,16 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /** Расширенная статистика для админ-панели. */
+  /** Уникальные Telegram ID пользователей с конфигами (кроме заблокированных) — для Рупора. */
+  async getBroadcastUserIds(): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ telegramId: schema.peers.telegramId })
+      .from(schema.peers)
+      .where(
+        sql`${schema.peers.telegramId} not in (select ${schema.blockedUsers.telegramId} from ${schema.blockedUsers})`,
+      );
+    return rows.map((row) => row.telegramId);
+  }
   async getStats(): Promise<{
     totalConfigs: number;
     uniqueUsers: number;
