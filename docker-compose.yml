@@ -29,15 +29,18 @@ services:
     deploy:
       resources:
         limits:
-          # Поднято с '1.0'/512M под VPS с двумя ядрами (апгрейд 12.08.2026).
+          # 12.08.2026: сервер расширен до 4 ядер / 7.8Gi RAM (nproc/docker info
+          # подтверждены после restart docker — демон кэшировал старое NumCPU
+          # с последнего перезапуска 04.08). Лимит — 3.0/2G, не 4.0/весь RAM:
+          # ядро и часть памяти нужны хосту под ОС, sshd, conntrack, cron.
           # docker откажется стартовать контейнер, если cpus больше числа ядер
           # хоста — при следующем апгрейде поднимать значения синхронно с nproc.
           # Полный список шагов апгрейда: docs/scaling.md
-          cpus: '2.0'
-          memory: 1G
+          cpus: '3.0'
+          memory: 2G
         reservations:
-          cpus: '0.25'
-          memory: 128M
+          cpus: '0.5'
+          memory: 256M
 
     healthcheck:
       test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000/health']
