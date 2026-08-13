@@ -10,7 +10,11 @@ async function bootstrap() {
 
   const httpAdapter = app.get(HttpAdapterHost);
   app.useGlobalFilters(new AllExceptionsFilter(httpAdapter));
-  app.set('trust proxy', true);
+  // Доверяем ровно одному прокси-хопу (nginx/caddy перед приложением). При
+  // `true` Express доверял бы любому X-Forwarded-For, и req.ip подделывался бы
+  // напрямую — тогда IP-allow-list вебхука ЮKassa обходится. Число хопов
+  // настраивается через TRUST_PROXY_HOPS (по умолчанию 1).
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
   app.useGlobalPipes(
     new ValidationPipe({

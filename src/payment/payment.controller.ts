@@ -6,12 +6,14 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  UseGuards,
   ForbiddenException,
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { PaymentFulfillmentService } from './payment-fulfillment.service';
+import { InternalGuard } from '../common/guards/internal.guard';
 import type { Request } from 'express';
 import ipRangeCheck from 'ip-range-check';
 
@@ -34,16 +36,14 @@ export class PaymentController {
     private readonly paymentFulfillment: PaymentFulfillmentService,
   ) {}
 
-  /** За nginx/caddy/real_ip первый hop в X-Forwarded-For — реальный клиент (ЮKassa). */
+  /**
+   * req.ip уже развёрнут Express'ом с учётом `trust proxy` (число доверенных
+   * хопов): при одном nginx это реальный адрес клиента, и подделать его через
+   * X-Forwarded-For нельзя. Читать заголовок вручную здесь нельзя — это и была
+   * дыра, обходившая IP-allow-list вебхука.
+   */
   private getClientIp(req: Request): string {
-    const xff = req.headers['x-forwarded-for'];
-    if (typeof xff === 'string') {
-      const first = xff.split(',')[0]?.trim();
-      if (first) return first;
-    }
-    const realIp = req.headers['x-real-ip'];
-    if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
-    return req.ip || req.socket?.remoteAddress || '';
+    return (req.ip || req.socket?.remoteAddress || '').trim();
   }
 
   private isIpAllowed(ip: string): boolean {
@@ -126,18 +126,36 @@ export class PaymentController {
         );
       }
     } else if (event === 'payment.canceled') {
-      await this.paymentService.updatePaymentStatus(yookassaId, 'canceled');
+      // Перепроверяем статус в API: поддельный/поздний webhook не должен слепо
+      // отменять платёж. И не трогаем уже succeeded — иначе поздний canceled
+      // после выдачи конфига испортил бы состояние (ломает sync/автопродление).
+      const yookassaStatus =
+        await this.paymentService.getPaymentStatusFromYooKassa(yookassaId);
+      if (yookassaStatus === 'canceled' || yookassaStatus === 'cancelled') {
+        await this.paymentService.markCanceledIfNotSucceeded(yookassaId);
+      } else {
+        this.logger.warn(
+          `Webhook payment.canceled ignored: status in YooKassa is "${yookassaStatus ?? 'unknown'}", not canceled`,
+        );
+      }
     }
 
     return { status: 'ok' };
   }
 
   /**
-   * Только при TEST_PAYMENT=true: имитация успешной оплаты без вебхука ЮKassa
+   * Только при TEST_PAYMENT=true: имитация успешной оплаты без вебхука ЮKassa.
+   * Защита эшелонирована: (1) в production маршрут недоступен вообще — даже при
+   * случайно включённом TEST_PAYMENT; (2) InternalGuard — localhost или X-Internal-Key;
+   * (3) рантайм-флаг isTestPayment.
    */
   @Post('test/complete-succeeded')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(InternalGuard)
   async completeSucceededForTest(@Body() body: Record<string, unknown>) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new NotFoundException();
+    }
     if (!(await this.paymentService.isTestPayment())) {
       throw new NotFoundException();
     }
