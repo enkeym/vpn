@@ -1107,6 +1107,9 @@ export const BotUi = {
         `admin_change_duration:${peer.name}:${telegramId}`,
       )
       .row()
+      .text('📷 QR-код', `admin_qr:${peer.name}:${telegramId}`)
+      .text('📄 Получить файл', `admin_get_file:${peer.name}:${telegramId}`)
+      .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
       .row()
       .text('« К конфигам', `admin_client_configs:${telegramId}`);

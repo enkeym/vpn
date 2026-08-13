@@ -167,6 +167,24 @@ export class AdminCommandsRegistrar {
       );
     });
 
+    // QR-код конфига клиента
+    bot.callbackQuery(/^admin_qr:(.+):(.+)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.showClientQrCode(ctx, ctx.match[1], ctx.match[2]);
+    });
+
+    // Скачать файл конфига клиента
+    bot.callbackQuery(/^admin_get_file:(.+):(.+)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.adminHandler.sendClientConfigFile(
+        ctx,
+        ctx.match[1],
+        ctx.match[2],
+      );
+    });
+
     // Переключение статуса конфига клиента
     bot.callbackQuery(/^admin_toggle_peer:(.+):(.+)$/, async (ctx) => {
       if (!(await ensureAdmin(ctx, isAdmin))) return;

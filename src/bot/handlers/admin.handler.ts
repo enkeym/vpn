@@ -688,6 +688,60 @@ export class AdminHandler {
     }
   }
 
+  // === QR-код и файл конфига клиента ===
+
+  async showClientQrCode(ctx: Context, peerName: string, telegramId: string) {
+    if (!ctx.chat) return;
+
+    try {
+      const qrBuffer = await this.peersService.generatePeerQrCode(peerName);
+
+      const message = await ctx.replyWithPhoto(
+        new InputFile(qrBuffer, `${peerName}_qr.png`),
+        {
+          caption: `📷 *QR-код для конфига* \`${peerName}\`\n\n_Отсканируйте в приложении AmneziaVPN_`,
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToClientPeerKeyboard(peerName, telegramId),
+        },
+      );
+      await this.peersService.setQrMessageId(peerName, message.message_id);
+    } catch (error) {
+      this.logger.error(`Ошибка генерации QR: ${error}`);
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка генерации QR-кода',
+        show_alert: true,
+      });
+    }
+  }
+
+  async sendClientConfigFile(
+    ctx: Context,
+    peerName: string,
+    telegramId: string,
+  ) {
+    if (!ctx.chat) return;
+
+    try {
+      const config = await this.peersService.getPeerConfigString(peerName);
+
+      const message = await ctx.replyWithDocument(
+        new InputFile(Buffer.from(config), `${peerName}.conf`),
+        {
+          caption: `📄 *Файл конфига* \`${peerName}\`\n\n_Импортируйте в приложение AmneziaVPN_`,
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToClientPeerKeyboard(peerName, telegramId),
+        },
+      );
+      await this.peersService.setFileMessageId(peerName, message.message_id);
+    } catch (error) {
+      this.logger.error(`Ошибка отправки файла конфига: ${error}`);
+      await ctx.answerCallbackQuery({
+        text: 'Ошибка получения файла конфига',
+        show_alert: true,
+      });
+    }
+  }
+
   async toggleClientPeer(ctx: Context, peerName: string, telegramId: string) {
     try {
       await this.peersService.updatedPeer(peerName);
