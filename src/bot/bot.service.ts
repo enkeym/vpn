@@ -17,6 +17,7 @@ import { UserCommandsRegistrar } from './registrars/user-commands.registrar';
 import { FamilyCommandsRegistrar } from './registrars/family-commands.registrar';
 import { AdminCommandsRegistrar } from './registrars/admin-commands.registrar';
 import { isForwardedMessage } from './utils/forwarded-message';
+import type { PaidDuration } from 'src/payment/pricing';
 
 /**
  * Оркестратор Telegram-бота: создаёт инстанс grammy, настраивает middleware
@@ -346,6 +347,51 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       durationDays,
       amount,
       invoiceUi,
+    );
+  }
+
+  /** Предложение включить автопродление после успешной оплаты */
+  async sendAutopayOffer(
+    telegramId: string,
+    peerName: string,
+    durationDays: PaidDuration,
+    methodTitle: string | null,
+  ): Promise<void> {
+    await this.invoiceService.sendAutopayOffer(
+      telegramId,
+      peerName,
+      durationDays,
+      methodTitle,
+    );
+  }
+
+  /** Предупреждение о ближайшем автосписании (вызывается из AutopayService) */
+  async notifyAutopayChargeSoon(
+    telegramId: string,
+    peerName: string,
+    durationDays: number,
+    amount: number,
+    chargeAt: Date,
+  ): Promise<void> {
+    await this.invoiceService.sendAutopayChargeSoon(
+      telegramId,
+      peerName,
+      durationDays,
+      amount,
+      chargeAt,
+    );
+  }
+
+  /** Сообщение о неудачном автосписании (вызывается из AutopayService) */
+  async notifyAutopayChargeFailed(
+    telegramId: string,
+    amount: number,
+    attemptsLeft: number,
+  ): Promise<void> {
+    await this.invoiceService.sendAutopayChargeFailed(
+      telegramId,
+      amount,
+      attemptsLeft,
     );
   }
 }

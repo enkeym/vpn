@@ -75,6 +75,47 @@ export const userTrialUsage = sqliteTable(
   (table) => [index('user_trial_telegram_idx').on(table.telegramId)],
 );
 
+/**
+ * Автопродление подписки: сохранённый в ЮKassa метод оплаты и расписание списаний.
+ * Строка появляется после первого успешного платежа картой (enabled = false),
+ * само списание включается только кнопкой пользователя.
+ */
+export const userAutopay = sqliteTable(
+  'user_autopay',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    telegramId: text('telegramId').notNull().unique(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    /** id сохранённого метода оплаты в ЮKassa (без него автосписание невозможно) */
+    paymentMethodId: text('paymentMethodId'),
+    /** Человекочитаемое описание метода для UI («Банковская карта ···1234») */
+    paymentMethodTitle: text('paymentMethodTitle'),
+    /** Тариф автопродления (дни) */
+    durationDays: integer('durationDays').notNull(),
+    /** Конфиг, который продлевается списанием */
+    peerName: text('peerName'),
+    /** Момент следующего списания (за сутки до окончания подписки) */
+    nextChargeAt: integer('nextChargeAt', { mode: 'timestamp' }),
+    lastChargeAt: integer('lastChargeAt', { mode: 'timestamp' }),
+    /** Когда предупредили о ближайшем списании (чтобы не дублировать) */
+    warnNotifiedAt: integer('warnNotifiedAt', { mode: 'timestamp' }),
+    lastError: text('lastError'),
+    failedAttempts: integer('failedAttempts').notNull().default(0),
+    createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(
+      () => new Date(),
+    ),
+    updatedAt: integer('updatedAt', { mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .$onUpdateFn(() => new Date()),
+  },
+  (table) => [
+    index('user_autopay_telegram_idx').on(table.telegramId),
+    index('user_autopay_due_idx').on(table.enabled, table.nextChargeAt),
+  ],
+);
+
 /** Runtime-настройки бота (оплата вкл/выкл, тестовая оплата) — переключаются из админ-панели без рестарта. */
 export const appSettings = sqliteTable('app_settings', {
   key: text('key').primaryKey(),
@@ -155,6 +196,12 @@ export const payments = sqliteTable(
     isPromo: integer('isPromo', { mode: 'boolean' }).notNull().default(false),
     /** Имя конфига для продления (null = новая покупка) */
     peerName: text('peerName'),
+    /** Сохранённый/использованный метод оплаты ЮKassa */
+    paymentMethodId: text('paymentMethodId'),
+    /** Платёж создан автосписанием (без участия пользователя) */
+    isAutoCharge: integer('isAutoCharge', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     invoiceChatId: text('invoiceChatId'),
     invoiceMessageId: integer('invoiceMessageId'),
     createdAt: integer('createdAt', { mode: 'timestamp' }).$defaultFn(

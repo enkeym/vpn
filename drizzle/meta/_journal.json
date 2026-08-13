@@ -50,6 +50,13 @@
       "when": 1786279678872,
       "tag": "0006_curious_vampiro",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786648786471,
+      "tag": "0007_dizzy_lady_bullseye",
+      "breakpoints": true
     }
   ]
 }

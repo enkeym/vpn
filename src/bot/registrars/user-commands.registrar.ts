@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Bot } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from '../handlers/main.handler';
@@ -7,6 +7,9 @@ import { PeerManageHandler } from '../handlers/peer-manage.handler';
 import { PeerDeleteHandler } from '../handlers/peer-delete.handler';
 import { InvoiceService } from '../invoice/invoice.service';
 import { MainMenuService } from '../menu/main-menu.service';
+import { PaymentService } from 'src/payment/payment.service';
+import type { PaidDuration } from 'src/payment/pricing';
+import { AutopayHandler } from '../handlers/autopay.handler';
 
 /**
  * Регистрация пользовательских команд и callback-кнопок:
@@ -24,6 +27,9 @@ export class UserCommandsRegistrar {
     private readonly peersService: PeersService,
     private readonly invoiceService: InvoiceService,
     private readonly mainMenuService: MainMenuService,
+    @Inject(forwardRef(() => PaymentService))
+    private readonly paymentService: PaymentService,
+    private readonly autopayHandler: AutopayHandler,
   ) {}
 
   register(bot: Bot, isAdmin: (userId: string) => boolean): void {
@@ -73,20 +79,40 @@ export class UserCommandsRegistrar {
       await ctx.answerCallbackQuery();
       if (!ctx.from) return;
       const userId = String(ctx.from.id);
-      const [userType, hasUsedDiscount] = await Promise.all([
+      const [userType, hasUsedDiscount, testPayment] = await Promise.all([
         this.mainHandler.getUserType(userId),
         this.peersService.hasUsedFirstPurchaseDiscount(userId),
+        this.paymentService.isTestPaymentFor(userId),
       ]);
-      if (userType === 'user') {
+      // При включённой тестовой оплате админ проходит клиентский путь покупки
+      // (1 ₽ за любой тариф) — так проверяются все этапы счёта и выдачи.
+      // «Семья» не затрагивается; бесплатное создание остаётся в админ-панели.
+      const followsPaymentFlow =
+        userType === 'user' || (userType === 'admin' && testPayment);
+      if (followsPaymentFlow) {
         await this.peerCreateHandler.showPaymentPlans(ctx, hasUsedDiscount);
       } else {
         await this.peerCreateHandler.showCreateOptions(ctx);
       }
     });
 
-    bot.callbackQuery(/^pay_plan:(30|60|90)$/, async (ctx) => {
+    // Создание конфига без оплаты — точка входа из админ-панели, остаётся
+    // доступной админу и при включённой тестовой оплате.
+    bot.callbackQuery('admin_self_config', async (ctx) => {
+      if (!ctx.from || !isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      await this.peerCreateHandler.showCreateOptions(ctx);
+    });
+
+    bot.callbackQuery(/^pay_plan:(30|60|90|180|365)$/, async (ctx) => {
       if (!ctx.from) return;
-      const days = Number(ctx.match[1]) as 30 | 60 | 90;
+      const days = Number(ctx.match[1]) as PaidDuration;
       try {
         await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
         await this.invoiceService.presentNewPurchaseInvoice(ctx, days);
@@ -101,9 +127,9 @@ export class UserCommandsRegistrar {
     });
 
     /** Старые сообщения с экраном подтверждения */
-    bot.callbackQuery(/^pay_confirm:(30|60|90)$/, async (ctx) => {
+    bot.callbackQuery(/^pay_confirm:(30|60|90|180|365)$/, async (ctx) => {
       if (!ctx.from) return;
-      const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
+      const durationDays = Number(ctx.match[1]) as PaidDuration;
       try {
         await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
         await this.invoiceService.presentNewPurchaseInvoice(ctx, durationDays);
@@ -117,27 +143,30 @@ export class UserCommandsRegistrar {
       }
     });
 
-    bot.callbackQuery(/^create_config:(unlimited|30|60|90)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
-      const userId = String(ctx.from?.id);
+    bot.callbackQuery(
+      /^create_config:(unlimited|30|60|90|180|365)$/,
+      async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const userId = String(ctx.from?.id);
 
-      // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверка прав
-      if (!isAdmin(userId)) {
-        const userType = await this.mainHandler.getUserType(userId);
-        if (userType === 'user') {
-          return ctx.reply(
-            '❌ Этот метод создания доступен только администраторам. Пожалуйста, используйте меню оплаты.',
-          );
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверка прав
+        if (!isAdmin(userId)) {
+          const userType = await this.mainHandler.getUserType(userId);
+          if (userType === 'user') {
+            return ctx.reply(
+              '❌ Этот метод создания доступен только администраторам. Пожалуйста, используйте меню оплаты.',
+            );
+          }
         }
-      }
 
-      const duration = ctx.match[1];
-      const durationDays =
-        duration === 'unlimited'
-          ? undefined
-          : (Number(duration) as 30 | 60 | 90);
-      await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
-    });
+        const duration = ctx.match[1];
+        const durationDays =
+          duration === 'unlimited'
+            ? undefined
+            : (Number(duration) as PaidDuration);
+        await this.peerCreateHandler.handleCreateConfig(ctx, durationDays);
+      },
+    );
 
     // Список конфигов (подсказка «Загрузка…» — мгновенный отклик при задержке)
     bot.callbackQuery('list_configs', async (ctx) => {
@@ -189,47 +218,84 @@ export class UserCommandsRegistrar {
     });
 
     // Выбор тарифа при продлении — сразу счёт ЮKassa
-    bot.callbackQuery(/^extend_pay_plan:(30|60|90):(.+)$/, async (ctx) => {
-      if (!ctx.from) return;
-      const days = Number(ctx.match[1]) as 30 | 60 | 90;
-      const peerName = ctx.match[2];
-      try {
-        await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
-        await this.invoiceService.presentExtendInvoice(ctx, days, peerName);
-      } catch (error) {
-        this.logger.error('Error in extend_pay_plan', error);
-        await ctx
-          .reply(
-            '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
-          )
-          .catch(() => {});
-      }
-    });
+    bot.callbackQuery(
+      /^extend_pay_plan:(30|60|90|180|365):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from) return;
+        const days = Number(ctx.match[1]) as PaidDuration;
+        const peerName = ctx.match[2];
+        try {
+          await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+          await this.invoiceService.presentExtendInvoice(ctx, days, peerName);
+        } catch (error) {
+          this.logger.error('Error in extend_pay_plan', error);
+          await ctx
+            .reply(
+              '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
+            )
+            .catch(() => {});
+        }
+      },
+    );
 
     /** Старые сообщения с экраном подтверждения продления */
-    bot.callbackQuery(/^extend_pay_confirm:(30|60|90):(.+)$/, async (ctx) => {
-      if (!ctx.from) return;
-      const durationDays = Number(ctx.match[1]) as 30 | 60 | 90;
-      const peerName = ctx.match[2];
-      try {
-        await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
-        await this.invoiceService.presentExtendInvoice(
-          ctx,
-          durationDays,
-          peerName,
-        );
-      } catch (error) {
-        this.logger.error('Error in extend_pay_confirm', error);
-        await ctx
-          .reply(
-            '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
-          )
-          .catch(() => {});
-      }
-    });
+    bot.callbackQuery(
+      /^extend_pay_confirm:(30|60|90|180|365):(.+)$/,
+      async (ctx) => {
+        if (!ctx.from) return;
+        const durationDays = Number(ctx.match[1]) as PaidDuration;
+        const peerName = ctx.match[2];
+        try {
+          await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
+          await this.invoiceService.presentExtendInvoice(
+            ctx,
+            durationDays,
+            peerName,
+          );
+        } catch (error) {
+          this.logger.error('Error in extend_pay_confirm', error);
+          await ctx
+            .reply(
+              '❌ Не удалось сформировать счёт. Попробуйте позже или напишите в поддержку.',
+            )
+            .catch(() => {});
+        }
+      },
+    );
 
     bot.callbackQuery(/^payment_check:(.+)$/, async (ctx) => {
       await this.invoiceService.handlePaymentCheck(ctx, ctx.match[1]);
+    });
+
+    // === Автопродление ===
+
+    bot.callbackQuery(/^autopay_menu:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.autopayHandler.showAutopayMenu(ctx, ctx.match[1]);
+    });
+
+    bot.callbackQuery(
+      /^autopay_on:([^:]+):(30|60|90|180|365)$/,
+      async (ctx) => {
+        const peerName = ctx.match[1];
+        const days = Number(ctx.match[2]) as PaidDuration;
+        await this.autopayHandler.enableAutopay(ctx, peerName, days);
+      },
+    );
+
+    bot.callbackQuery('autopay_off', async (ctx) => {
+      await this.autopayHandler.disableAutopay(ctx);
+    });
+
+    // «Не сейчас» — убираем предложение, ничего не меняя
+    bot.callbackQuery('autopay_skip', async (ctx) => {
+      await ctx.answerCallbackQuery().catch(() => {});
+      const msg = ctx.callbackQuery?.message;
+      if (ctx.chat && msg && 'message_id' in msg) {
+        await ctx.api
+          .deleteMessage(ctx.chat.id, msg.message_id)
+          .catch(() => {});
+      }
     });
 
     // Замена конфига (раз в день)

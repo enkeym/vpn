@@ -9,6 +9,11 @@ import {
   PaymentFulfillmentService,
   type FulfillPaymentResult,
 } from 'src/payment/payment-fulfillment.service';
+import {
+  getPlanPrice,
+  isDiscountEligibleDuration,
+  type PaidDuration,
+} from 'src/payment/pricing';
 import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 import { MainHandler } from '../handlers/main.handler';
@@ -296,7 +301,7 @@ export class InvoiceService {
 
   async presentNewPurchaseInvoice(
     ctx: Context,
-    durationDays: 30 | 60 | 90,
+    durationDays: PaidDuration,
   ): Promise<void> {
     if (!ctx.from) return;
     if (!(await this.guardPaymentEnabled(ctx, BotUi.backToMenuKeyboard())))
@@ -305,11 +310,12 @@ export class InvoiceService {
     const hasUsedDiscount =
       await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
     const isPromo =
-      !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
-    const nominalPrice = isPromo
-      ? BotUi.paymentPlanDiscountedPrices[durationDays]
-      : BotUi.paymentPlanPrices[durationDays];
-    const price = await this.paymentService.getBilledAmountRub(nominalPrice);
+      !hasUsedDiscount && isDiscountEligibleDuration(durationDays);
+    const nominalPrice = getPlanPrice(durationDays, isPromo);
+    const price = await this.paymentService.getBilledAmountRub(
+      nominalPrice,
+      telegramId,
+    );
 
     const payment = await this.paymentService.createPayment(
       telegramId,
@@ -326,7 +332,8 @@ export class InvoiceService {
         `Нажмите *«Оплатить»* — откроется ЮKassa.\n\n` +
         `Пока счёт не отменён и не оплачен, бот *каждые 5 секунд* проверяет статус в ЮKassa. ` +
         `После успешной оплаты придёт конфиг; при отмене в банке текст счёта обновится.\n\n` +
-        `При необходимости — *«Проверить оплату»* вручную.`,
+        `При необходимости — *«Проверить оплату»* вручную.\n\n` +
+        `ℹ️ _При оплате картой ЮKassa сохранит её для возможного автопродления. Автосписание выключено и включается только вашей кнопкой._`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -360,7 +367,7 @@ export class InvoiceService {
   /** Счёт ЮKassa: продление конфига */
   async presentExtendInvoice(
     ctx: Context,
-    durationDays: 30 | 60 | 90,
+    durationDays: PaidDuration,
     peerName: string,
   ): Promise<void> {
     if (!ctx.from) return;
@@ -375,11 +382,12 @@ export class InvoiceService {
     const hasUsedDiscount =
       await this.peersService.hasUsedFirstPurchaseDiscount(telegramId);
     const isPromo =
-      !hasUsedDiscount && (durationDays === 60 || durationDays === 90);
-    const nominalPrice = isPromo
-      ? BotUi.paymentPlanDiscountedPrices[durationDays]
-      : BotUi.paymentPlanPrices[durationDays];
-    const price = await this.paymentService.getBilledAmountRub(nominalPrice);
+      !hasUsedDiscount && isDiscountEligibleDuration(durationDays);
+    const nominalPrice = getPlanPrice(durationDays, isPromo);
+    const price = await this.paymentService.getBilledAmountRub(
+      nominalPrice,
+      telegramId,
+    );
 
     const payment = await this.paymentService.createPayment(
       telegramId,
@@ -396,7 +404,8 @@ export class InvoiceService {
         `Сумма: *${price} ₽*\n\n` +
         `Нажмите *«Оплатить»* — откроется ЮKassa.\n\n` +
         `Пока счёт активен, бот *каждые 5 секунд* проверяет статус; после оплаты придёт обновлённый конфиг.\n\n` +
-        `*«Проверить оплату»* — вручную, если нужно.`,
+        `*«Проверить оплату»* — вручную, если нужно.\n\n` +
+        `ℹ️ _При оплате картой ЮKassa сохранит её для возможного автопродления. Автосписание выключено и включается только вашей кнопкой._`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
@@ -544,6 +553,78 @@ export class InvoiceService {
       this.logger.error(
         `Error notifying user ${telegramId} about payment success`,
         error,
+      );
+    }
+  }
+
+  /**
+   * Предложение включить автопродление — отдельным сообщением после выдачи конфига.
+   * Автосписание при этом выключено: включает только пользователь кнопкой.
+   */
+  async sendAutopayOffer(
+    telegramId: string,
+    peerName: string,
+    durationDays: PaidDuration,
+    methodTitle: string | null,
+  ): Promise<void> {
+    try {
+      await this.bot.api.sendMessage(
+        telegramId,
+        BotUi.autopayOfferText(durationDays, methodTitle),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.autopayOfferKeyboard(peerName, durationDays),
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось отправить предложение автопродления ${telegramId}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  /** Предупреждение о ближайшем автосписании */
+  async sendAutopayChargeSoon(
+    telegramId: string,
+    peerName: string,
+    durationDays: number,
+    amount: number,
+    chargeAt: Date,
+  ): Promise<void> {
+    try {
+      await this.bot.api.sendMessage(
+        telegramId,
+        BotUi.autopayChargeSoonText(durationDays, amount, chargeAt, peerName),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.autopayChargeSoonKeyboard(peerName),
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось предупредить об автосписании ${telegramId}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  /** Сообщение о неудачном автосписании */
+  async sendAutopayChargeFailed(
+    telegramId: string,
+    amount: number,
+    attemptsLeft: number,
+  ): Promise<void> {
+    try {
+      await this.bot.api.sendMessage(
+        telegramId,
+        BotUi.autopayChargeFailedText(amount, attemptsLeft),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToMenuKeyboard(),
+        },
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось сообщить о неудачном автосписании ${telegramId}: ${error instanceof Error ? error.message : error}`,
       );
     }
   }

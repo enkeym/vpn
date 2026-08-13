@@ -258,17 +258,20 @@ export class AdminCommandsRegistrar {
     });
 
     // Создать конфиг для клиента (admin_dc = admin_do_create, u = unlimited)
-    bot.callbackQuery(/^admin_dc:([^:]+):(u|30|60|90)$/, async (ctx) => {
-      if (!(await ensureAdmin(ctx, isAdmin))) return;
-      // Сразу отвечаем, т.к. создание конфига может занять время
-      await ctx.answerCallbackQuery();
+    bot.callbackQuery(
+      /^admin_dc:([^:]+):(u|30|60|90|180|365)$/,
+      async (ctx) => {
+        if (!(await ensureAdmin(ctx, isAdmin))) return;
+        // Сразу отвечаем, т.к. создание конфига может занять время
+        await ctx.answerCallbackQuery();
 
-      const telegramId = ctx.match[1];
-      const rawDuration = ctx.match[2];
-      const duration = rawDuration === 'u' ? 'unlimited' : rawDuration;
+        const telegramId = ctx.match[1];
+        const rawDuration = ctx.match[2];
+        const duration = rawDuration === 'u' ? 'unlimited' : rawDuration;
 
-      await this.adminHandler.createClientConfig(ctx, telegramId, duration);
-    });
+        await this.adminHandler.createClientConfig(ctx, telegramId, duration);
+      },
+    );
 
     // Блокировка клиента
     bot.callbackQuery(/^admin_block:(.+)$/, async (ctx) => {

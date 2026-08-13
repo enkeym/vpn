@@ -157,7 +157,7 @@ export class FamilyCommandsRegistrar {
     });
 
     // Создать конфиг (f_dc = family_do_create, u = unlimited)
-    bot.callbackQuery(/^f_dc:([^:]+):(u|30|60|90)$/, async (ctx) => {
+    bot.callbackQuery(/^f_dc:([^:]+):(u|30|60|90|180|365)$/, async (ctx) => {
       if (!(await ensureAdmin(ctx, isAdmin))) return;
       // Сразу отвечаем, чтобы кнопка не зависала во время создания конфига
       await ctx.answerCallbackQuery();

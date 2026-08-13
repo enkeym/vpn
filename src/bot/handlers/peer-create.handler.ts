@@ -6,6 +6,7 @@ import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { PaymentService } from 'src/payment/payment.service';
+import type { DiscountEligibleDuration } from 'src/payment/pricing';
 
 @Injectable()
 export class PeerCreateHandler {
@@ -40,7 +41,10 @@ export class PeerCreateHandler {
         : !(await this.peersService.hasUsedFirstPurchaseDiscount(
             String(ctx.from.id),
           ));
-    const testPayment = await this.paymentService.isTestPayment();
+    // Тестовая цена 1 ₽ — только для админов; клиенты видят обычные цены
+    const testPayment = await this.paymentService.isTestPaymentFor(
+      String(ctx.from.id),
+    );
     await safeEditMessageText(
       ctx,
       BotUi.paymentPlansTitle(hasDiscount, testPayment),
@@ -75,7 +79,7 @@ export class PeerCreateHandler {
       reply_markup: BotUi.paymentPlansKeyboardForExtend(
         peerName,
         hasDiscount,
-        await this.paymentService.isTestPayment(),
+        await this.paymentService.isTestPaymentFor(String(ctx.from.id)),
       ),
     });
   }
@@ -90,7 +94,7 @@ export class PeerCreateHandler {
     ctx: Context,
     durationDays?: SubscriptionDuration,
     isTrial = false,
-    usedPromoDiscount?: 60 | 90,
+    usedPromoDiscount?: DiscountEligibleDuration,
   ) {
     if (!ctx.from) return;
 

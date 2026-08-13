@@ -24,6 +24,7 @@ import {
 import { AwgService } from 'src/wg/awg.service';
 import { randomBytes } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
+import type { DiscountEligibleDuration } from 'src/payment/pricing';
 import { Mutex } from 'async-mutex';
 import { NotificationService } from 'src/notification/notification.service';
 import {
@@ -344,7 +345,10 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   /**
    * Записать использование скидки на тарифе 60 или 90 дней.
    */
-  async recordPromoUsage(telegramId: string, tier: 60 | 90): Promise<void> {
+  async recordPromoUsage(
+    telegramId: string,
+    tier: DiscountEligibleDuration,
+  ): Promise<void> {
     await this.db.insert(schema.userPromoUsage).values({
       telegramId: String(telegramId),
       usedDiscountTier: tier,

@@ -12,17 +12,44 @@ import { SettingsService } from 'src/settings/settings.service';
 /** Payload deep link `t.me/bot?start=…` в return_url ЮKassa — по нему бот принудительно синхронизирует платежи. */
 export const YOOKASSA_TELEGRAM_RETURN_START_PARAM = 'syncpay';
 
+/** Платёж в ЮKassa в том виде, в котором он нужен боту */
+export interface IYooKassaPaymentView {
+  status: string | null;
+  /** id сохранённого метода оплаты — есть только при payment_method.saved */
+  savedPaymentMethodId: string | null;
+  paymentMethodTitle: string | null;
+}
+
+interface IYooKassaPaymentResponse {
+  id?: unknown;
+  status?: unknown;
+  payment_method?: {
+    id?: unknown;
+    saved?: unknown;
+    title?: unknown;
+    type?: unknown;
+  };
+}
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
   private readonly apiUrl = 'https://api.yookassa.ru/v3/payments';
+  private readonly adminIds: string[];
 
   constructor(
     private readonly configService: ConfigService,
     @Inject(DRIZZLE)
     private readonly db: BetterSQLite3Database<typeof schema>,
     private readonly settingsService: SettingsService,
-  ) {}
+  ) {
+    this.adminIds = (
+      this.configService.get<string>('TELEGRAM_ALLOWED_IDS') ?? ''
+    )
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+  }
 
   private get authHeader() {
     const shopId = this.configService.get<string>('YOOKASSA_SHOP_ID');
@@ -39,6 +66,7 @@ export class PaymentService {
     return this.settingsService.setPaymentEnabled(value);
   }
 
+  /** Глобальный флаг тестовой оплаты из «Параметров» (влияет только на админов) */
   isTestPayment(): Promise<boolean> {
     return this.settingsService.isTestPayment();
   }
@@ -47,8 +75,25 @@ export class PaymentService {
     return this.settingsService.setTestPayment(value);
   }
 
-  async getBilledAmountRub(nominalRub: number): Promise<number> {
-    return (await this.isTestPayment()) ? 1 : nominalRub;
+  isAdmin(telegramId: string): boolean {
+    return this.adminIds.includes(String(telegramId));
+  }
+
+  /**
+   * Тестовая цена действует только для админов: клиентские продажи идут
+   * по полным ценам даже при включённом тестовом режиме.
+   */
+  async isTestPaymentFor(telegramId: string): Promise<boolean> {
+    if (!this.isAdmin(telegramId)) return false;
+    return this.settingsService.isTestPayment();
+  }
+
+  /** Сумма к списанию: номинал тарифа либо 1 ₽ в тестовом режиме админа */
+  async getBilledAmountRub(
+    nominalRub: number,
+    telegramId: string,
+  ): Promise<number> {
+    return (await this.isTestPaymentFor(telegramId)) ? 1 : nominalRub;
   }
 
   getYookassaReturnUrl(): string {
@@ -58,6 +103,13 @@ export class PaymentService {
     return `https://t.me/${user}?start=${YOOKASSA_TELEGRAM_RETURN_START_PARAM}`;
   }
 
+  /**
+   * Счёт ЮKassa с подтверждением от пользователя.
+   *
+   * `save_payment_method: true` просит ЮKassa сохранить метод оплаты — без этого
+   * флага в момент платежа автопродление позже включить нельзя. Само списание
+   * остаётся выключенным, пока пользователь не включит его кнопкой.
+   */
   async createPayment(
     telegramId: string,
     amount: number,
@@ -65,10 +117,10 @@ export class PaymentService {
     isPromo = false,
     peerName?: string,
   ) {
-    const chargeRub = await this.getBilledAmountRub(amount);
-    if ((await this.isTestPayment()) && chargeRub !== amount) {
+    const chargeRub = await this.getBilledAmountRub(amount, telegramId);
+    if (chargeRub !== amount) {
       this.logger.warn(
-        `TEST_PAYMENT: тариф ${amount} ₽ → списание ${chargeRub} ₽ (ЮKassa + БД)`,
+        `TEST_PAYMENT (админ ${telegramId}): тариф ${amount} ₽ → списание ${chargeRub} ₽ (ЮKassa + БД)`,
       );
     }
 
@@ -86,6 +138,7 @@ export class PaymentService {
         {
           amount: { value: chargeRub.toFixed(2), currency: 'RUB' },
           capture: true,
+          save_payment_method: true,
           confirmation: {
             type: 'redirect',
             return_url: this.getYookassaReturnUrl(),
@@ -133,23 +186,120 @@ export class PaymentService {
     return results[0];
   }
 
-  async getPaymentStatusFromYooKassa(
-    yookassaId: string,
-  ): Promise<string | null> {
-    try {
-      const response = await axios.get(`${this.apiUrl}/${yookassaId}`, {
+  /**
+   * Автосписание по ранее сохранённому методу оплаты: без confirmation,
+   * без участия пользователя. Строка в payments помечается isAutoCharge.
+   */
+  async createAutoChargePayment(params: {
+    telegramId: string;
+    amount: number;
+    durationDays: number;
+    peerName: string;
+    paymentMethodId: string;
+  }): Promise<IYooKassaPaymentResponse> {
+    const { telegramId, amount, durationDays, peerName, paymentMethodId } =
+      params;
+    const chargeRub = await this.getBilledAmountRub(amount, telegramId);
+    const idempotenceKey = randomUUID();
+
+    const response = await axios.post<IYooKassaPaymentResponse>(
+      this.apiUrl,
+      {
+        amount: { value: chargeRub.toFixed(2), currency: 'RUB' },
+        capture: true,
+        payment_method_id: paymentMethodId,
+        description: `Автопродление VPN TUNEL на ${durationDays} дней`,
+        metadata: {
+          telegramId,
+          durationDays: String(durationDays),
+          isPromo: 'false',
+          peerName,
+          autoCharge: 'true',
+        },
+      },
+      {
         headers: {
+          'Idempotence-Key': idempotenceKey,
           Authorization: this.authHeader,
           'Content-Type': 'application/json',
         },
-      });
-      return response.data?.status ?? null;
+      },
+    );
+
+    const paymentData = response.data;
+    const yookassaId = typeof paymentData.id === 'string' ? paymentData.id : '';
+    if (!yookassaId) {
+      throw new Error('ЮKassa не вернула id платежа автосписания');
+    }
+
+    // Строка всегда создаётся как pending: успех фиксирует только
+    // tryClaimPaymentSucceeded в момент выдачи — иначе выдача сочтёт платёж
+    // уже обработанным и конфиг не продлится.
+    await this.db.insert(payments).values({
+      telegramId,
+      yookassaId,
+      amount: Math.round(chargeRub),
+      status: 'pending',
+      durationDays,
+      isPromo: false,
+      peerName,
+      paymentMethodId,
+      isAutoCharge: true,
+    });
+
+    return paymentData;
+  }
+
+  /** Платёж из ЮKassa: статус и сохранённый метод оплаты (null при ошибке запроса) */
+  async getYooKassaPayment(
+    yookassaId: string,
+  ): Promise<IYooKassaPaymentView | null> {
+    try {
+      const response = await axios.get<IYooKassaPaymentResponse>(
+        `${this.apiUrl}/${yookassaId}`,
+        {
+          headers: {
+            Authorization: this.authHeader,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      const data = response.data;
+      const method = data.payment_method;
+      const savedPaymentMethodId =
+        method?.saved === true && typeof method.id === 'string'
+          ? method.id
+          : null;
+      return {
+        status: typeof data.status === 'string' ? data.status : null,
+        savedPaymentMethodId,
+        paymentMethodTitle:
+          typeof method?.title === 'string' ? method.title : null,
+      };
     } catch (error) {
       this.logger.error(
-        `Ошибка проверки статуса платежа ${yookassaId} в ЮKassa: ${error instanceof Error ? error.message : error}`,
+        `Ошибка запроса платежа ${yookassaId} в ЮKassa: ${error instanceof Error ? error.message : error}`,
       );
       return null;
     }
+  }
+
+  async getPaymentStatusFromYooKassa(
+    yookassaId: string,
+  ): Promise<string | null> {
+    const payment = await this.getYooKassaPayment(yookassaId);
+    return payment?.status ?? null;
+  }
+
+  /** Запомнить метод оплаты, привязанный к платежу */
+  async setPaymentMethodId(
+    yookassaId: string,
+    paymentMethodId: string,
+  ): Promise<void> {
+    await this.db
+      .update(payments)
+      .set({ paymentMethodId })
+      .where(eq(payments.yookassaId, yookassaId));
   }
 
   async updatePaymentStatus(yookassaId: string, status: string) {

@@ -1,6 +1,14 @@
 import { InlineKeyboard } from 'grammy';
 import { TFamilyMember } from 'src/family/family.service';
 import { TPeer } from 'src/peers/peers.service';
+import {
+  PAID_DURATIONS,
+  PRICING_PLANS,
+  getPlanPrice,
+  monthlyEquivalent,
+  savingsPercent,
+  type PaidDuration,
+} from 'src/payment/pricing';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
@@ -53,6 +61,47 @@ function formatSubscriptionDetails(peer: TPeer): string {
     `🔚 Действует до: ${expiresText}\n` +
     remainingText
   );
+}
+
+interface IKeyboardButton {
+  text: string;
+  /** callback_data кнопки */
+  data: string;
+}
+
+/** Клавиатура из рядов кнопок: пустые ряды отбрасываются, чтобы не отправлять «дыры» в Telegram */
+function buildKeyboard(rows: IKeyboardButton[][]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  rows
+    .filter((row) => row.length > 0)
+    .forEach((row, index) => {
+      if (index > 0) keyboard.row();
+      row.forEach((button) => keyboard.text(button.text, button.data));
+    });
+  return keyboard;
+}
+
+/** Подпись кнопки тарифа: эмодзи, срок, цена и пометка акции/выгоды */
+function paymentPlanButtonLabel(
+  durationDays: PaidDuration,
+  hasDiscount: boolean,
+  testPayment: boolean,
+): string {
+  const plan = PRICING_PLANS[durationDays];
+  const discounted = hasDiscount && plan.discountedPrice !== null;
+  const priceText = testPayment
+    ? '1 ₽ (тест)'
+    : `${getPlanPrice(durationDays, hasDiscount)} ₽`;
+  const saving = savingsPercent(durationDays);
+
+  let suffix = '';
+  if (discounted) {
+    suffix = ' 🎁';
+  } else if (saving > 0) {
+    suffix = ` (−${saving}%)`;
+  }
+
+  return `${plan.emoji} ${durationDays} дн. — ${priceText}${suffix}`;
 }
 
 function getPeerStatusIcon(peer: TPeer): string {
@@ -128,6 +177,7 @@ export const BotUi = {
       .text('⚙️ Параметры', 'admin_settings')
       .row()
       .text('🚫 Бан-лист', 'admin_blocked_list')
+      .text('📄 Конфиг без оплаты', 'admin_self_config')
       .row()
       .text('« В главное меню', 'main_menu'),
 
@@ -159,7 +209,12 @@ export const BotUi = {
   adminSettingsTitle: (paymentEnabled: boolean, testPayment: boolean) =>
     '⚙️ *Параметры*\n\n' +
     `💳 Приём оплаты: *${paymentEnabled ? 'включён' : 'выключен'}*\n` +
-    `🧪 Тестовая оплата: *${testPayment ? 'включена (1 ₽ за любой тариф)' : 'выключена'}*\n\n` +
+    `🧪 Тестовая оплата: *${testPayment ? 'включена (1 ₽ — только для админов)' : 'выключена'}*\n\n` +
+    (testPayment
+      ? '🧪 _У админов «Получить VPN» ведёт в тарифы с ценой 1 ₽ — полный клиентский путь: счёт, оплата, выдача конфига._\n' +
+        '✅ _Обычные клиенты продолжают платить полную цену — продажи не ломаются. Группу «Семья» режим не затрагивает._\n' +
+        '_Конфиг без оплаты — кнопка «📄 Конфиг без оплаты» в этой панели._\n\n'
+      : '') +
     'Изменения применяются мгновенно, без перезапуска бота.',
 
   adminSettingsKeyboard: (paymentEnabled: boolean, testPayment: boolean) =>
@@ -172,7 +227,7 @@ export const BotUi = {
       .text(
         testPayment
           ? '🧪 Тестовая оплата: ВКЛ ✅'
-          : '🧪 Тестовая оплата: ВЫКЛ ⭕',
+          : '🧪 Тестовая оплата: ВЫКЛ ⛔',
         'admin_toggle_test_payment',
       )
       .row()
@@ -314,29 +369,36 @@ export const BotUi = {
   backToAnalyticsKeyboard: () =>
     new InlineKeyboard().text('« К аналитике', 'admin_analytics'),
 
-  createConfigKeyboard: () =>
-    new InlineKeyboard()
-      .text('♾️ Бессрочный', 'create_config:unlimited')
-      .row()
-      .text('🔥 30 дней', 'create_config:30')
-      .text('💎 60 дней', 'create_config:60')
-      .text('👑 90 дней', 'create_config:90')
-      .row()
-      .text('« Назад в меню', 'main_menu'),
+  createConfigKeyboard: () => {
+    const kb = new InlineKeyboard().text(
+      '♾️ Бессрочный',
+      'create_config:unlimited',
+    );
+    PAID_DURATIONS.forEach((duration, index) => {
+      if (index % 3 === 0) kb.row();
+      kb.text(
+        `${PRICING_PLANS[duration].emoji} ${duration} дн.`,
+        `create_config:${duration}`,
+      );
+    });
+    return kb.row().text('« Назад в меню', 'main_menu');
+  },
 
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
-  // Меню оплаты для обычных пользователей (30, 60, 90 дней)
+  // Меню оплаты для обычных пользователей (все платные тарифы)
   paymentPlansTitle: (hasDiscount: boolean, testPayment = false) =>
     '💳 *Тарифы TUNEL VPN*\n\n' +
     'Выберите срок — сразу откроется счёт ЮKassa. После успешной оплаты конфиг придёт в этот чат автоматически.\n\n' +
-    '📱 _Конфиг подходит для Android, iOS, Windows, macOS, Linux_\n' +
-    '🛡 _Шифрование, обход блокировок, стриминг_\n\n' +
+    '🛡 _AmneziaVPN с обфускацией — трафик не распознаётся как VPN_\n' +
+    '📱 _Один конфиг: Android, iOS, Windows, macOS, Linux_\n' +
+    `💰 _Чем длиннее срок, тем дешевле месяц: от ${PRICING_PLANS[30].price} ₽ до ${monthlyEquivalent(365)} ₽_\n\n` +
     (hasDiscount
-      ? '🎁 *Разовая акция:* скидка на 60 или 90 дней при первой покупке.\n\n'
+      ? '🎁 *Разовая акция:* скидка на первую покупку от 60 дней — тариф на выбор, действует один раз.\n\n'
       : '') +
+    '❗️ *iPhone / iPad:* перед покупкой откройте «📖 Инструкция» → «🍎 iOS / iPhone»: AmneziaVPN ставится только после смены региона Apple ID.\n\n' +
     (testPayment
-      ? '⚠️ TEST\\_PAYMENT: в ЮKassa списывается *1 ₽* за любой тариф.\n\n'
+      ? '⚠️ Тестовый режим админа: в ЮKassa спишется *1 ₽* за любой тариф. У клиентов — полная цена.\n\n'
       : ''),
 
   paymentMenuUnavailable:
@@ -345,16 +407,12 @@ export const BotUi = {
 
   paymentPlansKeyboard: (hasDiscount: boolean, testPayment = false) => {
     const kb = new InlineKeyboard();
-    const p = (n: number) => (testPayment ? `1 ₽ (тест)` : `${n} ₽`);
-    kb.text(`🔥 30 дней — ${p(99)}`, 'pay_plan:30').row();
-    kb.text(
-      hasDiscount ? `💎 60 дней — ${p(143)} 🎁` : `💎 60 дней — ${p(179)}`,
-      'pay_plan:60',
-    ).row();
-    kb.text(
-      hasDiscount ? `👑 90 дней — ${p(199)} 🎁` : `👑 90 дней — ${p(249)}`,
-      'pay_plan:90',
-    ).row();
+    for (const duration of PAID_DURATIONS) {
+      kb.text(
+        paymentPlanButtonLabel(duration, hasDiscount, testPayment),
+        `pay_plan:${duration}`,
+      ).row();
+    }
     kb.text('« Назад в меню', 'main_menu');
     return kb;
   },
@@ -366,22 +424,115 @@ export const BotUi = {
     testPayment = false,
   ) => {
     const kb = new InlineKeyboard();
-    const p = (n: number) => (testPayment ? `1 ₽ (тест)` : `${n} ₽`);
-    kb.text(`🔥 30 дней — ${p(99)}`, `extend_pay_plan:30:${peerName}`).row();
-    kb.text(
-      hasDiscount ? `💎 60 дней — ${p(143)} 🎁` : `💎 60 дней — ${p(179)}`,
-      `extend_pay_plan:60:${peerName}`,
-    ).row();
-    kb.text(
-      hasDiscount ? `👑 90 дней — ${p(199)} 🎁` : `👑 90 дней — ${p(249)}`,
-      `extend_pay_plan:90:${peerName}`,
-    ).row();
+    for (const duration of PAID_DURATIONS) {
+      kb.text(
+        paymentPlanButtonLabel(duration, hasDiscount, testPayment),
+        `extend_pay_plan:${duration}:${peerName}`,
+      ).row();
+    }
     kb.text('« Назад в меню', 'main_menu');
     return kb;
   },
 
-  paymentPlanPrices: { 30: 99, 60: 179, 90: 249 } as Record<number, number>,
-  paymentPlanDiscountedPrices: { 60: 143, 90: 199 } as Record<number, number>,
+  // === Автопродление (рекуррентные списания ЮKassa) ===
+
+  /** Предложение после успешной оплаты — автосписание по умолчанию выключено */
+  autopayOfferText: (durationDays: PaidDuration, methodTitle: string | null) =>
+    '🔄 *Включить автопродление?*\n\n' +
+    `Чтобы VPN не отключился в неподходящий момент, бот может сам продлевать подписку на *${durationDays} дн.* — списание *${getPlanPrice(durationDays)} ₽* за сутки до окончания срока.\n\n` +
+    (methodTitle ? `💳 Карта: ${escapeMarkdown(methodTitle)}\n` : '') +
+    '✅ Отключить можно в любой момент — в меню конфига.\n' +
+    '🔔 О каждом списании предупредим заранее.\n\n' +
+    '_Сейчас автопродление выключено._',
+
+  autopayOfferKeyboard: (peerName: string, durationDays: PaidDuration) =>
+    new InlineKeyboard()
+      .text(
+        '🔄 Включить автопродление',
+        `autopay_on:${peerName}:${durationDays}`,
+      )
+      .row()
+      .text('Не сейчас', 'autopay_skip'),
+
+  autopayMenuText: (state: {
+    enabled: boolean;
+    durationDays: number;
+    hasPaymentMethod: boolean;
+    methodTitle: string | null;
+    nextChargeAt: Date | null;
+  }) => {
+    if (!state.hasPaymentMethod) {
+      return (
+        '🔄 *Автопродление*\n\n' +
+        '❗️ Для автосписаний нужна сохранённая карта. Она сохраняется при обычной оплате в ЮKassa.\n\n' +
+        '_Оплатите любой тариф картой — после этого автопродление можно будет включить._'
+      );
+    }
+
+    const next = state.nextChargeAt
+      ? new Date(state.nextChargeAt).toLocaleDateString('ru-RU')
+      : '—';
+
+    return (
+      '🔄 *Автопродление*\n\n' +
+      `Статус: *${state.enabled ? 'включено ✅' : 'выключено ⛔'}*\n` +
+      `Тариф: *${state.durationDays} дн.* — *${getPlanPrice(state.durationDays as PaidDuration)} ₽*\n` +
+      (state.methodTitle
+        ? `💳 Карта: ${escapeMarkdown(state.methodTitle)}\n`
+        : '') +
+      (state.enabled ? `📅 Следующее списание: *${next}*\n` : '') +
+      '\n' +
+      (state.enabled
+        ? '_Спишем автоматически за сутки до окончания срока и пришлём конфиг. Предупреждение придёт за 3 дня._'
+        : '_Включите, чтобы подписка продлевалась сама и VPN не отключился._')
+    );
+  },
+
+  autopayMenuKeyboard: (
+    peerName: string,
+    enabled: boolean,
+    durationDays: PaidDuration,
+    hasPaymentMethod: boolean,
+  ) => {
+    const kb = new InlineKeyboard();
+    if (hasPaymentMethod) {
+      kb.text(
+        enabled ? '⛔ Выключить автопродление' : '🔄 Включить автопродление',
+        enabled ? 'autopay_off' : `autopay_on:${peerName}:${durationDays}`,
+      ).row();
+    }
+    return kb.text('« К конфигу', `manage_peer:${peerName}`);
+  },
+
+  autopayEnabledAlert: 'Автопродление включено',
+  autopayDisabledAlert: 'Автопродление выключено',
+  autopayNoMethodAlert:
+    'Нужна сохранённая карта — оплатите любой тариф картой, и автопродление станет доступно',
+  autopayNoPeerAlert: 'Нет активного конфига со сроком действия',
+
+  /** Предупреждение за несколько дней до автосписания */
+  autopayChargeSoonText: (
+    durationDays: number,
+    amount: number,
+    chargeAt: Date,
+    peerName: string,
+  ) =>
+    '🔔 *Скоро автопродление*\n\n' +
+    `Конфиг \`${peerName}\`: *${chargeAt.toLocaleDateString('ru-RU')}* спишем *${amount} ₽* и продлим подписку на *${durationDays} дн.*\n\n` +
+    '_Не нужно — выключите автопродление кнопкой ниже._',
+
+  autopayChargeSoonKeyboard: (peerName: string) =>
+    new InlineKeyboard()
+      .text('⛔ Выключить автопродление', 'autopay_off')
+      .row()
+      .text('📂 Меню конфига', `manage_peer:${peerName}`),
+
+  autopayChargeFailedText: (amount: number, attemptsLeft: number) =>
+    '⚠️ *Не удалось списать оплату*\n\n' +
+    `Автопродление на *${amount} ₽* не прошло — банк отклонил списание или на карте недостаточно средств.\n\n` +
+    (attemptsLeft > 0
+      ? `Повторим завтра (осталось попыток: *${attemptsLeft}*). Можно оплатить вручную в меню конфига.`
+      : 'Автопродление отключено. Продлите подписку вручную в меню конфига.'),
 
   paymentSuccessTitle:
     '✅ *Оплата прошла успешно!*\n\n' +
@@ -422,43 +573,62 @@ export const BotUi = {
   },
 
   peerDetailsKeyboard: (peer: TPeer, isAdmin: boolean = false) => {
-    const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
 
-    // Кнопка QR-кода всегда первая
-    keyboard.text('📷 QR-код', `show_qr:${peer.name}`).row();
+    // Клавиатура собирается рядами, пустые ряды отсеиваются на сборке:
+    // при построении цепочкой .row() набор кнопок зависит от состояния конфига
+    // и в клавиатуре легко появляется пустая строка.
+    const rows: IKeyboardButton[][] = [
+      [{ text: '📷 QR-код', data: `show_qr:${peer.name}` }],
+      [{ text: '📄 Получить файл', data: `get_config_file:${peer.name}` }],
+    ];
 
-    // Кнопка получения файла конфига
-    keyboard.text('📄 Получить файл', `get_config_file:${peer.name}`).row();
-
-    // Показываем кнопку "Продлить" если конфиг истёк или на паузе
+    // Кнопка «Продлить» — если конфиг истёк или на паузе
     if (peer.paused || expired) {
-      keyboard.text('🔄 Продлить', `extend_peer:${peer.name}`).row();
+      rows.push([{ text: '🔄 Продлить', data: `extend_peer:${peer.name}` }]);
+    }
+
+    const manageRow: IKeyboardButton[] = [];
+
+    // Автопродление доступно только для конфигов со сроком действия
+    if (peer.expiresAt) {
+      manageRow.push({
+        text: '♻️ Автопродление',
+        data: `autopay_menu:${peer.name}`,
+      });
     }
 
     if (isAdmin && !expired) {
-      const toggleBtnText = peer.paused ? 'Включить' : 'Пауза';
-      keyboard.text(toggleBtnText, `toggle_peer:${peer.name}`);
+      manageRow.push({
+        text: peer.paused ? 'Включить' : 'Пауза',
+        data: `toggle_peer:${peer.name}`,
+      });
     }
 
     if (isAdmin) {
-      const descriptionBtnText = peer.description
-        ? '📝 Изменить описание'
-        : '📝 Добавить описание';
-      keyboard.text(descriptionBtnText, `edit_description:${peer.name}`);
+      manageRow.push({
+        text: peer.description
+          ? '📝 Изменить описание'
+          : '📝 Добавить описание',
+        data: `edit_description:${peer.name}`,
+      });
     }
+
+    rows.push(manageRow);
 
     if (!expired) {
-      keyboard.row().text('🔁 Заменить конфиг', `replace_peer:${peer.name}`);
+      rows.push([
+        { text: '🔁 Заменить конфиг', data: `replace_peer:${peer.name}` },
+      ]);
     }
 
     if (isAdmin) {
-      keyboard.row().text('Удалить', `delete_peer:${peer.name}`);
+      rows.push([{ text: 'Удалить', data: `delete_peer:${peer.name}` }]);
     }
 
-    keyboard.row().text('К списку', 'list_configs');
+    rows.push([{ text: 'К списку', data: 'list_configs' }]);
 
-    return keyboard;
+    return buildKeyboard(rows);
   },
 
   // === Приветственные сообщения ===
@@ -480,20 +650,26 @@ export const BotUi = {
     '• 📄 Создание VPN конфигов\n' +
     '• 📂 Управление своими конфигами\n' +
     '• 📖 Инструкции по установке\n\n' +
+    '❗️ *iPhone / iPad:* AmneziaVPN нет в российском App Store — сначала смените регион Apple ID (раздел «📖 Инструкция» → «🍎 iOS / iPhone»).\n\n' +
     '_При возникновении вопросов обратитесь к администратору._\n\n' +
     'Выберите действие:',
 
   welcomeMessageUser:
-    '👋 *Добро пожаловать в TUNEL VPN!*\n\n' +
-    '📍 *Сервер:* Финляндия\n' +
-    '⚡ *Скорость:* до *200 Мбит/с*\n' +
-    '🛡 *Защищённый доступ* — обход блокировок, стриминг, приватность\n\n' +
-    'С TUNEL VPN вы получаете:\n' +
-    '• 🔐 Шифрование трафика\n' +
-    '• 🌍 Свободу доступа к сайтам\n' +
-    '• 🚀 Стабильное соединение\n' +
-    '• 📱 Поддержку всех устройств\n' +
-    '• 🎁 Пробный конфиг на 3 дня — один раз для каждого пользователя\n\n' +
+    '🔐 *TUNEL VPN — AmneziaVPN с обфускацией*\n\n' +
+    '📍 *Сервер:* Финляндия  ⚡ *до 200 Мбит/с*\n\n' +
+    'Обычный VPN провайдер видит и режет. У нас трафик *замаскирован под обычный HTTPS* — блокировщик его просто не распознаёт.\n\n' +
+    '*Что вы получаете:*\n' +
+    '• 🛡 AmneziaWG с обфускацией — работает там, где обычный WireGuard уже заблокирован\n' +
+    '• 🌍 YouTube, соцсети и любые сервисы без ограничений\n' +
+    '• 🚀 Скорость до 200 Мбит/с — 4K-стриминг без пауз\n' +
+    '• 📱 Один конфиг на все устройства: Android, iOS, Windows, macOS, Linux\n' +
+    '• 🔒 Без логов, без рекламы, без лимита трафика\n' +
+    '• 🎁 Пробный доступ на 3 дня — бесплатно, один раз\n\n' +
+    '❗️❗️ *ВЛАДЕЛЬЦАМ iPhone И iPad — ПРОЧТИТЕ ДО ПОКУПКИ!* ❗️❗️\n' +
+    'Приложение AmneziaVPN *недоступно в российском App Store*. Его можно установить только после смены региона Apple ID — это бесплатно и занимает около 5 минут.\n' +
+    '👉 Раздел *«📖 Инструкция» → «🍎 iOS / iPhone»* — там всё по шагам.\n' +
+    '❗️ _Не меняли регион — приложение не установится, и конфиг открыть будет нечем._\n\n' +
+    '💬 *По всем вопросам и за поддержкой:* @CharlieWaldo\n\n' +
     'Выберите действие 👇',
 
   welcomeMessage: '👋 *TUNEL VPN*\n\nВыберите действие:',
@@ -502,7 +678,7 @@ export const BotUi = {
     '📂 *У вас пока нет конфигураций*\n\n' +
     'Нажмите «Получить VPN», чтобы:\n' +
     '• Получить пробный конфиг на 3 дня (_бесплатно, один раз_)\n' +
-    '• Или выбрать тариф 30, 60 или 90 дней\n\n' +
+    '• Или выбрать тариф от 30 дней до года\n\n' +
     'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
 
   configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
@@ -762,14 +938,12 @@ export const BotUi = {
 
   memberCreateConfigKeyboard: (memberId: string) => {
     const mId = memberId.slice(0, 8);
-    return new InlineKeyboard()
-      .text('♾️ Бессрочный', `f_dc:${mId}:u`)
-      .row()
-      .text('30 дней', `f_dc:${mId}:30`)
-      .text('60 дней', `f_dc:${mId}:60`)
-      .text('90 дней', `f_dc:${mId}:90`)
-      .row()
-      .text('« Назад', `f_m:${mId}`);
+    const kb = new InlineKeyboard().text('♾️ Бессрочный', `f_dc:${mId}:u`);
+    PAID_DURATIONS.forEach((duration, index) => {
+      if (index % 3 === 0) kb.row();
+      kb.text(`${duration} дн.`, `f_dc:${mId}:${duration}`);
+    });
+    return kb.row().text('« Назад', `f_m:${mId}`);
   },
 
   memberConfigCreated: (name: string, ip: string, expiresAt?: Date | null) => {
@@ -1020,15 +1194,17 @@ export const BotUi = {
   clientCreateConfigTitle: (telegramId: string) =>
     `➕ *Создание конфига для клиента*\n\n🆔 ID: \`${telegramId}\`\n\nВыберите срок действия:`,
 
-  clientCreateConfigKeyboard: (telegramId: string) =>
-    new InlineKeyboard()
-      .text('♾️ Бессрочный', `admin_dc:${telegramId}:u`)
-      .row()
-      .text('30 дней', `admin_dc:${telegramId}:30`)
-      .text('60 дней', `admin_dc:${telegramId}:60`)
-      .text('90 дней', `admin_dc:${telegramId}:90`)
-      .row()
-      .text('« Назад', `admin_client:${telegramId}`),
+  clientCreateConfigKeyboard: (telegramId: string) => {
+    const kb = new InlineKeyboard().text(
+      '♾️ Бессрочный',
+      `admin_dc:${telegramId}:u`,
+    );
+    PAID_DURATIONS.forEach((duration, index) => {
+      if (index % 3 === 0) kb.row();
+      kb.text(`${duration} дн.`, `admin_dc:${telegramId}:${duration}`);
+    });
+    return kb.row().text('« Назад', `admin_client:${telegramId}`);
+  },
 
   backToClientDetailsKeyboard: (telegramId: string) =>
     new InlineKeyboard().text('« К клиенту', `admin_client:${telegramId}`),
@@ -1147,8 +1323,12 @@ export const BotUi = {
   instructionsMenuTitle:
     '📖 *Инструкция по установке AmneziaVPN*\n\n' +
     'Выберите вашу платформу — откроется пошаговая инструкция с прямыми ссылками на приложение.\n\n' +
+    '❗️❗️ *У ВАС iPhone ИЛИ iPad? НАЧНИТЕ ОТСЮДА!* ❗️❗️\n' +
+    'AmneziaVPN *нет в российском App Store*. Пока регион Apple ID — Россия, приложение не установится ни поиском, ни по ссылке.\n' +
+    '👉 Нажмите *«🍎 iOS / iPhone»* ниже — там смена региона по шагам (бесплатно, ~5 минут).\n\n' +
     '⏱ _Обычно настройка занимает 2–3 минуты_\n' +
-    '⚠️ _Конфиг открывается только в AmneziaVPN: официальный клиент WireGuard его не примет._',
+    '⚠️ _Конфиг открывается только в AmneziaVPN: официальный клиент WireGuard его не примет._\n\n' +
+    '💬 _Не получается? Поддержка:_ @CharlieWaldo',
 
   instructionsMenuKeyboard: () =>
     new InlineKeyboard()
@@ -1187,21 +1367,34 @@ export const BotUi = {
 
   instructionIos:
     '🍎 *Установка AmneziaVPN на iOS / iPhone*\n\n' +
-    '*Шаг 1: Установите приложение*\n' +
+    '❗️❗️ *САМОЕ ГЛАВНОЕ — ПРОЧТИТЕ ПЕРВЫМ* ❗️❗️\n' +
+    '*AmneziaVPN недоступен в российском App Store.* Пока регион вашего Apple ID — Россия, приложение не найдётся ни поиском, ни по прямой ссылке.\n' +
+    '❗️ Сначала смените регион: это *бесплатно*, занимает *~5 минут*, ваши покупки и подписки сохраняются, вернуть регион обратно можно в любой момент.\n\n' +
+    '*Шаг 1: Смените регион App Store*\n' +
+    '1️⃣ «Настройки» → нажмите на своё имя вверху\n' +
+    '2️⃣ «Медиаматериалы и покупки» → «Просмотреть» → войдите\n' +
+    '3️⃣ «Страна/регион» → «Изменить страну или регион»\n' +
+    '4️⃣ Выберите страну — подойдут *Турция*, *Казахстан*, *Армения* или *США*\n' +
+    '5️⃣ Примите условия → в способе оплаты выберите *«Нет» / «None»*\n' +
+    '6️⃣ Укажите любой корректный адрес выбранной страны и телефон в её формате (проще всего взять адрес любого отеля)\n' +
+    '7️⃣ Сохраните — App Store переключится, AmneziaVPN станет доступен\n\n' +
+    '⚠️ _Если вариант «Нет / None» не появляется — отмените активные подписки Apple и потратьте остаток на счету, затем повторите._\n\n' +
+    '*Шаг 2: Установите приложение*\n' +
     '• [AmneziaVPN в App Store](https://apps.apple.com/app/amneziavpn/id1600529900)\n' +
     '• Или найдите "AmneziaVPN" в App Store\n\n' +
-    '*Шаг 2: Импортируйте конфиг*\n\n' +
+    '*Шаг 3: Импортируйте конфиг*\n\n' +
     '_Способ 1 (через QR-код — быстрее):_\n' +
     '• Откройте AmneziaVPN → «У меня есть данные для подключения»\n' +
     '• Выберите импорт по QR-коду и отсканируйте код из бота\n\n' +
     '_Способ 2 (через файл):_\n' +
     '• Скачайте файл .conf из бота\n' +
     '• Нажмите на файл → «Поделиться» → AmneziaVPN\n\n' +
-    '*Шаг 3: Подключитесь*\n' +
+    '*Шаг 4: Подключитесь*\n' +
     '• Нажмите кнопку подключения\n' +
     '• Разрешите добавление VPN-конфигурации\n' +
     '• Готово! 🎉\n\n' +
-    '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._',
+    '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._\n\n' +
+    '💬 *Не получилось? Напишите:* @CharlieWaldo',
 
   instructionWindows:
     '🪟 *Установка AmneziaVPN на Windows*\n\n' +

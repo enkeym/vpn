@@ -9,6 +9,7 @@ import { PeerManageHandler } from './handlers/peer-manage.handler';
 import { PeerDeleteHandler } from './handlers/peer-delete.handler';
 import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
+import { AutopayHandler } from './handlers/autopay.handler';
 import { PaymentModule } from 'src/payment/payment.module';
 import { InvoiceService } from './invoice/invoice.service';
 import { MainMenuService } from './menu/main-menu.service';
@@ -32,6 +33,7 @@ import { AdminCommandsRegistrar } from './registrars/admin-commands.registrar';
     PeerManageHandler,
     FamilyHandler,
     AdminHandler,
+    AutopayHandler,
     InvoiceService,
     MainMenuService,
     MainMenuAnchorStore,

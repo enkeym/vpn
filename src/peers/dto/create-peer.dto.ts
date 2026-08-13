@@ -1,6 +1,13 @@
 import { IsString, IsOptional, IsBoolean, IsIn } from 'class-validator';
+import { PAID_DURATIONS, type PaidDuration } from 'src/payment/pricing';
 
-export type SubscriptionDuration = 3 | 30 | 60 | 90;
+/** Пробный период (3 дня) + все платные тарифы */
+export type SubscriptionDuration = 3 | PaidDuration;
+
+export const SUBSCRIPTION_DURATIONS: readonly SubscriptionDuration[] = [
+  3,
+  ...PAID_DURATIONS,
+];
 
 export class CreatePeerDto {
   @IsString()
@@ -11,8 +18,8 @@ export class CreatePeerDto {
   username?: string;
 
   @IsOptional()
-  @IsIn([3, 30, 60, 90], {
-    message: 'durationDays должно быть 3, 30, 60 или 90',
+  @IsIn(SUBSCRIPTION_DURATIONS, {
+    message: `durationDays должно быть одним из: ${SUBSCRIPTION_DURATIONS.join(', ')}`,
   })
   durationDays?: SubscriptionDuration;
 
