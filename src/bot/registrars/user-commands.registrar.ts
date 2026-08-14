@@ -10,6 +10,7 @@ import { MainMenuService } from '../menu/main-menu.service';
 import { PaymentService } from 'src/payment/payment.service';
 import type { PaidDuration } from 'src/payment/pricing';
 import { AutopayHandler } from '../handlers/autopay.handler';
+import { closeMediaMessage } from '../utils/peer-media';
 
 /**
  * Регистрация пользовательских команд и callback-кнопок:
@@ -94,20 +95,6 @@ export class UserCommandsRegistrar {
       } else {
         await this.peerCreateHandler.showCreateOptions(ctx);
       }
-    });
-
-    // Создание конфига без оплаты — точка входа из админ-панели, остаётся
-    // доступной админу и при включённой тестовой оплате.
-    bot.callbackQuery('admin_self_config', async (ctx) => {
-      if (!ctx.from || !isAdmin(String(ctx.from.id))) {
-        await ctx.answerCallbackQuery({
-          text: 'Нет доступа',
-          show_alert: true,
-        });
-        return;
-      }
-      await ctx.answerCallbackQuery();
-      await this.peerCreateHandler.showCreateOptions(ctx);
     });
 
     bot.callbackQuery(/^pay_plan:(30|60|90|180|365)$/, async (ctx) => {
@@ -305,10 +292,18 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.replacePeer(ctx, ctx.match[1]);
     });
 
-    // Переход к конфигу через новое сообщение (после документов)
+    // Возврат с сообщения QR/файла: карточка конфига осталась выше — закрываем
+    // медиа-сообщение. Единая точка для всех веток меню (свои конфиги, клиенты,
+    // «Семья»), поэтому регистрируется здесь, без деления по ролям.
+    bot.callbackQuery('close_media', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await closeMediaMessage(ctx);
+    });
+
+    // Старые сообщения с документами до перехода на `close_media`
     bot.callbackQuery(/^goto_peer:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showPeerDetailsReply(ctx, ctx.match[1]);
+      await this.peerManageHandler.showPeerDetailsReply(ctx);
     });
 
     // После замены конфига — родитель удалён, нужен новый reply с деталями

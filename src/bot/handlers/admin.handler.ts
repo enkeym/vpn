@@ -8,6 +8,11 @@ import { MainHandler } from './main.handler';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
+import {
+  sendPeerConfigFileMessage,
+  sendPeerQrCodeMessage,
+} from '../utils/peer-media';
+import { safeEditMessageText } from '../utils/safe-edit-message';
 
 // Состояние ожидания ввода текста рассылки («Рупор»)
 // adminId -> { promptMessageId: number, chatId: number }
@@ -54,17 +59,10 @@ export class AdminHandler {
   // === Панель администратора ===
 
   async showAdminPanel(ctx: Context) {
-    try {
-      await ctx.editMessageText(BotUi.adminPanelTitle, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.adminPanelKeyboard(),
-      });
-    } catch {
-      await ctx.reply(BotUi.adminPanelTitle, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.adminPanelKeyboard(),
-      });
-    }
+    await safeEditMessageText(ctx, BotUi.adminPanelTitle, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.adminPanelKeyboard(),
+    });
   }
 
   // === Параметры (оплата / тестовая оплата) ===
@@ -74,16 +72,14 @@ export class AdminHandler {
       this.paymentService.isPaymentEnabled(),
       this.paymentService.isTestPayment(),
     ]);
-    const text = BotUi.adminSettingsTitle(paymentEnabled, testPayment);
-    const keyboard = BotUi.adminSettingsKeyboard(paymentEnabled, testPayment);
-    try {
-      await ctx.editMessageText(text, {
+    await safeEditMessageText(
+      ctx,
+      BotUi.adminSettingsTitle(paymentEnabled, testPayment),
+      {
         parse_mode: 'Markdown',
-        reply_markup: keyboard,
-      });
-    } catch {
-      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
-    }
+        reply_markup: BotUi.adminSettingsKeyboard(paymentEnabled, testPayment),
+      },
+    );
   }
 
   async togglePayment(ctx: Context) {
@@ -125,14 +121,18 @@ export class AdminHandler {
   async showBroadcastPrompt(ctx: Context) {
     if (!ctx.from || !ctx.chat) return;
 
-    const result = await ctx.editMessageText(BotUi.broadcastPrompt, {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.cancelBroadcastKeyboard(),
-    });
+    const promptMessageId = await safeEditMessageText(
+      ctx,
+      BotUi.broadcastPrompt,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.cancelBroadcastKeyboard(),
+      },
+    );
 
-    if (result && typeof result === 'object' && 'message_id' in result) {
+    if (promptMessageId != null) {
       this.setAwaitingBroadcastMessage(String(ctx.from.id), {
-        promptMessageId: result.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
     }
@@ -185,24 +185,17 @@ export class AdminHandler {
     pendingBroadcastText.delete(adminId);
 
     if (!text) {
-      try {
-        await ctx.editMessageText(
-          '❌ Текст рассылки не найден, начните заново',
-          { reply_markup: BotUi.backToAdminPanelKeyboard() },
-        );
-      } catch {
-        // Игнорируем ошибку редактирования
-      }
+      await safeEditMessageText(
+        ctx,
+        '❌ Текст рассылки не найден, начните заново',
+        { reply_markup: BotUi.backToAdminPanelKeyboard() },
+      );
       return;
     }
 
-    try {
-      await ctx.editMessageText(BotUi.broadcastSendingText, {
-        parse_mode: 'Markdown',
-      });
-    } catch {
-      // Игнорируем ошибку редактирования
-    }
+    await safeEditMessageText(ctx, BotUi.broadcastSendingText, {
+      parse_mode: 'Markdown',
+    });
 
     const userIds = await this.peersService.getBroadcastUserIds();
     let sent = 0;
@@ -221,17 +214,10 @@ export class AdminHandler {
     this.logger.log(`Рассылка завершена: отправлено ${sent}, ошибок ${failed}`);
 
     const resultText = BotUi.broadcastResultText(sent, failed);
-    try {
-      await ctx.editMessageText(resultText, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAdminPanelKeyboard(),
-      });
-    } catch {
-      await ctx.reply(resultText, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAdminPanelKeyboard(),
-      });
-    }
+    await safeEditMessageText(ctx, resultText, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.backToAdminPanelKeyboard(),
+    });
   }
 
   async cancelBroadcast(ctx: Context) {
@@ -264,14 +250,18 @@ export class AdminHandler {
   async showSearchPrompt(ctx: Context) {
     if (!ctx.from || !ctx.chat) return;
 
-    const result = await ctx.editMessageText(BotUi.clientSearchPrompt, {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.cancelClientSearchKeyboard(),
-    });
+    const promptMessageId = await safeEditMessageText(
+      ctx,
+      BotUi.clientSearchPrompt,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.cancelClientSearchKeyboard(),
+      },
+    );
 
-    if (result && typeof result === 'object' && 'message_id' in result) {
+    if (promptMessageId != null) {
       this.setAwaitingClientSearch(String(ctx.from.id), {
-        promptMessageId: result.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
     }
@@ -346,44 +336,32 @@ export class AdminHandler {
 
   async showStats(ctx: Context) {
     const stats = await this.peersService.getStats();
-    const text = BotUi.adminStatsText(stats);
-    try {
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.adminStatsKeyboard(),
-      });
-    } catch {
-      await ctx.reply(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.adminStatsKeyboard(),
-      });
-    }
+    await safeEditMessageText(ctx, BotUi.adminStatsText(stats), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.adminStatsKeyboard(),
+    });
   }
 
   // === Аналитика конфигов ===
 
   async showAnalytics(ctx: Context) {
-    try {
-      await ctx.editMessageText(BotUi.analyticsMenuTitle, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.analyticsMenuKeyboard(),
-      });
-    } catch {
-      await ctx.reply(BotUi.analyticsMenuTitle, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.analyticsMenuKeyboard(),
-      });
-    }
+    await safeEditMessageText(ctx, BotUi.analyticsMenuTitle, {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.analyticsMenuKeyboard(),
+    });
   }
 
   async showAnalyticsOverview(ctx: Context) {
     try {
       const analytics = await this.peersService.getAnalytics();
-      const text = BotUi.analyticsOverviewText(analytics.stats);
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAnalyticsKeyboard(),
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.analyticsOverviewText(analytics.stats),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToAnalyticsKeyboard(),
+        },
+      );
     } catch (error) {
       this.logger.error(`Ошибка показа сводки аналитики: ${error}`);
       await ctx.answerCallbackQuery({
@@ -396,11 +374,14 @@ export class AdminHandler {
   async showAnalyticsDuration(ctx: Context) {
     try {
       const analytics = await this.peersService.getAnalytics();
-      const text = BotUi.analyticsByDurationText(analytics.byDuration);
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAnalyticsKeyboard(),
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.analyticsByDurationText(analytics.byDuration),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToAnalyticsKeyboard(),
+        },
+      );
     } catch (error) {
       this.logger.error(`Ошибка показа аналитики по срокам: ${error}`);
       await ctx.answerCallbackQuery({
@@ -413,11 +394,14 @@ export class AdminHandler {
   async showAnalyticsTrial(ctx: Context) {
     try {
       const analytics = await this.peersService.getAnalytics();
-      const text = BotUi.analyticsTrialText(analytics.stats.trialConfigs);
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAnalyticsKeyboard(),
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.analyticsTrialText(analytics.stats.trialConfigs),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToAnalyticsKeyboard(),
+        },
+      );
     } catch (error) {
       this.logger.error(`Ошибка показа пробных конфигов: ${error}`);
       await ctx.answerCallbackQuery({
@@ -430,11 +414,14 @@ export class AdminHandler {
   async showAnalyticsRecent(ctx: Context) {
     try {
       const analytics = await this.peersService.getAnalytics();
-      const text = BotUi.analyticsRecentText(analytics.recentConfigs);
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAnalyticsKeyboard(),
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.analyticsRecentText(analytics.recentConfigs),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToAnalyticsKeyboard(),
+        },
+      );
     } catch (error) {
       this.logger.error(`Ошибка показа последних конфигов: ${error}`);
       await ctx.answerCallbackQuery({
@@ -447,34 +434,19 @@ export class AdminHandler {
   async showAnalyticsExpiring(ctx: Context) {
     try {
       const analytics = await this.peersService.getAnalytics();
-      const text = BotUi.analyticsExpiringText(analytics.expiringSoon);
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToAnalyticsKeyboard(),
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.analyticsExpiringText(analytics.expiringSoon),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToAnalyticsKeyboard(),
+        },
+      );
     } catch (error) {
       this.logger.error(`Ошибка показа истекающих конфигов: ${error}`);
       await ctx.answerCallbackQuery({
         text: 'Ошибка загрузки',
         show_alert: true,
-      });
-    }
-  }
-
-  // === Управление клиентом (дублируется для совместимости) ===
-
-  async _showStats(ctx: Context) {
-    const stats = await this.peersService.getStats();
-    const text = BotUi.adminStatsText(stats);
-    try {
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.adminStatsKeyboard(),
-      });
-    } catch {
-      await ctx.reply(text, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.adminStatsKeyboard(),
       });
     }
   }
@@ -488,7 +460,8 @@ export class AdminHandler {
       this.peersService.hasUsedFirstPurchaseDiscount(telegramId),
     ]);
 
-    await ctx.editMessageText(
+    await safeEditMessageText(
+      ctx,
       BotUi.clientDetailsText(
         telegramId,
         peers.length,
@@ -571,16 +544,10 @@ export class AdminHandler {
 
   async showBlockedList(ctx: Context) {
     const blocked = await this.blockedUsersService.getAllBlocked();
-    const text = BotUi.blockedListTitle(blocked.length);
-    const keyboard = BotUi.blockedListKeyboard(blocked);
-    try {
-      await ctx.editMessageText(text, {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard,
-      });
-    } catch {
-      await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: keyboard });
-    }
+    await safeEditMessageText(ctx, BotUi.blockedListTitle(blocked.length), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.blockedListKeyboard(blocked),
+    });
   }
 
   // === Блокировка/Разблокировка ===
@@ -654,7 +621,8 @@ export class AdminHandler {
   async showClientConfigs(ctx: Context, telegramId: string) {
     const peers = await this.peersService.getPeersByTelegramId(telegramId);
 
-    await ctx.editMessageText(
+    await safeEditMessageText(
+      ctx,
       BotUi.clientConfigsListTitle(telegramId, peers.length),
       {
         parse_mode: 'Markdown',
@@ -668,13 +636,12 @@ export class AdminHandler {
     peerName: string,
     telegramId: string,
   ) {
+    // Ошибку поиска конфига отделяем от ошибки отрисовки: раньше общий catch
+    // на «not modified» показывал ложное «Конфиг не найден» и выбрасывал
+    // администратора из карточки.
+    let peer;
     try {
-      const peer = await this.peersService.findPeer(peerName);
-
-      await ctx.editMessageText(BotUi.clientPeerDetailsText(peer), {
-        reply_markup: BotUi.clientPeerDetailsKeyboard(peer, telegramId),
-        parse_mode: 'Markdown',
-      });
+      peer = await this.peersService.findPeer(peerName);
     } catch {
       try {
         await ctx.answerCallbackQuery({
@@ -685,61 +652,28 @@ export class AdminHandler {
         // Игнорируем если callback уже был отвечен
       }
       await this.showClientDetails(ctx, telegramId);
+      return;
     }
+
+    await safeEditMessageText(ctx, BotUi.clientPeerDetailsText(peer), {
+      reply_markup: BotUi.clientPeerDetailsKeyboard(peer, telegramId),
+      parse_mode: 'Markdown',
+    });
   }
 
   // === QR-код и файл конфига клиента ===
 
-  async showClientQrCode(ctx: Context, peerName: string, telegramId: string) {
-    if (!ctx.chat) return;
-
-    try {
-      const qrBuffer = await this.peersService.generatePeerQrCode(peerName);
-
-      const message = await ctx.replyWithPhoto(
-        new InputFile(qrBuffer, `${peerName}_qr.png`),
-        {
-          caption: `📷 *QR-код для конфига* \`${peerName}\`\n\n_Отсканируйте в приложении AmneziaVPN_`,
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToClientPeerKeyboard(peerName, telegramId),
-        },
-      );
-      await this.peersService.setQrMessageId(peerName, message.message_id);
-    } catch (error) {
-      this.logger.error(`Ошибка генерации QR: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка генерации QR-кода',
-        show_alert: true,
-      });
-    }
+  async showClientQrCode(ctx: Context, peerName: string) {
+    await sendPeerQrCodeMessage(ctx, this.peersService, peerName, this.logger);
   }
 
-  async sendClientConfigFile(
-    ctx: Context,
-    peerName: string,
-    telegramId: string,
-  ) {
-    if (!ctx.chat) return;
-
-    try {
-      const config = await this.peersService.getPeerConfigString(peerName);
-
-      const message = await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${peerName}.conf`),
-        {
-          caption: `📄 *Файл конфига* \`${peerName}\`\n\n_Импортируйте в приложение AmneziaVPN_`,
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToClientPeerKeyboard(peerName, telegramId),
-        },
-      );
-      await this.peersService.setFileMessageId(peerName, message.message_id);
-    } catch (error) {
-      this.logger.error(`Ошибка отправки файла конфига: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка получения файла конфига',
-        show_alert: true,
-      });
-    }
+  async sendClientConfigFile(ctx: Context, peerName: string) {
+    await sendPeerConfigFileMessage(
+      ctx,
+      this.peersService,
+      peerName,
+      this.logger,
+    );
   }
 
   async toggleClientPeer(ctx: Context, peerName: string, telegramId: string) {
@@ -789,7 +723,7 @@ export class AdminHandler {
   // === Изменение срока действия ===
 
   async showChangeDuration(ctx: Context, peerName: string, telegramId: string) {
-    await ctx.editMessageText(BotUi.changeDurationTitle, {
+    await safeEditMessageText(ctx, BotUi.changeDurationTitle, {
       parse_mode: 'Markdown',
       reply_markup: BotUi.clientChangeDurationKeyboard(peerName, telegramId),
     });
@@ -860,7 +794,8 @@ export class AdminHandler {
 
     try {
       const peer = await this.peersService.findPeer(peerName);
-      const result = await ctx.editMessageText(
+      const promptMessageId = await safeEditMessageText(
+        ctx,
         BotUi.editDescriptionPrompt(peer),
         {
           parse_mode: 'Markdown',
@@ -871,11 +806,11 @@ export class AdminHandler {
         },
       );
 
-      if (result && typeof result === 'object' && 'message_id' in result) {
+      if (promptMessageId != null) {
         this.setAwaitingClientDescriptionEdit(String(ctx.from!.id), {
           peerName,
           clientTelegramId: telegramId,
-          promptMessageId: result.message_id,
+          promptMessageId,
           chatId: ctx.chat.id,
         });
       }
@@ -969,7 +904,7 @@ export class AdminHandler {
   // === Создание конфига для клиента ===
 
   async showCreateConfigOptions(ctx: Context, telegramId: string) {
-    await ctx.editMessageText(BotUi.clientCreateConfigTitle(telegramId), {
+    await safeEditMessageText(ctx, BotUi.clientCreateConfigTitle(telegramId), {
       parse_mode: 'Markdown',
       reply_markup: BotUi.clientCreateConfigKeyboard(telegramId),
     });
@@ -978,7 +913,7 @@ export class AdminHandler {
   async createClientConfig(ctx: Context, telegramId: string, duration: string) {
     try {
       // Показываем сообщение о создании
-      await ctx.editMessageText('⏳ *Создаю конфигурацию...*', {
+      await safeEditMessageText(ctx, '⏳ *Создаю конфигурацию...*', {
         parse_mode: 'Markdown',
       });
 
@@ -1019,7 +954,8 @@ export class AdminHandler {
       }
 
       // Уведомляем админа
-      await ctx.editMessageText(
+      await safeEditMessageText(
+        ctx,
         `✅ *Конфиг создан для клиента* \`${telegramId}\`\n\n` +
           `🏷 Имя: \`${peer.name}\`\n` +
           `🌐 IP: \`${peer.ip}\`\n` +
@@ -1034,7 +970,7 @@ export class AdminHandler {
     } catch (error) {
       this.logger.error(`Ошибка создания конфига: ${error}`);
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.editMessageText(`❌ *Ошибка:* ${errorMsg}`, {
+      await safeEditMessageText(ctx, `❌ *Ошибка:* ${errorMsg}`, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToClientDetailsKeyboard(telegramId),
       });

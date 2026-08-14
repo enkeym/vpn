@@ -198,7 +198,6 @@ export const BotUi = {
       .text('⚙️ Параметры', 'admin_settings')
       .row()
       .text('🚫 Бан-лист', 'admin_blocked_list')
-      .text('📄 Конфиг без оплаты', 'admin_self_config')
       .row()
       .text('« В главное меню', 'main_menu'),
 
@@ -233,8 +232,7 @@ export const BotUi = {
     `🧪 Тестовая оплата: *${testPayment ? 'включена (1 ₽ — только для админов)' : 'выключена'}*\n\n` +
     (testPayment
       ? '🧪 _У админов «Получить VPN» ведёт в тарифы с ценой 1 ₽ — полный клиентский путь: счёт, оплата, выдача конфига._\n' +
-        '✅ _Обычные клиенты продолжают платить полную цену — продажи не ломаются. Группу «Семья» режим не затрагивает._\n' +
-        '_Конфиг без оплаты — кнопка «📄 Конфиг без оплаты» в этой панели._\n\n'
+        '✅ _Обычные клиенты продолжают платить полную цену — продажи не ломаются. Группу «Семья» режим не затрагивает._\n\n'
       : '') +
     'Изменения применяются мгновенно, без перезапуска бота.',
 
@@ -947,6 +945,9 @@ export const BotUi = {
       .row()
       .text('📅 Изменить срок', `f_cd:${peer.name}:${mId}`)
       .row()
+      .text('📷 QR-код', `f_qr:${peer.name}:${mId}`)
+      .text('📄 Получить файл', `f_gf:${peer.name}:${mId}`)
+      .row()
       .text('🗑 Удалить', `f_dp:${peer.name}:${mId}`)
       .row()
       .text('« К конфигам', `f_mc:${mId}`);
@@ -1075,8 +1076,6 @@ export const BotUi = {
   backToOwnPeerKeyboard: (peerName: string) =>
     new InlineKeyboard().text('« К конфигу', `manage_peer:${peerName}`),
 
-  backToOwnPeerKeyboardReply: (peerName: string) =>
-    new InlineKeyboard().text('« К конфигу', `goto_peer:${peerName}`),
   backToOwnPeerKeyboardReplyAfterReplace: (peerName: string) =>
     new InlineKeyboard().text(
       '« К конфигу',
@@ -1342,6 +1341,14 @@ export const BotUi = {
       '« К конфигу',
       `admin_peer:${peerName}:${telegramId}`,
     ),
+
+  /**
+   * Кнопка возврата на сообщении с QR/файлом конфига. Карточка конфига осталась
+   * выше нетронутой, поэтому возврат — просто закрытие медиа-сообщения; параметры
+   * не нужны, и клавиатура одна для всех веток меню.
+   */
+  closeMediaKeyboard: () =>
+    new InlineKeyboard().text('« К конфигу', 'close_media'),
 
   // === Инструкции по установке AmneziaVPN ===
 

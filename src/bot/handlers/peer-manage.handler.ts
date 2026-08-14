@@ -3,6 +3,11 @@ import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
+import {
+  closeMediaMessage,
+  sendPeerConfigFileMessage,
+  sendPeerQrCodeMessage,
+} from '../utils/peer-media';
 import { MainHandler } from './main.handler';
 
 // Состояние ожидания ввода описания для своих конфигов
@@ -87,20 +92,10 @@ export class PeerManageHandler {
 
   // Возврат с документа/QR в карточку конфига (кнопка «К конфигу» на файле)
   // Детали конфига уже выше — просто удаляем документ, без нового сообщения
-  async showPeerDetailsReply(ctx: Context, peerName: string) {
-    try {
-      await this.peersService.findPeer(peerName);
-
-      await ctx.deleteMessage().catch(() => {
-        // Игнорируем ошибку удаления
-      });
-      await ctx.answerCallbackQuery();
-    } catch {
-      await ctx.answerCallbackQuery({
-        text: 'Конфиг не найден',
-        show_alert: true,
-      });
-    }
+  // Возврат с документа/QR в карточку конфига — оставлен для сообщений,
+  // отправленных до перехода на общую кнопку `close_media`.
+  async showPeerDetailsReply(ctx: Context) {
+    await closeMediaMessage(ctx);
   }
 
   // Возврат после замены конфига — родитель удалён, удаляем документ и отправляем детали
@@ -245,65 +240,18 @@ export class PeerManageHandler {
   // === Показать QR-код конфига ===
 
   async showQrCode(ctx: Context, peerName: string) {
-    if (!ctx.chat) return;
-
-    try {
-      const startedAt = Date.now();
-      const qrBuffer = await this.peersService.generatePeerQrCode(peerName);
-      const generatedAt = Date.now();
-
-      const message = await ctx.replyWithPhoto(
-        new InputFile(qrBuffer, `${peerName}_qr.png`),
-        {
-          caption: `📷 *QR-код для конфига* \`${peerName}\`\n\n_Отсканируйте в приложении AmneziaVPN_`,
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
-        },
-      );
-      this.logger.log(
-        `QR ${peerName}: генерация ${generatedAt - startedAt}мс, ` +
-          `отправка в Telegram ${Date.now() - generatedAt}мс`,
-      );
-      await this.peersService.setQrMessageId(peerName, message.message_id);
-    } catch (error) {
-      this.logger.error(`Ошибка генерации QR: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка генерации QR-кода',
-        show_alert: true,
-      });
-    }
+    await sendPeerQrCodeMessage(ctx, this.peersService, peerName, this.logger);
   }
 
   // === Получить файл конфига ===
 
   async sendConfigFile(ctx: Context, peerName: string) {
-    if (!ctx.chat) return;
-
-    try {
-      const startedAt = Date.now();
-      const config = await this.peersService.getPeerConfigString(peerName);
-      const builtAt = Date.now();
-
-      const message = await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${peerName}.conf`),
-        {
-          caption: `📄 *Файл конфига* \`${peerName}\`\n\n_Импортируйте в приложение AmneziaVPN_`,
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToOwnPeerKeyboardReply(peerName),
-        },
-      );
-      this.logger.log(
-        `Файл ${peerName}: сборка конфига ${builtAt - startedAt}мс, ` +
-          `отправка в Telegram ${Date.now() - builtAt}мс`,
-      );
-      await this.peersService.setFileMessageId(peerName, message.message_id);
-    } catch (error) {
-      this.logger.error(`Ошибка отправки файла конфига: ${error}`);
-      await ctx.answerCallbackQuery({
-        text: 'Ошибка получения файла конфига',
-        show_alert: true,
-      });
-    }
+    await sendPeerConfigFileMessage(
+      ctx,
+      this.peersService,
+      peerName,
+      this.logger,
+    );
   }
 
   // === Замена конфига ===

@@ -56,6 +56,28 @@ export class FamilyCommandsRegistrar {
       );
     });
 
+    // QR-код конфига члена группы (f_qr = family_qr)
+    bot.callbackQuery(/^f_qr:(.+):(.+)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.familyHandler.showMemberQrCode(
+        ctx,
+        ctx.match[1],
+        ctx.match[2],
+      );
+    });
+
+    // Скачать файл конфига члена группы (f_gf = family_get_file)
+    bot.callbackQuery(/^f_gf:(.+):(.+)$/, async (ctx) => {
+      if (!(await ensureAdmin(ctx, isAdmin))) return;
+      await ctx.answerCallbackQuery();
+      await this.familyHandler.sendMemberConfigFile(
+        ctx,
+        ctx.match[1],
+        ctx.match[2],
+      );
+    });
+
     // Переключение статуса конфига (f_tp = family_toggle_peer)
     bot.callbackQuery(/^f_tp:(.+):(.+)$/, async (ctx) => {
       if (!(await ensureAdmin(ctx, isAdmin))) return;

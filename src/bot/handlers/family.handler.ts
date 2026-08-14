@@ -6,6 +6,11 @@ import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
+import {
+  sendPeerConfigFileMessage,
+  sendPeerQrCodeMessage,
+} from '../utils/peer-media';
+import { safeEditMessageText } from '../utils/safe-edit-message';
 
 // Состояние ожидания ввода для добавления члена группы
 // userId -> { promptMessageId: number, chatId: number }
@@ -105,14 +110,18 @@ export class FamilyHandler {
   async showAddMemberPrompt(ctx: Context) {
     if (!ctx.from || !ctx.chat) return;
 
-    const result = await ctx.editMessageText(BotUi.addMemberPrompt, {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.cancelKeyboard(),
-    });
+    const promptMessageId = await safeEditMessageText(
+      ctx,
+      BotUi.addMemberPrompt,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.cancelKeyboard(),
+      },
+    );
 
-    if (result && typeof result === 'object' && 'message_id' in result) {
+    if (promptMessageId != null) {
       this.setAwaitingInput(String(ctx.from.id), {
-        promptMessageId: result.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
     }
@@ -205,63 +214,65 @@ export class FamilyHandler {
     const adminId = String(ctx.from.id);
     const members = await this.familyService.getMembersByAdmin(adminId);
 
-    try {
-      await ctx.editMessageText(BotUi.familyMenuTitle(members.length), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.familyMenuKeyboard(members),
-      });
-    } catch {
-      await ctx.reply(BotUi.familyMenuTitle(members.length), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.familyMenuKeyboard(members),
-      });
-    }
+    await safeEditMessageText(ctx, BotUi.familyMenuTitle(members.length), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.familyMenuKeyboard(members),
+    });
   }
 
   async showMemberDetails(ctx: Context, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
 
+    // Загрузку данных отделяем от отрисовки: общий catch на ошибке
+    // редактирования показывал ложное «Член группы не найден» и уводил в меню.
+    let member;
+    let peers;
     try {
-      const member = await this.familyService.findMemberById(memberId);
-      const peers = await this.peersService.getPeersByTelegramId(
-        member.telegramId,
-      );
-
-      await ctx.editMessageText(BotUi.memberDetailsText(member, peers.length), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.memberDetailsKeyboard(member, peers),
-      });
+      member = await this.familyService.findMemberById(memberId);
+      peers = await this.peersService.getPeersByTelegramId(member.telegramId);
     } catch {
       await ctx.answerCallbackQuery({
         text: 'Член группы не найден',
         show_alert: true,
       });
       await this.showFamilyMenu(ctx);
+      return;
     }
+
+    await safeEditMessageText(
+      ctx,
+      BotUi.memberDetailsText(member, peers.length),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.memberDetailsKeyboard(member, peers),
+      },
+    );
   }
 
   async showMemberConfigs(ctx: Context, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
 
+    let member;
+    let peers;
     try {
-      const member = await this.familyService.findMemberById(memberId);
-
-      const peers = await this.peersService.getPeersByTelegramId(
-        member.telegramId,
-      );
-
-      const displayName = this.familyService.getDisplayName(member);
-
-      await ctx.editMessageText(BotUi.memberConfigsListTitle(displayName), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.memberConfigsListKeyboard(peers, member.id),
-      });
+      member = await this.familyService.findMemberById(memberId);
+      peers = await this.peersService.getPeersByTelegramId(member.telegramId);
     } catch {
       await ctx.answerCallbackQuery({
         text: 'Ошибка загрузки конфигов',
         show_alert: true,
       });
+      return;
     }
+
+    await safeEditMessageText(
+      ctx,
+      BotUi.memberConfigsListTitle(this.familyService.getDisplayName(member)),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.memberConfigsListKeyboard(peers, member.id),
+      },
+    );
   }
 
   private async checkOwnership(
@@ -312,27 +323,25 @@ export class FamilyHandler {
       return;
     }
 
-    try {
-      await ctx.editMessageText(BotUi.memberPeerDetailsText(peer), {
-        reply_markup: BotUi.memberPeerDetailsKeyboard(peer, member.id),
-        parse_mode: 'Markdown',
-      });
-    } catch (error) {
-      this.logger.error(`Ошибка editMessageText для ${peerName}: ${error}`);
-      // Попробуем отправить новое сообщение вместо редактирования
-      try {
-        await ctx.reply(BotUi.memberPeerDetailsText(peer), {
-          reply_markup: BotUi.memberPeerDetailsKeyboard(peer, member.id),
-          parse_mode: 'Markdown',
-        });
-      } catch (replyError) {
-        this.logger.error(`Ошибка reply для ${peerName}: ${replyError}`);
-        await ctx.answerCallbackQuery({
-          text: 'Ошибка отображения конфига',
-          show_alert: true,
-        });
-      }
-    }
+    await safeEditMessageText(ctx, BotUi.memberPeerDetailsText(peer), {
+      reply_markup: BotUi.memberPeerDetailsKeyboard(peer, member.id),
+      parse_mode: 'Markdown',
+    });
+  }
+
+  async showMemberQrCode(ctx: Context, peerName: string, memberId: string) {
+    if (!(await this.checkOwnership(ctx, memberId))) return;
+    await sendPeerQrCodeMessage(ctx, this.peersService, peerName, this.logger);
+  }
+
+  async sendMemberConfigFile(ctx: Context, peerName: string, memberId: string) {
+    if (!(await this.checkOwnership(ctx, memberId))) return;
+    await sendPeerConfigFileMessage(
+      ctx,
+      this.peersService,
+      peerName,
+      this.logger,
+    );
   }
 
   async toggleMemberPeer(ctx: Context, peerName: string, memberId: string) {
@@ -428,7 +437,7 @@ export class FamilyHandler {
 
     try {
       const member = await this.familyService.findMemberById(memberId);
-      await ctx.editMessageText(BotUi.changeDurationTitle, {
+      await safeEditMessageText(ctx, BotUi.changeDurationTitle, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.changeDurationKeyboard(peerName, member.id),
       });
@@ -481,16 +490,20 @@ export class FamilyHandler {
 
     try {
       const member = await this.familyService.findMemberById(memberId);
-      const result = await ctx.editMessageText(BotUi.editNamePrompt(member), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelEditNameKeyboard(member.id),
-      });
+      const promptMessageId = await safeEditMessageText(
+        ctx,
+        BotUi.editNamePrompt(member),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.cancelEditNameKeyboard(member.id),
+        },
+      );
 
       // Сохраняем ID prompt-сообщения для последующего удаления
-      if (result && typeof result === 'object' && 'message_id' in result) {
+      if (promptMessageId != null) {
         this.setAwaitingNameEdit(String(ctx.from!.id), {
           memberId: member.id,
-          promptMessageId: result.message_id,
+          promptMessageId,
           chatId: ctx.chat.id,
         });
       }
@@ -577,7 +590,8 @@ export class FamilyHandler {
     try {
       const peer = await this.peersService.findPeer(peerName);
       const member = await this.familyService.findMemberById(memberId);
-      const result = await ctx.editMessageText(
+      const promptMessageId = await safeEditMessageText(
+        ctx,
         BotUi.editDescriptionPrompt(peer),
         {
           parse_mode: 'Markdown',
@@ -589,11 +603,11 @@ export class FamilyHandler {
       );
 
       // Сохраняем ID prompt-сообщения для последующего удаления
-      if (result && typeof result === 'object' && 'message_id' in result) {
+      if (promptMessageId != null) {
         this.setAwaitingDescriptionEdit(String(ctx.from!.id), {
           peerName,
           memberId: member.id,
-          promptMessageId: result.message_id,
+          promptMessageId,
           chatId: ctx.chat.id,
         });
       }
@@ -698,10 +712,14 @@ export class FamilyHandler {
       const member = await this.familyService.findMemberById(memberId);
       const displayName = this.familyService.getDisplayName(member);
 
-      await ctx.editMessageText(BotUi.memberCreateConfigTitle(displayName), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.memberCreateConfigKeyboard(member.id),
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.memberCreateConfigTitle(displayName),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.memberCreateConfigKeyboard(member.id),
+        },
+      );
     } catch {
       await ctx.answerCallbackQuery({
         text: 'Член группы не найден',
@@ -728,7 +746,7 @@ export class FamilyHandler {
       const displayName = this.familyService.getDisplayName(member);
 
       // Показываем сообщение о создании
-      await ctx.editMessageText('⏳ *Создаю конфигурацию...*', {
+      await safeEditMessageText(ctx, '⏳ *Создаю конфигурацию...*', {
         parse_mode: 'Markdown',
       });
 
@@ -773,7 +791,8 @@ export class FamilyHandler {
         /([_*[\]()~`>#+\-=|{}.!\\])/g,
         '\\$1',
       );
-      await ctx.editMessageText(
+      await safeEditMessageText(
+        ctx,
         `✅ *Конфиг создан для ${escapedName}*\n\n` +
           `🏷 Имя: \`${peer.name}\`\n` +
           `🌐 IP: \`${peer.ip}\`\n` +
@@ -788,7 +807,7 @@ export class FamilyHandler {
     } catch (error) {
       this.logger.error(`Ошибка создания конфига: ${error}`);
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.editMessageText(`❌ *Ошибка:* ${errorMsg}`, {
+      await safeEditMessageText(ctx, `❌ *Ошибка:* ${errorMsg}`, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToMemberDetailsKeyboard(member.id),
       });
