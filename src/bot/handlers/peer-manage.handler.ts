@@ -9,6 +9,7 @@ import {
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
 import { MainHandler } from './main.handler';
+import { MtprotoService } from 'src/mtproto/mtproto.service';
 
 // Состояние ожидания ввода описания для своих конфигов
 // userId -> { peerName: string, promptMessageId: number, chatId: number }
@@ -24,6 +25,7 @@ export class PeerManageHandler {
   constructor(
     private readonly peersService: PeersService,
     private readonly mainHandler: MainHandler,
+    private readonly mtprotoService: MtprotoService,
   ) {}
 
   isAwaitingDescriptionEdit(userId: string): boolean {
@@ -78,7 +80,11 @@ export class PeerManageHandler {
       const peer = await this.peersService.findPeer(peerName);
 
       await safeEditMessageText(ctx, BotUi.peerDetailsText(peer, isAdmin), {
-        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
+        reply_markup: BotUi.peerDetailsKeyboard(
+          peer,
+          isAdmin,
+          this.mtprotoService.enabled,
+        ),
         parse_mode: 'Markdown',
       });
     } catch {
@@ -110,7 +116,11 @@ export class PeerManageHandler {
       await ctx.deleteMessage().catch(() => {});
 
       await ctx.reply(BotUi.peerDetailsText(peer, isAdmin), {
-        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
+        reply_markup: BotUi.peerDetailsKeyboard(
+          peer,
+          isAdmin,
+          this.mtprotoService.enabled,
+        ),
         parse_mode: 'Markdown',
       });
     } catch {
@@ -252,6 +262,42 @@ export class PeerManageHandler {
       peerName,
       this.logger,
     );
+  }
+
+  // === Прокси для Telegram ===
+
+  /**
+   * Ссылка общая для всех клиентов (mtg держит один секрет), поэтому право
+   * на неё перепроверяется здесь, а не только скрытием кнопки: карточка конфига
+   * могла остаться в чате с тех пор, когда подписка была активна.
+   */
+  async showTelegramProxy(ctx: Context, peerName: string) {
+    const link = this.mtprotoService.getProxyLink();
+
+    let allowed = false;
+    if (link) {
+      try {
+        const peer = await this.peersService.findPeer(peerName);
+        const expired = peer.expiresAt ? new Date() > peer.expiresAt : false;
+        allowed = !peer.paused && !expired;
+      } catch {
+        this.logger.warn(`Прокси: конфиг ${peerName} не найден`);
+      }
+    }
+
+    if (!link || !allowed) {
+      const fallback = BotUi.telegramProxyUnavailable(peerName);
+      await safeEditMessageText(ctx, fallback.text, {
+        reply_markup: fallback.keyboard,
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+
+    await safeEditMessageText(ctx, BotUi.telegramProxyText(link), {
+      reply_markup: BotUi.telegramProxyKeyboard(link, peerName),
+      parse_mode: 'Markdown',
+    });
   }
 
   // === Замена конфига ===

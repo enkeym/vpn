@@ -9,6 +9,7 @@ import {
   savingsPercent,
   type PaidDuration,
 } from 'src/payment/pricing';
+import type { IMtprotoProxyLink } from 'src/mtproto/mtproto.service';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
@@ -595,7 +596,14 @@ export const BotUi = {
     return keyboard;
   },
 
-  peerDetailsKeyboard: (peer: TPeer, isAdmin: boolean = false) => {
+  // proxyAvailable — MTProto-прокси настроен на сервере (MtprotoService.enabled).
+  // Флаг передаётся снаружи, а не читается из env здесь: доступность прокси —
+  // состояние сервиса, и UI не должен решать это за него.
+  peerDetailsKeyboard: (
+    peer: TPeer,
+    isAdmin: boolean = false,
+    proxyAvailable: boolean = false,
+  ) => {
     const expired = isExpired(peer);
 
     // Клавиатура собирается рядами, пустые ряды отсеиваются на сборке:
@@ -605,6 +613,14 @@ export const BotUi = {
       [{ text: '📷 QR-код', data: `show_qr:${peer.name}` }],
       [{ text: '📄 Получить файл', data: `get_config_file:${peer.name}` }],
     ];
+
+    // Прокси — бонус к активной подписке: истёкшему или поставленному на паузу
+    // конфигу кнопку не показываем.
+    if (proxyAvailable && !expired && !peer.paused) {
+      rows.push([
+        { text: '✈️ Прокси для Telegram', data: `tg_proxy:${peer.name}` },
+      ]);
+    }
 
     // Кнопка «Продлить» — если конфиг истёк или на паузе
     if (peer.paused || expired) {
@@ -653,6 +669,40 @@ export const BotUi = {
 
     return buildKeyboard(rows);
   },
+
+  // === Прокси для Telegram (MTProto) ===
+
+  telegramProxyText: (link: IMtprotoProxyLink) =>
+    '✈️ *Прокси для Telegram*\n\n' +
+    'Отдельный канал только для Telegram: мессенджер соединяется с нашим ' +
+    'сервером напрямую, VPN при этом включать не нужно. Остальной трафик ' +
+    'устройства через прокси *не идёт* — для него по-прежнему нужен конфиг.\n\n' +
+    '👇 Нажмите кнопку — Telegram сам предложит подключить прокси.\n\n' +
+    'Если кнопка не сработала, скопируйте ссылку и откройте её:\n' +
+    `\`${link.deepLink}\`\n\n` +
+    `⚙️ Сервер: \`${link.host}:${link.port}\`\n` +
+    (link.fakeTlsDomain
+      ? `🔒 Соединение маскируется под TLS-сеанс с \`${link.fakeTlsDomain}\`\n`
+      : '') +
+    '\n_Прокси доступен, пока активна подписка._',
+
+  telegramProxyKeyboard: (link: IMtprotoProxyLink, peerName: string) =>
+    new InlineKeyboard()
+      .url('✈️ Подключить прокси', link.shareUrl)
+      .row()
+      .text('« К конфигу', `manage_peer:${peerName}`),
+
+  /** Прокси выключен на сервере либо подписка по конфигу уже неактивна */
+  telegramProxyUnavailable: (peerName: string) => ({
+    text:
+      '✈️ *Прокси для Telegram*\n\n' +
+      'Сейчас прокси недоступен — он либо отключён, либо подписка по этому ' +
+      'конфигу неактивна. Продлите конфиг или попробуйте позже.',
+    keyboard: new InlineKeyboard().text(
+      '« К конфигу',
+      `manage_peer:${peerName}`,
+    ),
+  }),
 
   // === Приветственные сообщения ===
 

@@ -73,3 +73,33 @@ services:
       - 8.8.8.8
 
     stop_grace_period: 30s
+
+  # MTProto-прокси для Telegram: отдельный от awg0 канал, проксирует только
+  # трафик мессенджера и туннеля не касается. Ссылку клиенту отдаёт бот
+  # (MtprotoService), сюда приходит уже подключение от Telegram.
+  #
+  # Под профилем — обычным `up` не поднимается, включается явно:
+  #   docker compose -p vpn-bot --profile mtproto up -d
+  #
+  # network_mode: host по той же причине, что у vpn-bot: секция ports в
+  # host-режиме не работает, контейнер сразу слушает MTPROTO_PORT на хосте,
+  # и порт нужно открыть в фаерволе вручную — см. docs/scaling.md.
+  mtg:
+    image: nineseconds/mtg:2
+    container_name: vpn-mtg
+    restart: unless-stopped
+    profiles: ['mtproto']
+    network_mode: host
+
+    command:
+      - simple-run
+      - 0.0.0.0:${MTPROTO_PORT:-8443}
+      - ${MTPROTO_SECRET}
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+    stop_grace_period: 10s

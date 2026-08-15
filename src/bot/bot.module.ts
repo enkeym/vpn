@@ -11,6 +11,7 @@ import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
 import { AutopayHandler } from './handlers/autopay.handler';
 import { PaymentModule } from 'src/payment/payment.module';
+import { MtprotoModule } from 'src/mtproto/mtproto.module';
 import { InvoiceService } from './invoice/invoice.service';
 import { MainMenuService } from './menu/main-menu.service';
 import { MainMenuAnchorStore } from './menu/main-menu-anchor.store';
@@ -23,6 +24,7 @@ import { AdminCommandsRegistrar } from './registrars/admin-commands.registrar';
     PeersModule,
     FamilyModule,
     BlockedModule,
+    MtprotoModule,
     forwardRef(() => PaymentModule),
   ],
   providers: [
