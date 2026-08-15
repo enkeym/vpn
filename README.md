@@ -129,6 +129,72 @@ Header protection использует `S1..S4` как nonce, поэтому в�
 > влияет — файл читается как источник истины. Чтобы применить новые, удалите
 > `configs/awg0.conf` (все выданные awg-конфиги придётся перевыпустить).
 
+## Прокси для Telegram (MTProto)
+
+Отдельный от `awg0` канал: проксирует только трафик Telegram, весь остальной
+трафик через него не идёт. Даёт кнопку «✈️ Прокси для Telegram» в меню
+конфига — показывается только клиентам с активной (не истёкшей и не на
+паузе) подпиской. Полезен как запасной канал: Telegram остаётся доступен,
+даже если VPN-клиент не поднят.
+
+Демон — [`mtg`](https://github.com/9seconds/mtg) v2 в faketls-режиме (маскирует
+соединение под TLS-сеанс с обычным сайтом). Логику ссылки и валидацию env
+берёт на себя `MtprotoService` (`src/mtproto/mtproto.service.ts`).
+
+> ⚠️ mtg 2.x принимает ровно один секрет на инстанс. Ссылка получается общая
+> для всех клиентов, отозвать доступ у одного нельзя — смена `MTPROTO_SECRET`
+> отключает сразу всех. Точечный per-user отзыв потребовал бы другого демона.
+
+| Переменная | Назначение |
+|---|---|
+| `MTPROTO_ENABLED` | `true` — показывать кнопку и отдавать ссылку (по умолчанию `false`) |
+| `MTPROTO_SECRET` | секрет faketls, см. генерацию ниже |
+| `MTPROTO_PORT` | TCP-порт прокси (по умолчанию `8443`) |
+| `MTPROTO_HOST` | хост в выдаваемой ссылке; пусто — берётся `WG_HOST` |
+
+### Включение
+
+Сервис `mtg` вынесен в отдельный docker-compose профиль (`mtproto`) — обычным
+`up` не поднимается, только явно.
+
+```bash
+make mtproto-up
+```
+
+Генерирует `MTPROTO_SECRET` в `.env`, только если его там ещё нет (повторный
+запуск существующий секрет не трогает — иначе у уже выданных ссылок сменился
+бы адрес), выставляет `MTPROTO_ENABLED=true`, поднимает `mtg` и пересоздаёт
+`vpn-bot`, чтобы он подхватил новый `.env`. Домен маскировки по умолчанию —
+`www.cloudflare.com`, переопределяется: `make mtproto-up MTPROTO_DOMAIN=example.com`.
+
+Порт при этом не открывает — при `network_mode: host` docker его не
+пробрасывает (та же логика, что у `AWG_PUBLIC_PORT`, см. `docs/scaling.md`),
+открыть нужно вручную:
+
+```bash
+sudo ufw allow 8443/tcp
+```
+
+Логи прокси — `make mtproto-logs`, остановить — `make mtproto-down`.
+
+Вручную, шаг за шагом (то же самое, что делает `make mtproto-up`):
+
+```bash
+docker run --rm nineseconds/mtg:2 generate-secret --hex www.cloudflare.com
+# вывод → MTPROTO_SECRET в .env, MTPROTO_ENABLED=true
+docker compose -p vpn-bot --profile mtproto up -d
+docker compose -p vpn-bot up -d --force-recreate vpn-bot
+```
+
+Проверить, что демон поднялся и слушает порт:
+
+```bash
+docker compose -p vpn-bot --profile mtproto logs mtg
+```
+
+Кнопка в боте появится сразу — `MtprotoService` собирает ссылку при старте
+приложения из `.env`, отдельного действия в БД не требуется.
+
 ## Project setup
 
 ```bash
