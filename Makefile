@@ -33,7 +33,7 @@ MTPROTO_DOMAIN ?= www.cloudflare.com
 # выданных клиентов), включает MTPROTO_ENABLED и поднимает mtg. vpn-bot
 # пересоздаётся, чтобы подхватить новый .env — docker compose up без
 # --force-recreate не гарантированно перечитывает env_file на лету.
-mtproto-up:
+mtp-up:
 	@if ! grep -qE '^MTPROTO_SECRET=.+' .env 2>/dev/null; then \
 		echo "MTPROTO_SECRET не задан — генерирую (домен маскировки: $(MTPROTO_DOMAIN))"; \
 		SECRET=$$(docker run --rm nineseconds/mtg:2 generate-secret --hex $(MTPROTO_DOMAIN)); \
@@ -59,8 +59,8 @@ mtproto-up:
 	docker compose -p $(NAME) up -d --force-recreate vpn-bot
 	@echo "Готово. Логи прокси: make mtproto-logs"
 
-mtproto-down:
+mtp-down:
 	docker compose -p $(NAME) --profile mtproto stop mtg
 
-mtproto-logs:
+mtp-logs:
 	docker compose -p $(NAME) --profile mtproto logs -f mtg
