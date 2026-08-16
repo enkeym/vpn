@@ -97,6 +97,7 @@ services:
       - ${MTPROTO_SECRET}
       - --debug
       - --prefer-ip=prefer-ipv4
+      - --timeout=120s
 
     logging:
       driver: json-file
