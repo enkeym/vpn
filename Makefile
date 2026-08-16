@@ -24,9 +24,14 @@ clean:
 	docker image prune -af --filter "label=com.docker.compose.project=$(NAME)"
 	docker volume prune -f --filter "label=com.docker.compose.project=$(NAME)"
 
-# Домен, под TLS которого маскируется прокси (faketls) — переопределяется:
-# make mtproto-up MTPROTO_DOMAIN=example.com
-MTPROTO_DOMAIN ?= www.cloudflare.com
+# Домен, под TLS которого маскируется прокси (faketls). Дефолт берётся из
+# .env (MTPROTO_DOMAIN), чтобы make mtp-up без аргументов помнил последний
+# использованный домен, а не тихо откатывался на cloudflare.com. Разовое
+# переопределение: make mtp-up MTPROTO_DOMAIN=example.com
+MTPROTO_DOMAIN ?= $(shell grep -E '^MTPROTO_DOMAIN=.+' .env 2>/dev/null | cut -d= -f2-)
+ifeq ($(strip $(MTPROTO_DOMAIN)),)
+MTPROTO_DOMAIN := www.cloudflare.com
+endif
 
 # Генерирует MTPROTO_SECRET, только если его ещё нет в .env (повторный запуск
 # существующий секрет не трогает — иначе пересоздание меняло бы ссылку у уже
@@ -34,6 +39,11 @@ MTPROTO_DOMAIN ?= www.cloudflare.com
 # пересоздаётся, чтобы подхватить новый .env — docker compose up без
 # --force-recreate не гарантированно перечитывает env_file на лету.
 mtp-up:
+	@if grep -qE '^MTPROTO_DOMAIN=' .env 2>/dev/null; then \
+		sed -i "s|^MTPROTO_DOMAIN=.*|MTPROTO_DOMAIN=$(MTPROTO_DOMAIN)|" .env; \
+	else \
+		printf '\nMTPROTO_DOMAIN=%s\n' "$(MTPROTO_DOMAIN)" >> .env; \
+	fi
 	@if ! grep -qE '^MTPROTO_SECRET=.+' .env 2>/dev/null; then \
 		echo "MTPROTO_SECRET не задан — генерирую (домен маскировки: $(MTPROTO_DOMAIN))"; \
 		SECRET=$$(docker run --rm nineseconds/mtg:2 generate-secret --hex $(MTPROTO_DOMAIN)); \
