@@ -141,6 +141,13 @@ export const peers = sqliteTable(
     publicKey: text('publicKey').notNull(),
     privateKey: text('privateKey').notNull(),
     presharedKey: text('presharedKey'),
+    /**
+     * UUID клиента VLESS (Xray) — второй канал доступа рядом с AmneziaWG.
+     * Nullable: конфиги, созданные до появления Xray, получают его бэкфиллом
+     * в PeersService.backfillVlessUuid при старте. Он же служит токеном в URL
+     * подписки (/sub/:uuid) — отдельный секрет не заводим.
+     */
+    vlessUuid: text('vlessUuid').unique(),
     ip: text('ip').notNull().unique(),
     endpoint: text('endpoint').notNull(),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),

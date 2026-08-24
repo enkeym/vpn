@@ -82,7 +82,23 @@ RUN git init /src/amneziawg-tools \
             WITH_SYSTEMDUNITS=no install
 
 # ============================================
-# Stage 5: Production image
+# Stage 5: Xray-core (VLESS: Reality + WS за CDN)
+# ============================================
+# Второй канал доступа рядом с AmneziaWG: протоколы блокируются по-разному, и
+# клиент подключается тем, что живо на его сети. Xray-core — чистый Go,
+# статически слинкован, работает на Alpine без glibc. Версия закреплена (ARG),
+# бампать тегом из https://github.com/XTLS/Xray-core/releases.
+FROM base AS xray-build
+ARG XRAY_VERSION=v26.3.27
+WORKDIR /xray
+RUN apk add --no-cache curl unzip && \
+    curl -fsSL -o xray.zip \
+      "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" && \
+    unzip xray.zip -d /xray/out && \
+    chmod +x /xray/out/xray
+
+# ============================================
+# Stage 6: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -99,6 +115,12 @@ RUN apk add --no-cache \
     sudo \
     # awg-quick — bash-скрипт
     bash \
+    # nginx — SNI-разводчик публичного порта между Reality и CDN-каналом,
+    # он же терминирует TLS сертификатом Cloudflare Origin CA.
+    # Запускается только при заданном XRAY_DOMAIN (см. docker-entrypoint.sh).
+    nginx \
+    # stream + ssl_preread в Alpine отдельным пакетом — без него разводки по SNI нет.
+    nginx-mod-stream \
     # Для healthcheck
     wget \
     # Для отладки (опционально, можно убрать)
@@ -113,11 +135,26 @@ COPY --from=awg-build /out/ /
 # узнали бы об этом только на старте контейнера в проде.
 RUN awg --version && command -v awg-quick >/dev/null
 
+# Бинарник Xray-core + geo-данные (второй канал: VLESS Reality/WS).
+# Без него приложение стартует и AmneziaWG работает как раньше — XrayService
+# просто не поднимется и напишет об этом в лог (см. isBinaryAvailable).
+COPY --from=xray-build /xray/out/xray /usr/bin/xray
+COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
+COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat
+ENV XRAY_LOCATION_ASSET=/usr/share/xray
+RUN xray version >/dev/null
+
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/drizzle ./drizzle
+
+# nginx: шаблон конфига (домен и порты подставляет entrypoint из .env) и сам
+# entrypoint, который поднимает nginx перед стартом NestJS.
+COPY docker/nginx.conf /etc/nginx/nginx.conf.template
+COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Создаём директории для данных
 RUN mkdir -p configs data
@@ -126,13 +163,17 @@ RUN mkdir -p configs data
 LABEL maintainer="vpn-bot"
 LABEL version="1.0"
 
-# Порты
+# Порты. EXPOSE в network_mode: host носит справочный характер — контейнер и
+# так слушает порты хоста, открывать их нужно в фаерволе VPS (см. README).
 EXPOSE 51821/udp
+# XRAY_REALITY_PORT: с заданным XRAY_DOMAIN его слушает nginx и разводит по SNI
+# между Reality и CDN-каналом, без домена — сам Xray.
+EXPOSE 443/tcp
 EXPOSE 3000
 
 # Health check внутри контейнера
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD wget -q --spider http://localhost:3000/health || exit 1
 
-# Запуск приложения
-CMD ["node", "dist/src/main.js"]
+# Запуск: nginx (если задан XRAY_DOMAIN) + NestJS — см. docker/docker-entrypoint.sh
+CMD ["/docker-entrypoint.sh"]

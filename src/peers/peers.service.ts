@@ -22,7 +22,9 @@ import {
   sql,
 } from 'drizzle-orm';
 import { AwgService } from 'src/wg/awg.service';
-import { randomBytes } from 'node:crypto';
+import { XrayService } from 'src/xray/xray.service';
+import type { IXrayClient } from 'src/xray/xray.service';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import type { DiscountEligibleDuration } from 'src/payment/pricing';
 import { Mutex } from 'async-mutex';
@@ -69,6 +71,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   constructor(
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly tunnel: AwgService,
+    private readonly xrayService: XrayService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -90,6 +93,10 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    */
   async onApplicationBootstrap() {
     await this.syncWgWithDb();
+    // Порядок важен: сначала выдаём vlessUuid тем пирам, что появились до
+    // Xray, иначе они не попадут в список клиентов и VLESS у них не заработает.
+    await this.backfillVlessUuid();
+    await this.syncXrayWithDb();
   }
 
   /**
@@ -228,6 +235,23 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     return this.tunnel.isEnabled();
   }
 
+  /**
+   * Поднят ли второй канал (VLESS через Xray). Бот скрывает кнопки VLESS,
+   * если процесс не запустился: ссылку собрать будет не из чего.
+   */
+  isXrayAvailable(): boolean {
+    return this.xrayService.isEnabled();
+  }
+
+  /**
+   * Есть ли URL подписки. Требует домена (XRAY_DOMAIN): без него /sub негде
+   * опубликовать, и клиентам остаются только прямые vless://-ссылки — кнопки
+   * «QR для sing-box» в таком режиме бессмысленны.
+   */
+  isSubscriptionAvailable(): boolean {
+    return this.xrayService.isCdnEnabled();
+  }
+
   private async syncWgWithDb() {
     let lastError: Error | null = null;
 
@@ -286,6 +310,66 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
     this.logger.error(
       `КРИТИЧЕСКАЯ ОШИБКА: Синхронизация WG с БД провалена после ${SYNC_MAX_RETRIES} попыток. Уведомление отправлено админам.`,
+    );
+  }
+
+  /**
+   * Синхронизация клиентов Xray (VLESS: CDN + Reality) с БД: собирает активных
+   * (не на паузе) пиров и отдаёт их XrayService. Зеркало syncWgWithDb, но
+   * ошибки наружу не пробрасываем — сбой второго канала не должен ронять ни
+   * старт бота, ни создание/удаление пира: AmneziaWG при этом остаётся живым.
+   */
+  private async syncXrayWithDb(): Promise<void> {
+    if (!this.xrayService.isEnabled()) return;
+
+    try {
+      const activePeers = await this.db.query.peers.findMany({
+        where: eq(schema.peers.paused, false),
+        columns: { name: true, vlessUuid: true },
+      });
+
+      const clients: IXrayClient[] = activePeers
+        .filter(
+          (peer): peer is { name: string; vlessUuid: string } =>
+            peer.vlessUuid !== null,
+        )
+        .map((peer) => ({ name: peer.name, uuid: peer.vlessUuid }));
+
+      await this.xrayService.syncClients(clients);
+    } catch (error) {
+      this.logger.error(
+        `Ошибка синхронизации Xray с БД: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Пирам, созданным до появления Xray, выдаём vlessUuid — по одному UPDATE на
+   * пир, потому что значение у каждого своё. Разовая операция: после неё
+   * выборка пустая и цикл не выполняется.
+   */
+  private async backfillVlessUuid(): Promise<void> {
+    const peersWithoutUuid = await this.db.query.peers.findMany({
+      columns: { name: true },
+      where: isNull(schema.peers.vlessUuid),
+    });
+
+    if (peersWithoutUuid.length === 0) return;
+
+    for (const peer of peersWithoutUuid) {
+      await this.db
+        .update(schema.peers)
+        .set({ vlessUuid: randomUUID() })
+        .where(eq(schema.peers.name, peer.name));
+      this.invalidatePeerCache(peer.name);
+    }
+
+    this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
+    this.cacheService.clear(CACHE_NAMESPACES.PEERS_BY_USER);
+    this.logger.log(
+      `Выдан vlessUuid для ${peersWithoutUuid.length} конфигов без VLESS`,
     );
   }
 
@@ -439,6 +523,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         publicKey: credentials.publicKey,
         privateKey: credentials.privateKey,
         presharedKey: credentials.presharedKey,
+        // Второй канал выдаётся сразу всем: один и тот же конфиг даёт и .conf
+        // для AmneziaVPN, и VLESS-ссылки — пользователь выбирает то, что живо
+        // на его сети. UUID генерится даже при выключенном Xray: включённый
+        // позже Xray подхватит пира без бэкфилла.
+        vlessUuid: randomUUID(),
         ip: credentials.ip,
         endpoint: `${tunnel.host}:${tunnel.publicPort}`,
         paused: false,
@@ -477,6 +566,10 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
             String(dto.telegramId),
           );
         }
+
+        // Добавляем нового клиента в Xray (ошибки гасятся внутри: конфиг уже
+        // создан и работает по AmneziaWG, сбой второго канала его не отменяет).
+        await this.syncXrayWithDb();
 
         return { peer: newPeer, config };
       } catch (error) {
@@ -524,6 +617,23 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     return peer;
   }
 
+  /**
+   * Используется публичным эндпоинтом подписки (src/subscription) — токен в URL
+   * это сам vlessUuid. Пир на паузе подписку не отдаёт: его всё равно нет
+   * среди клиентов Xray, и выдавать ему рабочий на вид конфиг — вводить в заблуждение.
+   */
+  async findPeerByVlessUuid(vlessUuid: string): Promise<TPeerSelect> {
+    const peer = await this.db.query.peers.findFirst({
+      where: eq(schema.peers.vlessUuid, vlessUuid),
+    });
+
+    if (!peer || peer.paused) {
+      throw new NotFoundException('Конфиг не найден');
+    }
+
+    return peer;
+  }
+
   async updatedPeer(peerName: string) {
     const peer = await this.findPeer(peerName);
     const shouldPause = !peer.paused;
@@ -555,6 +665,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
           ip: peer.ip,
         });
       }
+
+      // Пауза/возобновление меняет состав активных пиров — второй канал
+      // отключается/включается вместе с туннелем, иначе пир на паузе продолжит
+      // ходить через VLESS.
+      await this.syncXrayWithDb();
     } catch (error) {
       this.logger.error(
         `Ошибка обновления WG Для ${peerName}, отмена изменений`,
@@ -593,6 +708,10 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         this.logger.error(`Не удалось удалить пир из туннеля: ${error}`);
       }
     }
+
+    // Убираем клиента из Xray — без этого VLESS-ссылка осталась бы рабочей
+    // после удаления конфига.
+    await this.syncXrayWithDb();
 
     return { message: `Конфиг ${peerName} успешно удален` };
   }
@@ -637,6 +756,9 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         this.logger.error(`Не удалось удалить пиры из туннеля: ${error}`);
       }
     }
+
+    // Один вызов на весь батч: XrayService сам считает разницу наборов.
+    await this.syncXrayWithDb();
   }
 
   /** Расширенная статистика для админ-панели. */
@@ -968,6 +1090,8 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       }
       this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
 
+      await this.syncXrayWithDb();
+
       this.logger.log(
         `Деактивировано по истечению срока: ${expiredPeers.length} конфигов`,
       );
@@ -1126,6 +1250,8 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       }
       this.cacheService.clear(CACHE_NAMESPACES.ALL_PEERS);
 
+      await this.syncXrayWithDb();
+
       this.logger.log(
         `Удалено конфигов по retention policy: ${toDelete.length}`,
       );
@@ -1144,8 +1270,13 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
   async refreshPeerTrafficStats(): Promise<number> {
     const runtimeStats = await this.tunnel.getPeerRuntimeStats();
+    // Трафик VLESS учитывается наравне с туннельным: иначе у клиента,
+    // который пользуется только вторым каналом, счётчики стоят на нуле,
+    // и он попадает в «давно не используется» (handleInactiveActivePeers) при
+    // живом конфиге.
+    const xrayStats = await this.xrayService.getTrafficStats();
 
-    if (runtimeStats.size === 0) {
+    if (runtimeStats.size === 0 && xrayStats.size === 0) {
       return 0;
     }
 
@@ -1165,23 +1296,32 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     const affectedTelegramIds = new Set<string>();
 
     for (const peer of activePeers) {
-      const stats = runtimeStats.get(peer.publicKey);
-      if (!stats) continue;
+      const tunnelStats = runtimeStats.get(peer.publicKey);
+      const vlessStats = xrayStats.get(peer.name);
+      if (!tunnelStats && !vlessStats) continue;
+
+      // Оба счётчика кумулятивные с момента старта своего процесса, поэтому
+      // складываются напрямую — это две части трафика одного пира.
+      const rxBytes = (tunnelStats?.rxBytes ?? 0) + (vlessStats?.downlink ?? 0);
+      const txBytes = (tunnelStats?.txBytes ?? 0) + (vlessStats?.uplink ?? 0);
 
       const previousTotal = peer.rxBytes + peer.txBytes;
-      const currentTotal = stats.rxBytes + stats.txBytes;
+      const currentTotal = rxBytes + txBytes;
       const hasNewTraffic = currentTotal > previousTotal;
+      const latestHandshakeAt = tunnelStats?.latestHandshakeAt ?? null;
       const hasNewHandshake =
-        stats.latestHandshakeAt &&
+        latestHandshakeAt &&
         (!peer.lastHandshakeAt ||
-          stats.latestHandshakeAt.getTime() > peer.lastHandshakeAt.getTime());
+          latestHandshakeAt.getTime() > peer.lastHandshakeAt.getTime());
 
       await this.db
         .update(schema.peers)
         .set({
-          rxBytes: stats.rxBytes,
-          txBytes: stats.txBytes,
-          lastHandshakeAt: stats.latestHandshakeAt,
+          rxBytes,
+          txBytes,
+          // Хендшейк бывает только у WireGuard — у VLESS аналога нет. Если
+          // туннель по этому пиру ничего не сказал, поле не трогаем.
+          lastHandshakeAt: tunnelStats ? latestHandshakeAt : undefined,
           lastTrafficAt:
             hasNewTraffic || hasNewHandshake ? new Date() : undefined,
           inactivityNotifiedAt:
@@ -1431,6 +1571,10 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       usedIps.delete(oldPeer.ip);
 
       const credentials = await tunnel.generateClientCredentials(usedIps);
+      // Замена конфига обязана обесценить старые выданные доступы целиком:
+      // без ротации vlessUuid старая VLESS-ссылка и URL подписки продолжали бы
+      // работать, хотя WireGuard-ключи уже сменены.
+      const newVlessUuid = randomUUID();
 
       // Обновляем запись в БД с новыми ключами, но сохраняем срок
       const [updatedPeer] = await this.db
@@ -1439,6 +1583,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
           publicKey: credentials.publicKey,
           privateKey: credentials.privateKey,
           presharedKey: credentials.presharedKey,
+          vlessUuid: newVlessUuid,
           ip: credentials.ip,
           endpoint: `${tunnel.host}:${tunnel.publicPort}`,
           paused: false, // Активируем конфиг при замене
@@ -1473,6 +1618,9 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
           credentials,
         );
 
+        // Старый uuid выкидывается из Xray, новый добавляется — одним вызовом.
+        await this.syncXrayWithDb();
+
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
         return { peer: updatedPeer, config };
       } catch (error) {
@@ -1484,6 +1632,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
             publicKey: oldPeer.publicKey,
             privateKey: oldPeer.privateKey,
             presharedKey: oldPeer.presharedKey,
+            vlessUuid: oldPeer.vlessUuid,
             ip: oldPeer.ip,
             endpoint: oldPeer.endpoint,
             paused: oldPeer.paused,
@@ -1534,6 +1683,121 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     const config = await this.getPeerConfigString(peerName);
 
     return QRCode.toBuffer(config, {
+      type: 'png',
+      width: 512,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+  }
+
+  /** vlessUuid есть у всех пиров (см. backfillVlessUuid) — но тип его допускает null. */
+  private requireVlessUuid(peer: TPeerSelect): string {
+    if (!peer.vlessUuid) {
+      throw new InternalServerErrorException(
+        `У конфига ${peer.name} отсутствует vlessUuid`,
+      );
+    }
+    return peer.vlessUuid;
+  }
+
+  /**
+   * URL подписки. Отдаётся по тому же домену, что и CDN-канал: /sub на NestJS
+   * проксирует reverse-proxy на хосте (см. README). Без домена подписку
+   * публиковать негде — остаются только прямые vless://-ссылки, поэтому null.
+   */
+  private buildSubscriptionUrl(vlessUuid: string): string | null {
+    const { domain, port } = this.xrayService.getPublicParams();
+    if (!domain) return null;
+
+    const origin =
+      port === 443 ? `https://${domain}` : `https://${domain}:${port}`;
+    return `${origin}/sub/${vlessUuid}`;
+  }
+
+  /**
+   * Тот же /sub, но с полным конфигом (log+dns+inbounds) — для официальных
+   * sing-box-клиентов (SFA/SFI/SFM): они, в отличие от Hiddify/NekoBox, не
+   * достраивают TUN/DNS сами.
+   */
+  private buildFullSubscriptionUrl(vlessUuid: string): string | null {
+    const url = this.buildSubscriptionUrl(vlessUuid);
+    return url ? `${url}/full` : null;
+  }
+
+  /**
+   * Текст со всеми способами подключения по VLESS: ссылка-подписка (в ней оба
+   * канала и авто-переключение) плюс те же каналы отдельными ссылками — на
+   * случай, когда подписка в клиент не добавляется или нужно переключить канал
+   * вручную. Второй канал доступа рядом с .conf для AmneziaVPN.
+   */
+  async getPeerVlessText(peerName: string): Promise<string> {
+    const peer = await this.findPeer(peerName);
+    const vlessUuid = this.requireVlessUuid(peer);
+
+    const subscriptionUrl = this.buildSubscriptionUrl(vlessUuid);
+    const links = this.xrayService.buildShareLinks(peer.name, vlessUuid);
+    const linksBlock = links.map((link) => `\`${link}\``).join('\n\n');
+
+    if (!subscriptionUrl) {
+      return (
+        `🔗 *Ссылки для подключения* — добавьте в приложение любую:\n\n` +
+        linksBlock
+      );
+    }
+
+    return (
+      `🔗 *Ссылка-подписка* — работает во всех приложениях, ` +
+      `каналы переключаются автоматически:\n\`${subscriptionUrl}\`\n\n` +
+      `*Если подписка не добавляется* — импортируйте каналы по отдельности:\n` +
+      linksBlock
+    );
+  }
+
+  /**
+   * QR для VLESS. В нём подписка, а не прямая ссылка: только она даёт
+   * авто-переключение каналов, и клиент (Hiddify/NekoBox/v2rayNG) распознаёт
+   * её по URL сам. Без домена подписки нет — кодируем прямую ссылку.
+   */
+  async generatePeerVlessQrCode(peerName: string): Promise<Buffer> {
+    const peer = await this.findPeer(peerName);
+    const vlessUuid = this.requireVlessUuid(peer);
+
+    const payload =
+      this.buildSubscriptionUrl(vlessUuid) ??
+      this.xrayService.buildShareLinks(peer.name, vlessUuid)[0];
+
+    return QRCode.toBuffer(payload, {
+      type: 'png',
+      width: 512,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+  }
+
+  /**
+   * QR специально для официальных sing-box-клиентов (SFA/SFI/SFM). Их сканер
+   * не распознаёт обычную https-ссылку как профиль (в отличие от Hiddify/
+   * NekoBox/v2rayNG) — нужен deep-link их же схемы sing-box://import-remote-
+   * profile с url/name в query. Ссылка внутри — на /full (с log/dns/inbounds),
+   * т.к. именно её ждёт официальный клиент.
+   */
+  async generatePeerSingBoxQrCode(peerName: string): Promise<Buffer> {
+    const peer = await this.findPeer(peerName);
+    const fullSubscriptionUrl = this.buildFullSubscriptionUrl(
+      this.requireVlessUuid(peer),
+    );
+
+    if (!fullSubscriptionUrl) {
+      throw new InternalServerErrorException(
+        'Подписка недоступна: не задан XRAY_DOMAIN',
+      );
+    }
+
+    const deepLink = `sing-box://import-remote-profile?url=${encodeURIComponent(
+      fullSubscriptionUrl,
+    )}&name=${encodeURIComponent(peer.name)}`;
+
+    return QRCode.toBuffer(deepLink, {
       type: 'png',
       width: 512,
       margin: 2,

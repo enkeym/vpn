@@ -3,9 +3,10 @@ import { PeersController } from './peers.controller';
 import { PeersService } from './peers.service';
 import { PeersSchedulerService } from './peers-scheduler.service';
 import { WgModule } from 'src/wg/wg.module';
+import { XrayModule } from 'src/xray/xray.module';
 
 @Module({
-  imports: [WgModule],
+  imports: [WgModule, XrayModule],
   controllers: [PeersController],
   providers: [PeersService, PeersSchedulerService],
   exports: [PeersService],

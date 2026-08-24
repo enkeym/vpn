@@ -57,6 +57,13 @@
       "when": 1786648786471,
       "tag": "0007_dizzy_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786952997577,
+      "tag": "0008_wandering_wolf_cub",
+      "breakpoints": true
     }
   ]
 }

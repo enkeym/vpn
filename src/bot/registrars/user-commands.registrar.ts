@@ -330,6 +330,30 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
     });
 
+    // === Второй канал: VLESS (Xray) ===
+    // Колбэки без memberId/telegramId — ответ приходит новым сообщением поверх
+    // карточки, поэтому одни и те же обработчики обслуживают свои конфиги,
+    // «Семью» и карточку клиента у админа.
+    bot.callbackQuery(/^vless_menu:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.showVlessMenu(ctx, ctx.match[1]);
+    });
+
+    bot.callbackQuery(/^vless_qr:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.showVlessQrCode(ctx, ctx.match[1]);
+    });
+
+    bot.callbackQuery(/^vless_qr_sb:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.showVlessSingBoxQrCode(ctx, ctx.match[1]);
+    });
+
+    bot.callbackQuery(/^vless_json:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.sendVlessJsonFile(ctx, ctx.match[1]);
+    });
+
     // Прокси для Telegram (MTProto) — отдельный от туннеля канал
     bot.callbackQuery(/^tg_proxy:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
@@ -367,10 +391,34 @@ export class UserCommandsRegistrar {
       await this.mainHandler.showInstructions(ctx);
     });
 
-    // Показать инструкцию для конкретной платформы
+    // Список платформ под конкретный способ подключения
+    bot.callbackQuery('instructions_awg', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.showAwgInstructions(ctx);
+    });
+
+    bot.callbackQuery('instructions_vless', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.showVlessInstructions(ctx);
+    });
+
+    // Показать инструкцию для конкретной платформы (AmneziaVPN)
     bot.callbackQuery(/^instruction:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       await this.mainHandler.showInstruction(ctx, ctx.match[1]);
+    });
+
+    // То же самое для VLESS — отдельный префикс, чтобы старые кнопки
+    // instruction:* в уже отправленных сообщениях продолжали работать.
+    bot.callbackQuery(/^instruction_vless:(.+)$/, async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.showVlessInstruction(ctx, ctx.match[1]);
+    });
+
+    // Готовые настройки Hiddify (файл + текст для буфера)
+    bot.callbackQuery('send_hiddify_settings', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      await this.mainHandler.sendHiddifySettings(ctx);
     });
   }
 }

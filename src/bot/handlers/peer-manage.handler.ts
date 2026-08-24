@@ -10,6 +10,7 @@ import {
 } from '../utils/peer-media';
 import { MainHandler } from './main.handler';
 import { MtprotoService } from 'src/mtproto/mtproto.service';
+import { SubscriptionService } from 'src/subscription/subscription.service';
 
 // Состояние ожидания ввода описания для своих конфигов
 // userId -> { peerName: string, promptMessageId: number, chatId: number }
@@ -26,6 +27,7 @@ export class PeerManageHandler {
     private readonly peersService: PeersService,
     private readonly mainHandler: MainHandler,
     private readonly mtprotoService: MtprotoService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   isAwaitingDescriptionEdit(userId: string): boolean {
@@ -84,6 +86,7 @@ export class PeerManageHandler {
           peer,
           isAdmin,
           this.mtprotoService.enabled,
+          this.peersService.isXrayAvailable(),
         ),
         parse_mode: 'Markdown',
       });
@@ -120,6 +123,7 @@ export class PeerManageHandler {
           peer,
           isAdmin,
           this.mtprotoService.enabled,
+          this.peersService.isXrayAvailable(),
         ),
         parse_mode: 'Markdown',
       });
@@ -262,6 +266,140 @@ export class PeerManageHandler {
       peerName,
       this.logger,
     );
+  }
+
+  // === Второй канал: VLESS (Xray) ===
+
+  /**
+   * Ссылка-подписка и прямые ссылки отдельным сообщением поверх карточки
+   * конфига — как QR и .conf. Одна и та же кнопка работает из всех веток меню
+   * (свои конфиги, «Семья», карточка клиента у админа), потому что ничего
+   * не редактирует и не знает про контекст вызова.
+   */
+  async showVlessMenu(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    if (!this.peersService.isXrayAvailable()) {
+      await ctx.reply(BotUi.vlessUnavailable, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.closeMediaKeyboard(),
+      });
+      return;
+    }
+
+    try {
+      const body = await this.peersService.getPeerVlessText(peerName);
+
+      await ctx.reply(BotUi.vlessMenuText(peerName, body), {
+        parse_mode: 'Markdown',
+        link_preview_options: { is_disabled: true },
+        reply_markup: BotUi.vlessMenuKeyboard(
+          peerName,
+          this.peersService.isSubscriptionAvailable(),
+        ),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка выдачи VLESS: ${error}`);
+      await ctx
+        .answerCallbackQuery({
+          text: 'Не удалось собрать ссылки VLESS',
+          show_alert: true,
+        })
+        .catch(() => {});
+    }
+  }
+
+  /** QR со ссылкой-подпиской — для Hiddify, NekoBox, v2rayNG, Streisand. */
+  async showVlessQrCode(ctx: Context, peerName: string) {
+    await this.sendVlessQr(
+      ctx,
+      peerName,
+      () => this.peersService.generatePeerVlessQrCode(peerName),
+      `${peerName}_vless_qr.png`,
+      `📷 *QR — VLESS* \`${peerName}\`\n\n` +
+        '_Отсканируйте в Hiddify / NekoBox / v2rayNG / Streisand_',
+    );
+  }
+
+  /**
+   * QR для официального sing-box (SFA/SFI/SFM): его сканер не принимает
+   * обычную https-ссылку за профиль — нужен deep-link его схемы.
+   */
+  async showVlessSingBoxQrCode(ctx: Context, peerName: string) {
+    await this.sendVlessQr(
+      ctx,
+      peerName,
+      () => this.peersService.generatePeerSingBoxQrCode(peerName),
+      `${peerName}_singbox_qr.png`,
+      `📷 *QR для sing-box* \`${peerName}\`\n\n` +
+        '_Только для официального приложения sing-box (SFA/SFI/SFM) — оно уже должно ' +
+        'быть установлено. В остальных клиентах берите обычный «📷 QR-код»._',
+    );
+  }
+
+  /** Общая отправка QR: разница между двумя кнопками — только в содержимом. */
+  private async sendVlessQr(
+    ctx: Context,
+    peerName: string,
+    generate: () => Promise<Buffer>,
+    fileName: string,
+    caption: string,
+  ) {
+    if (!ctx.chat) return;
+
+    try {
+      const qrBuffer = await generate();
+
+      await ctx.replyWithPhoto(new InputFile(qrBuffer, fileName), {
+        caption,
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.closeMediaKeyboard(),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка генерации QR VLESS для ${peerName}: ${error}`);
+      await ctx
+        .answerCallbackQuery({
+          text: 'Ошибка генерации QR-кода',
+          show_alert: true,
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Готовый sing-box конфиг файлом (.json). Нужен, когда домен подписки
+   * травят по DNS и «Удалённый» профиль в клиенте не скачивается — файл
+   * добавляется как «Локальный», в обход резолвинга по URL.
+   */
+  async sendVlessJsonFile(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    try {
+      const peer = await this.peersService.findPeer(peerName);
+      const config = this.subscriptionService.buildFullSingBoxConfig(peer);
+      const fileBuffer = Buffer.from(JSON.stringify(config, null, 2), 'utf-8');
+
+      await ctx.replyWithDocument(
+        new InputFile(fileBuffer, `${peer.name}.json`),
+        {
+          caption:
+            `📥 *Файл конфига sing-box* \`${peer.name}\`\n\n` +
+            'Для официального *sing-box*: создайте профиль с типом ' +
+            '*«Локальный»* и импортируйте этот файл. Помогает, когда ' +
+            '«Удалённый» профиль виснет на обновлении.',
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.closeMediaKeyboard(),
+        },
+      );
+    } catch (error) {
+      this.logger.error(`Ошибка отправки sing-box конфига: ${error}`);
+      await ctx
+        .answerCallbackQuery({
+          text: 'Ошибка формирования файла конфига',
+          show_alert: true,
+        })
+        .catch(() => {});
+    }
   }
 
   // === Прокси для Telegram ===

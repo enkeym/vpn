@@ -597,12 +597,14 @@ export const BotUi = {
   },
 
   // proxyAvailable — MTProto-прокси настроен на сервере (MtprotoService.enabled).
-  // Флаг передаётся снаружи, а не читается из env здесь: доступность прокси —
+  // vlessAvailable — поднят Xray (PeersService.isXrayAvailable). Оба флага
+  // передаются снаружи, а не читаются из env здесь: доступность канала —
   // состояние сервиса, и UI не должен решать это за него.
   peerDetailsKeyboard: (
     peer: TPeer,
     isAdmin: boolean = false,
     proxyAvailable: boolean = false,
+    vlessAvailable: boolean = false,
   ) => {
     const expired = isExpired(peer);
 
@@ -610,9 +612,20 @@ export const BotUi = {
     // при построении цепочкой .row() набор кнопок зависит от состояния конфига
     // и в клавиатуре легко появляется пустая строка.
     const rows: IKeyboardButton[][] = [
-      [{ text: '📷 QR-код', data: `show_qr:${peer.name}` }],
-      [{ text: '📄 Получить файл', data: `get_config_file:${peer.name}` }],
+      [
+        { text: '📷 QR — AmneziaVPN', data: `show_qr:${peer.name}` },
+        { text: '📄 Файл .conf', data: `get_config_file:${peer.name}` },
+      ],
     ];
+
+    // Второй канал (VLESS через Xray) — отдельным подменю: внутри ссылка-
+    // подписка, прямые ссылки и QR под разные клиенты. Держать это всё в
+    // карточке нельзя — она перестала бы читаться.
+    if (vlessAvailable) {
+      rows.push([
+        { text: '🌐 VLESS / подписка', data: `vless_menu:${peer.name}` },
+      ]);
+    }
 
     // Прокси — бонус к активной подписке: истёкшему или поставленному на паузу
     // конфигу кнопку не показываем.
@@ -669,6 +682,48 @@ export const BotUi = {
 
     return buildKeyboard(rows);
   },
+
+  // === Второй канал: VLESS (Xray) ===
+
+  /**
+   * Сообщение с подпиской и ссылками. Приходит отдельным сообщением поверх
+   * карточки конфига (как QR и .conf) — поэтому одна и та же кнопка работает
+   * и в своих конфигах, и в «Семье», и в карточке клиента у админа.
+   */
+  vlessMenuText: (peerName: string, body: string) =>
+    `🌐 *VLESS для* \`${peerName}\`\n\n` +
+    'Второй способ подключения — на случай, когда AmneziaVPN на вашей сети не ' +
+    'идёт. Тот же конфиг, другой протокол: Hiddify, NekoBox, v2rayNG, ' +
+    'Streisand и другие клиенты.\n\n' +
+    `${body}\n\n` +
+    '_Пошагово — в разделе «Инструкция» → «VLESS»._',
+
+  /**
+   * subscriptionAvailable — задан домен подписки (XRAY_DOMAIN). Без него QR
+   * для официального sing-box смысла не имеет: его deep-link ведёт на /sub.
+   */
+  vlessMenuKeyboard: (peerName: string, subscriptionAvailable: boolean) => {
+    const keyboard = new InlineKeyboard().text(
+      '📷 QR-код',
+      `vless_qr:${peerName}`,
+    );
+
+    if (subscriptionAvailable) {
+      keyboard.text('📷 QR для sing-box', `vless_qr_sb:${peerName}`);
+    }
+
+    return keyboard
+      .row()
+      .text('📥 Файл sing-box (.json)', `vless_json:${peerName}`)
+      .row()
+      .text('« Закрыть', 'close_media');
+  },
+
+  /** Xray не поднялся (нет бинарника, не задан хост, процесс упал). */
+  vlessUnavailable:
+    '🌐 *VLESS сейчас недоступен*\n\n' +
+    'Второй канал на сервере не запущен. Подключение по AmneziaVPN ' +
+    '(QR-код и файл .conf) работает как обычно.',
 
   // === Прокси для Telegram (MTProto) ===
 
@@ -995,8 +1050,12 @@ export const BotUi = {
       .row()
       .text('📅 Изменить срок', `f_cd:${peer.name}:${mId}`)
       .row()
-      .text('📷 QR-код', `f_qr:${peer.name}:${mId}`)
-      .text('📄 Получить файл', `f_gf:${peer.name}:${mId}`)
+      .text('📷 QR — AmneziaVPN', `f_qr:${peer.name}:${mId}`)
+      .text('📄 Файл .conf', `f_gf:${peer.name}:${mId}`)
+      .row()
+      // Подменю VLESS общее для всех веток: оно отвечает новым сообщением
+      // поверх карточки, поэтому memberId/telegramId в callback не нужен.
+      .text('🌐 VLESS / подписка', `vless_menu:${peer.name}`)
       .row()
       .text('🗑 Удалить', `f_dp:${peer.name}:${mId}`)
       .row()
@@ -1357,8 +1416,10 @@ export const BotUi = {
         `admin_change_duration:${peer.name}:${telegramId}`,
       )
       .row()
-      .text('📷 QR-код', `admin_qr:${peer.name}:${telegramId}`)
-      .text('📄 Получить файл', `admin_get_file:${peer.name}:${telegramId}`)
+      .text('📷 QR — AmneziaVPN', `admin_qr:${peer.name}:${telegramId}`)
+      .text('📄 Файл .conf', `admin_get_file:${peer.name}:${telegramId}`)
+      .row()
+      .text('🌐 VLESS / подписка', `vless_menu:${peer.name}`)
       .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
       .row()
@@ -1400,10 +1461,36 @@ export const BotUi = {
   closeMediaKeyboard: () =>
     new InlineKeyboard().text('« К конфигу', 'close_media'),
 
+  // === Инструкции: выбор способа подключения ===
+
+  /**
+   * Первый экран инструкции — выбор протокола, а не платформы. Способа два, и
+   * шаги у них разные вплоть до приложения, поэтому сводить их в один текст
+   * нельзя: сообщение не влезло бы в лимит Telegram и запутало бы читателя.
+   */
+  instructionsMenuTitle:
+    '📖 *Инструкция по подключению*\n\n' +
+    'У каждого конфига *два независимых способа* подключиться. Они не заменяют, ' +
+    'а дополняют друг друга: если один на вашей сети режут — работает второй.\n\n' +
+    '🛡 *AmneziaVPN* — файл `.conf` и QR-код. Одно приложение, ничего настраивать ' +
+    'не нужно.\n' +
+    '🌐 *VLESS* — ссылка-подписка для Hiddify, NekoBox, v2rayNG, Streisand. Внутри ' +
+    'два канала, приложение само переключается на живой.\n\n' +
+    '👉 Начните с *AmneziaVPN*. Не заработало на вашей сети — возьмите *VLESS*.\n\n' +
+    '💬 _Не получается? Поддержка:_ @CharlieWaldo',
+
+  instructionsMenuKeyboard: () =>
+    new InlineKeyboard()
+      .text('🛡 AmneziaVPN (.conf)', 'instructions_awg')
+      .row()
+      .text('🌐 VLESS / подписка', 'instructions_vless')
+      .row()
+      .text('« Назад в меню', 'main_menu'),
+
   // === Инструкции по установке AmneziaVPN ===
 
-  instructionsMenuTitle:
-    '📖 *Инструкция по установке AmneziaVPN*\n\n' +
+  instructionsAwgTitle:
+    '🛡 *Установка AmneziaVPN*\n\n' +
     'Выберите вашу платформу — откроется пошаговая инструкция с прямыми ссылками на приложение.\n\n' +
     '❗️❗️ *У ВАС iPhone ИЛИ iPad? НАЧНИТЕ ОТСЮДА!* ❗️❗️\n' +
     'AmneziaVPN *нет в российском App Store*. Пока регион Apple ID — Россия, приложение не установится ни поиском, ни по ссылке.\n' +
@@ -1412,7 +1499,7 @@ export const BotUi = {
     '⚠️ _Конфиг открывается только в AmneziaVPN: официальный клиент WireGuard его не примет._\n\n' +
     '💬 _Не получается? Поддержка:_ @CharlieWaldo',
 
-  instructionsMenuKeyboard: () =>
+  instructionsAwgKeyboard: () =>
     new InlineKeyboard()
       .text('📱 Android', 'instruction:android')
       .text('🍎 iOS / iPhone', 'instruction:ios')
@@ -1422,11 +1509,21 @@ export const BotUi = {
       .row()
       .text('🐧 Linux', 'instruction:linux')
       .row()
-      .text('« Назад в меню', 'main_menu'),
+      .text('« К способам подключения', 'show_instructions')
+      .row()
+      .text('« В меню', 'main_menu'),
 
-  backToInstructionsKeyboard: () =>
+  /**
+   * Возврат со страницы платформы. Ведёт к списку платформ ТОГО ЖЕ протокола —
+   * иначе пользователь, читавший инструкцию по VLESS, попадал бы в список
+   * AmneziaVPN и терял место.
+   */
+  backToInstructionsKeyboard: (protocol: 'awg' | 'vless' = 'awg') =>
     new InlineKeyboard()
-      .text('« К списку платформ', 'show_instructions')
+      .text(
+        '« К списку платформ',
+        protocol === 'vless' ? 'instructions_vless' : 'instructions_awg',
+      )
       .row()
       .text('« В меню', 'main_menu'),
 
@@ -1525,4 +1622,175 @@ export const BotUi = {
     '4. Для автозапуска:\n' +
     '```\nsudo systemctl enable awg-quick@awg0\n```\n\n' +
     '⚠️ _Обычный `wg-quick` этот конфиг не поднимет: нужны awg-бинари._',
+
+  // === Инструкции по подключению VLESS (Xray) ===
+
+  instructionsVlessTitle:
+    '🌐 *Подключение по VLESS*\n\n' +
+    'Бот выдаёт *ссылку-подписку* — она работает во всех популярных приложениях. Внутри два независимых канала: через Cloudflare CDN (для домашних сетей) и прямой канал Reality (для сетей, где режут сам CDN). В приложениях на движке *sing-box* (Hiddify, NekoBox) подписка переключается между ними *автоматически*, без вашего участия.\n\n' +
+    'Выберите вашу платформу — откроется пошаговая инструкция с точными названиями файлов для скачивания.\n\n' +
+    '⚙️ _Пользуетесь Hiddify? Ниже есть кнопка «Готовые настройки» — файл со всеми рекомендуемыми параметрами, который применяется в одно касание, без ручной настройки._\n\n' +
+    '⏱ _Обычно настройка занимает 2–3 минуты_\n\n' +
+    '🔀 _Плохо работает или заблокировано на конкретной сети?_ В подписке два канала: `cdn-wifi` (через Cloudflare) и `reality-direct` (прямой, мимо CDN). Если авто-переключение зависло на нерабочем — откройте список серверов/группу подключения в приложении и выберите канал вручную.\n\n' +
+    '🌍 _IPv6 включён:_ сайты, доступные только по IPv6, открываются через тот же туннель — отдельно ничего настраивать не нужно.',
+
+  instructionsVlessKeyboard: () =>
+    new InlineKeyboard()
+      .text('📱 Android', 'instruction_vless:android')
+      .text('🍎 iOS / iPhone', 'instruction_vless:ios')
+      .row()
+      .text('🪟 Windows', 'instruction_vless:windows')
+      .text('🍏 macOS', 'instruction_vless:macos')
+      .row()
+      .text('🐧 Linux', 'instruction_vless:linux')
+      .row()
+      .text('⚙️ Готовые настройки Hiddify', 'send_hiddify_settings')
+      .row()
+      .text('📖 Официальные ресурсы', 'instruction_vless:resources')
+      .row()
+      .text('« К способам подключения', 'show_instructions')
+      .row()
+      .text('« В меню', 'main_menu'),
+
+  instructionVlessResources:
+    '📖 *Официальные ресурсы клиентов*\n\n' +
+    '*Hiddify*\n' +
+    '• [Сайт](https://hiddify.com/) · [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '*v2rayNG (Android)*\n' +
+    '• [GitHub](https://github.com/2dust/v2rayNG/releases/latest)\n\n' +
+    '*v2rayN (Windows/macOS/Linux)*\n' +
+    '• [GitHub](https://github.com/2dust/v2rayN/releases/latest)\n\n' +
+    '*NekoBox / NekoRay*\n' +
+    '• [Android](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest) · [Desktop](https://github.com/MatsuriDayo/nekoray/releases/latest)\n\n' +
+    '_Выберите платформу для пошаговой инструкции_',
+
+  instructionVlessAndroid:
+    '📱 *VLESS на Android*\n\n' +
+    '━━━ *1. NekoBox (рекомендуем)* ━━━\n' +
+    '_Понимает нашу подписку с авто-переключением каналов._\n' +
+    '• [Скачать APK](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest) → `NekoBoxForAndroid-universal-release.apk`\n' +
+    '• «➕» вверху справа → *«Import profile from clipboard»* (вставит ссылку-подписку) или *«Scan QR code»*\n' +
+    '• Переключатель ⏻ внизу справа — подключиться\n\n' +
+    '━━━ *2. Hiddify* ━━━\n' +
+    '• [Google Play](https://play.google.com/store/apps/details?id=app.hiddify.com) · [GitHub `.apk`](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
+    '• «+» → *«Add Profile» → «From clipboard»* (вставит ссылку-подписку) или *«Scan QR»*\n' +
+    '• Кнопка **⏻** по центру экрана — подключиться\n' +
+    '• Разово выставьте Маршрутизация → Входящие → *TUN → Mixed*, либо нажмите «⚙️ Готовые настройки Hiddify» в списке платформ — настроится само\n' +
+    '• Не грузятся сайты? Settings → DNS → Remote DNS → `1.1.1.1`\n\n' +
+    '━━━ *3. v2rayNG* ━━━\n' +
+    '_Тоже понимает нашу ссылку-подписку целиком._\n' +
+    '• [Скачать APK](https://github.com/2dust/v2rayNG/releases/latest) — ищите файл с `arm64-v8a` в названии\n' +
+    '• «+» → *«Импорт из буфера обмена»* — вставьте ссылку-подписку из бота\n' +
+    '• Оба канала появятся списком → «⋮» → *«Test all configurations»* → подключитесь к более быстрому\n\n' +
+    '✅ Весь трафик (включая Telegram и YouTube) идёт через VPN.',
+
+  instructionVlessIos:
+    '🍎 *VLESS на iOS / iPhone*\n\n' +
+    '⚠️ *Сначала главное.* В российском App Store сейчас нет ни одного подходящего приложения — Apple удалила их все по требованию Роскомнадзора. Это ограничение App Store, а не нашего сервиса: приложения существуют и работают, просто не отдаются аккаунтам с российским регионом.\n\n' +
+    'Поэтому на iPhone нужен *один разовый шаг* — сменить регион Apple ID. Это бесплатно, занимает пять минут, ничего не удаляет с телефона и в любой момент отменяется.\n\n' +
+    '*Шаг 1: Смените регион Apple ID на США*\n' +
+    '• Настройки → нажмите на своё имя вверху → «Медиаматериалы и покупки» → «Просмотреть учётную запись»\n' +
+    '• «Страна/регион» → «Изменить страну или регион» → *United States*\n' +
+    '• Способ оплаты — *None*. Карта не нужна, приложение бесплатное\n' +
+    '• Адрес — любой существующий американский, телефон в формате `+1 XXX XXX XXXX`\n' +
+    '• Примите условия. Готово\n\n' +
+    '_Перед сменой:_ баланс Apple ID должен быть нулевым, а подписки, купленные в российском регионе, нужно отменить. Установленные приложения, фото и данные iCloud остаются на месте.\n\n' +
+    '*Шаг 2: Установите приложение*\n' +
+    '• *Streisand* — рекомендуем: бесплатный, с открытым кодом, отлично держит наш протокол: [App Store](https://apps.apple.com/app/streisand/id6450534064)\n' +
+    '• *Happ* — запасной вариант: [App Store](https://apps.apple.com/app/happ-proxy-utility/id6504287215)\n' +
+    '• *Shadowrocket* — платный (~$3), самый гибкий, для опытных: [App Store](https://apps.apple.com/app/shadowrocket/id932747118)\n\n' +
+    '💡 _Не хотите трогать основной Apple ID?_ Создайте отдельный Apple ID с регионом США и войдите им *только* в App Store (Настройки → App Store → аккаунт), не трогая iCloud. Тогда основной аккаунт, фото и переписки останутся нетронутыми.\n\n' +
+    '*Шаг 3: Добавьте конфиг*\n' +
+    '• Скопируйте *ссылку-подписку* из бота (нажмите на неё) — в ней сразу оба канала\n' +
+    '• Откройте приложение → «+» → «Добавить из буфера обмена» (Import from clipboard)\n' +
+    '• _Или_ «+» → «Сканировать QR-код» и наведите на QR из бота\n\n' +
+    '*Шаг 4: Подключитесь*\n' +
+    '• Нажмите кнопку подключения / переключатель\n' +
+    '• Разрешите добавление VPN-конфигурации (запросит один раз)\n' +
+    '• Готово! Весь трафик (включая Telegram и YouTube) идёт через VPN 🎉\n\n' +
+    '⚙️ _Используете Hiddify?_ Выставьте TUN → *Mixed* в Маршрутизация → Входящие — или нажмите «⚙️ Готовые настройки Hiddify» в списке платформ.\n\n' +
+    '⚠️ _Сайты не грузятся?_ Remote DNS → `1.1.1.1`, переподключитесь.',
+
+  instructionVlessWindows:
+    '🪟 *VLESS на Windows*\n\n' +
+    '*Шаг 1: Скачайте приложение* (любое на выбор)\n' +
+    '• *v2rayN* — рекомендуем, самый стабильный: [GitHub](https://github.com/2dust/v2rayN/releases/latest) (файл `v2rayN-windows-64.zip`)\n' +
+    '• *Hiddify*: [GitHub](https://github.com/hiddify/hiddify-app/releases/latest) (файл `Hiddify-Windows-Setup-x64.exe`)\n' +
+    '• *NekoRay*: [GitHub](https://github.com/MatsuriDayo/nekoray/releases/latest)\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n' +
+    '• Скопируйте ссылку-подписку (или `vless://…`) из бота\n' +
+    '• *v2rayN*: в трее правой кнопкой → «Импорт из буфера обмена» (или Ctrl+V в главном окне)\n' +
+    '• *Hiddify*: «New Profile» / «+» → «Добавить из буфера обмена»\n\n' +
+    '*Шаг 3: Подключитесь*\n' +
+    '• *v2rayN*: выберите сервер → правой кнопкой по значку в трее → режим «Глобальный» (Global), чтобы весь трафик шёл через VPN\n' +
+    '• *Hiddify*: большая кнопка подключения\n' +
+    '• Готово! 🎉\n\n' +
+    '⚠️ _Сайты не грузятся?_ Remote DNS → `1.1.1.1`, переподключитесь.\n' +
+    '💡 _Совет:_ включите автозапуск в настройках приложения.\n\n' +
+    '⚙️ _Используете Hiddify?_ Выставьте TUN → *Mixed* во Входящих — или нажмите «⚙️ Готовые настройки Hiddify» в списке платформ.',
+
+  instructionVlessMacos:
+    '🍏 *VLESS на macOS*\n\n' +
+    '*Шаг 1: Установите приложение* (любое на выбор)\n' +
+    '• *v2rayN* — рекомендуем, скачивается напрямую, без App Store: [GitHub](https://github.com/2dust/v2rayN/releases/latest) (файл `v2rayN-macos-64.dmg`)\n' +
+    '• *Hiddify* — тоже есть вне App Store: [GitHub `.dmg`](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
+    '• *Streisand* / *V2Box* — только через App Store с аккаунтом региона США (см. инструкцию для iPhone — смена региона общая для всех устройств Apple)\n\n' +
+    '_В российском App Store подобных приложений больше нет — на macOS проще всего скачать с GitHub, это ограничение обходит._\n\n' +
+    '*Шаг 2: Добавьте конфиг*\n' +
+    '• Скопируйте ссылку-подписку (или `vless://…`) из бота\n' +
+    '• В приложении → «+» → «Добавить из буфера обмена»\n\n' +
+    '*Шаг 3: Подключитесь*\n' +
+    '• Нажмите кнопку подключения\n' +
+    '• Разрешите добавление VPN-конфигурации (запросит один раз)\n' +
+    '• Готово! Весь трафик (включая Telegram и YouTube) идёт через VPN 🎉\n\n' +
+    '⚠️ _Сайты не грузятся?_ Remote DNS → `1.1.1.1`, переподключитесь.\n' +
+    '💡 _Совет:_ иконка в меню-баре позволяет быстро включать/выключать VPN.\n\n' +
+    '⚙️ _Используете Hiddify?_ Выставьте TUN → *Mixed* во Входящих — или нажмите «⚙️ Готовые настройки Hiddify» в списке платформ.',
+
+  instructionVlessLinux:
+    '🐧 *VLESS на Linux*\n\n' +
+    '*Шаг 1: Скачайте приложение* (любое на выбор)\n' +
+    '• *Hiddify*: [GitHub](https://github.com/hiddify/hiddify-app/releases/latest) — `Hiddify-Linux-x64.AppImage` (универсально) или `.deb`\n' +
+    '• *NekoRay*: [GitHub](https://github.com/MatsuriDayo/nekoray/releases/latest)\n' +
+    '• *v2rayN* (Linux): [GitHub](https://github.com/2dust/v2rayN/releases/latest)\n\n' +
+    '*Шаг 2: Запустите*\n' +
+    '• AppImage: сделайте исполняемым и запустите\n' +
+    '```\nchmod +x Hiddify-Linux-x64.AppImage\n./Hiddify-Linux-x64.AppImage\n```\n' +
+    '• `.deb`: `sudo dpkg -i Hiddify-*.deb`\n\n' +
+    '*Шаг 3: Добавьте конфиг и подключитесь*\n' +
+    '• Скопируйте ссылку-подписку (или `vless://…`) из бота\n' +
+    '• В приложении: «+» → «Добавить из буфера обмена»\n' +
+    '• Нажмите кнопку подключения (в NekoRay — включите режим Tun/Global для всего трафика)\n' +
+    '• Готово! 🎉\n\n' +
+    '⚠️ _Сайты не грузятся?_ Remote DNS → `1.1.1.1`, переподключитесь.\n\n' +
+    '⚙️ _Используете Hiddify?_ Выставьте TUN → *Mixed* во Входящих — или нажмите «⚙️ Готовые настройки Hiddify» в списке платформ.',
+
+  // === Готовые настройки Hiddify (options.json) ===
+
+  hiddifySettingsIntro:
+    '⚙️ *Готовые настройки Hiddify*\n\n' +
+    'Сейчас пришлю файл с уже настроенными параметрами — вручную ничего выставлять не нужно. Внутри:\n' +
+    '• 🔴 Реализация TUN → *Mixed* (самое важное)\n' +
+    '• Регион → *Россия*\n' +
+    '• Поддельный DNS → *включён*\n' +
+    '• Строгая маршрутизация → *выключена*\n' +
+    '• Маршрут IPv6 → *включён* (приоритет у IPv4)\n' +
+    '• Balancer → *Sticky session*\n\n' +
+    '_Ниже — файл для импорта и текст для копирования, чтобы вам было удобно в любом случае._',
+
+  hiddifySettingsFileCaption:
+    '📥 *Файл `hiddify-options.json`*\n\n' +
+    '*Как импортировать через файл:*\n' +
+    '1. Откройте Hiddify\n' +
+    '2. Нажмите на *⋮* (три точки) в правом верхнем углу\n' +
+    '3. Выберите *«Импорт» / «Import»* → *«Из файла» / «From file»*\n' +
+    '4. Укажите этот файл — настройки применятся автоматически',
+
+  hiddifySettingsCopyText: (json: string) =>
+    '📋 *Или скопируйте текст ниже*\n\n' +
+    'Нажмите на блок — он скопируется в буфер обмена:\n\n' +
+    '```json\n' +
+    json +
+    '\n```\n\n' +
+    'Затем в Hiddify: *⋮* (три точки сверху) → *«Импорт» / «Import»* → *«Из буфера обмена» / «From clipboard»*.',
 };

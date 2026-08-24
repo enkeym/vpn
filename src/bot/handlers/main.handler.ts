@@ -1,6 +1,7 @@
 import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { type Api, type Context } from 'grammy';
+import { InputFile, type Api, type Context } from 'grammy';
+import { HIDDIFY_OPTIONS_JSON } from '../assets/hiddify-options';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
 import { PaymentService } from 'src/payment/payment.service';
@@ -189,6 +190,23 @@ export class MainHandler {
     });
   }
 
+  /** Список платформ для AmneziaVPN (конфиг .conf). */
+  async showAwgInstructions(ctx: Context) {
+    await safeEditMessageText(ctx, BotUi.instructionsAwgTitle, {
+      reply_markup: BotUi.instructionsAwgKeyboard(),
+      parse_mode: 'Markdown',
+    });
+  }
+
+  /** Список платформ для VLESS (ссылка-подписка и прямые ссылки). */
+  async showVlessInstructions(ctx: Context) {
+    await safeEditMessageText(ctx, BotUi.instructionsVlessTitle, {
+      reply_markup: BotUi.instructionsVlessKeyboard(),
+      parse_mode: 'Markdown',
+      link_preview_options: { is_disabled: true },
+    });
+  }
+
   async showInstruction(ctx: Context, platform: string) {
     const instructions: Record<string, string> = {
       android: BotUi.instructionAndroid,
@@ -201,9 +219,54 @@ export class MainHandler {
     const text = instructions[platform] || 'Инструкция не найдена';
 
     await safeEditMessageText(ctx, text, {
-      reply_markup: BotUi.backToInstructionsKeyboard(),
+      reply_markup: BotUi.backToInstructionsKeyboard('awg'),
       parse_mode: 'Markdown',
       link_preview_options: { is_disabled: true },
+    });
+  }
+
+  async showVlessInstruction(ctx: Context, platform: string) {
+    const instructions: Record<string, string> = {
+      android: BotUi.instructionVlessAndroid,
+      ios: BotUi.instructionVlessIos,
+      windows: BotUi.instructionVlessWindows,
+      macos: BotUi.instructionVlessMacos,
+      linux: BotUi.instructionVlessLinux,
+      resources: BotUi.instructionVlessResources,
+    };
+
+    const text = instructions[platform] || 'Инструкция не найдена';
+
+    await safeEditMessageText(ctx, text, {
+      reply_markup: BotUi.backToInstructionsKeyboard('vless'),
+      parse_mode: 'Markdown',
+      link_preview_options: { is_disabled: true },
+    });
+  }
+
+  /** Готовые настройки Hiddify: файл для импорта + текст для копирования в буфер. */
+  async sendHiddifySettings(ctx: Context) {
+    if (!ctx.chat) return;
+
+    await safeEditMessageText(ctx, BotUi.hiddifySettingsIntro, {
+      parse_mode: 'Markdown',
+      link_preview_options: { is_disabled: true },
+    });
+
+    await ctx.replyWithDocument(
+      new InputFile(
+        Buffer.from(HIDDIFY_OPTIONS_JSON, 'utf-8'),
+        'hiddify-options.json',
+      ),
+      {
+        caption: BotUi.hiddifySettingsFileCaption,
+        parse_mode: 'Markdown',
+      },
+    );
+
+    await ctx.reply(BotUi.hiddifySettingsCopyText(HIDDIFY_OPTIONS_JSON), {
+      parse_mode: 'Markdown',
+      reply_markup: BotUi.backToInstructionsKeyboard('vless'),
     });
   }
 }

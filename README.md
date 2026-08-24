@@ -25,12 +25,133 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Два способа подключения
+
+Один конфиг (запись в `peers`) выдаётся сразу двумя способами:
+
+| | AmneziaWG 3 | VLESS (Xray) |
+|---|---|---|
+| Что выдаётся | файл `.conf` и QR | ссылка-подписка, `vless://`-ссылки, QR |
+| Клиент | AmneziaVPN | Hiddify, NekoBox, v2rayNG, Streisand, sing-box |
+| Сервис | `AwgService` (`src/wg`) | `XrayService` (`src/xray`) |
+| Ключ пира | `publicKey`/`privateKey` | `vlessUuid` |
+
+Они не заменяют, а дополняют друг друга: протоколы блокируются по-разному, и
+клиент подключается тем, что живо на его сети. Состав активных пиров
+синхронизируется в оба сервиса из `PeersService` — пауза, истечение срока,
+удаление и замена конфига отключают сразу оба канала.
+
+## Развёртывание на сервере
+
+Контейнер работает в `network_mode: host`, поэтому всё, что обычно делает за нас
+docker — sysctl, проброс портов, фаервол — здесь выставляется на хосте вручную.
+Порядок для чистой машины; на уже работающей начинайте с шага 4.
+
+### 1. Требования
+
+Ubuntu 22.04/24.04, доступ root, `docker` с plugin `compose`, устройство
+`/dev/net/tun` (есть в любом обычном VPS, нужно для amneziawg-go).
+
+### 2. sysctl на хосте
+
+Без форвардинга туннель поднимется, но трафик клиентов никуда не пойдёт.
+IPv6-строки нужны для `AWG_ADDRESS6` — без них дуалстек-сайты висят до таймаута.
+
+```bash
+sudo tee /etc/sysctl.d/99-vpn.conf >/dev/null <<'EOF'
+net.ipv4.ip_forward=1
+net.ipv6.conf.all.forwarding=1
+net.ipv6.conf.all.disable_ipv6=0
+net.ipv6.conf.default.disable_ipv6=0
+EOF
+sudo sysctl --system
+```
+
+### 3. Фаервол и проброс порта AmneziaWG
+
+```bash
+sudo ufw allow 22/tcp      # не заблокируйте себе SSH
+sudo ufw allow 443/tcp     # nginx: Reality + CDN-канал
+sudo ufw allow 8443/tcp    # MTProto-прокси (если нужен)
+sudo ufw allow 4500/udp    # публичный порт AmneziaWG
+sudo ufw enable
+```
+
+`awg0` слушает `AWG_PORT` (51821), а клиентам в `Endpoint` уходит
+`AWG_PUBLIC_PORT` (4500) — мобильные операторы режут нестандартные UDP-порты, а
+4500 (IPsec NAT-T) пропускают везде. В host-режиме docker этот проброс не
+делает, нужен REDIRECT на хосте:
+
+```bash
+sudo iptables -t nat -A PREROUTING -p udp --dport 4500 -j REDIRECT --to-ports 51821
+sudo apt install -y iptables-persistent   # чтобы правило пережило перезагрузку
+sudo netfilter-persistent save
+```
+
+### 4. Сертификат Cloudflare
+
+Нужен только для CDN-канала (`XRAY_DOMAIN`). Файлы из Cloudflare → SSL/TLS →
+Origin Server кладутся в смонтированный том `./configs`:
+
+```bash
+sudo install -m 600 origin.pem ./configs/cloudflare-cert.pem
+sudo install -m 600 origin.key ./configs/cloudflare-key.pem
+```
+
+Без них контейнер не стартует — это осознанно: молча отдавать клиентам 5xx хуже,
+чем упасть на старте с понятной ошибкой.
+
+### 5. `.env`
+
+```bash
+cp .env.example .env
+```
+
+Минимум, без которого не поедет: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS`,
+`WG_HOST` (IP сервера). Для второго канала — `XRAY_DOMAIN`. Для оплаты —
+`YOOKASSA_*` и `RECEIPT_CUSTOMER_EMAIL`.
+
+### 6. Сборка и запуск
+
+```bash
+docker compose -p vpn-bot build
+docker compose -p vpn-bot up -d
+docker compose -p vpn-bot --profile mtproto up -d   # если нужен прокси Telegram
+```
+
+Миграции БД применяются сами при старте, отдельной команды не нужно.
+
+### 7. Проверка
+
+```bash
+docker compose -p vpn-bot logs --tail=80 vpn-bot
+sudo ss -tulnp | grep -E ':(443|4500|8443|51821|3000)'
+```
+
+В логах должны быть три строки: интерфейс `awg0` поднят, `xray запущен (pid=…)`
+с упоминанием `reality-direct на localhost:8444 (за nginx:443, SNI-роутинг)` и
+`Xray синхронизирован: N клиент(ов)`. В `ss` — `nginx` на 443, `amneziawg-go` на
+51821, `node` на 3000; портов 8444/8445/8880/8881 наружу быть не должно (только
+`127.0.0.1`).
+
+Снаружи — проверки из раздела «Настройка CDN-канала».
+
+### Обновление
+
+```bash
+git pull
+docker compose -p vpn-bot up -d --build
+```
+
+Параметры обфускации и ключи Reality лежат в `./configs` и переживают
+пересборку — выданные клиентам конфиги продолжают работать.
+
 ## Протокол: AmneziaWG 3
 
-Единственный туннель сервиса — AmneziaWG 3 на интерфейсе `awg0`. Классический
+Основной туннель сервиса — AmneziaWG 3 на интерфейсе `awg0`. Классический
 WireGuard (`wg0`) удалён: интерфейс с включённой обфускацией всё равно
-несовместим с обычными WireGuard-клиентами, а держать второй туннель ради
-протокола, который блокируется, смысла нет.
+несовместим с обычными WireGuard-клиентами, а держать второй WireGuard-туннель
+ради протокола, который блокируется, смысла нет.
 
 | | AmneziaWG 3 |
 |---|---|
@@ -128,6 +249,181 @@ Header protection использует `S1..S4` как nonce, поэтому в�
 > ⚠️ Смена параметров в `.env` после создания `configs/awg0.conf` ни на что не
 > влияет — файл читается как источник истины. Чтобы применить новые, удалите
 > `configs/awg0.conf` (все выданные awg-конфиги придётся перевыпустить).
+
+## Второй канал: VLESS (Xray)
+
+`XrayService` держит процесс `xray` рядом с `awg0` и даёт до двух независимых
+путей обхода:
+
+1. **Reality** — прямой TCP на IP сервера, без CDN. Работает там, где режут
+   Cloudflare, но не защищён от блокировки по IP.
+2. **VLESS+WS+TLS за Cloudflare CDN** — клиент не видит реальный IP сервера,
+   но канал зависит от доступности самого Cloudflare. Опционален: поднимается,
+   только если задан `XRAY_DOMAIN`.
+
+Оба канала уезжают клиенту в одной ссылке-подписке (`/sub/:vlessUuid`), и
+клиент на движке sing-box (Hiddify, NekoBox) сам держит активным рабочий.
+Формат ответа выбирается по User-Agent: sing-box-клиентам — JSON, остальным —
+base64 со ссылками (`src/subscription`).
+
+### Порты и SNI-разводчик
+
+Контейнер работает в `network_mode: host`, а оба канала должны жить на одном
+стандартном 443. Поэтому публичный порт слушает **nginx** внутри образа: он
+читает SNI из ClientHello (`stream` + `ssl_preread`, без расшифровки) и решает,
+куда отдать соединение.
+
+```
+                     :443  nginx (stream, ssl_preread)
+                             │
+       SNI = XRAY_DOMAIN ────┤──── всё остальное (SNI маски, зонды, мусор)
+                             │                  │
+              127.0.0.1:8445 │                  │ 127.0.0.1:8444
+         nginx TLS (Origin CA)                  Xray reality-direct
+                 │                                     │
+        /sub/ → NestJS:3000                    чужой ⇒ проксируется
+        /     → NestJS:3000                    на realitySettings.dest
+        иначе → Xray ws-cdn:8880
+```
+
+Разводчик поднимается **только при заданном `XRAY_DOMAIN`** — без домена
+разводить нечего, и тогда Reality слушает публичный порт сам, а nginx не
+запускается вовсе (см. `docker/docker-entrypoint.sh` и `XrayService.behindProxy`).
+Эти два условия обязаны совпадать: если Xray ждёт PROXY protocol, а nginx его не
+шлёт (или наоборот), хендшейк не состоится вообще.
+
+| Порт | Кто слушает | Наружу |
+|---|---|---|
+| `XRAY_REALITY_PORT` (443/tcp) | nginx (или Xray, если домена нет) | да, открыть в фаерволе |
+| `NGINX_INTERNAL_TLS_PORT` (8445) | nginx, `127.0.0.1` | нет |
+| `XRAY_INTERNAL_REALITY_PORT` (8444) | Xray, `127.0.0.1` | нет |
+| `XRAY_INTERNAL_WS_PORT` (8880) | Xray, `127.0.0.1` | нет |
+| `XRAY_STATS_API_PORT` (8881) | Xray, `127.0.0.1` | нет |
+| `PORT` (3000) | NestJS | нет, наружу торчит только `/sub/` и `/` |
+
+Внутренние порты намеренно начинаются с 8444, а не с 8443: в `network_mode: host`
+localhost контейнера — это localhost хоста, а 8443 занят MTProto-прокси.
+
+**443/tcp закреплён за этим узлом.** Нестандартный порт для DPI — отдельный
+маркер, такой трафик режут в первую очередь, и сам Xray предупреждает об этом
+при старте. Ради этого MTProto-прокси уведён на 8443 (`MTPROTO_PORT`): для
+основного VPN порт важнее, чем для прокси Telegram.
+
+> ⚠️ Смена `MTPROTO_PORT` меняет выдаваемую `tg://`-ссылку. У `mtg` 2.x один
+> секрет на инстанс, ссылка общая — все ранее выданные ссылки на прежний порт
+> перестают работать. Новую бот отдаёт сам после перезапуска, отдельного
+> действия в БД не требуется.
+
+```bash
+sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality + CDN)
+sudo ufw allow 8443/tcp   # MTPROTO_PORT — прокси Telegram
+```
+
+`/peers` и `/metrics/` наружу намеренно не проксируются: они закрыты ключами, но
+публиковать внутреннее API через CDN незачем — с хоста оно и так доступно на
+`localhost:3000`.
+
+### Настройка CDN-канала (Cloudflare)
+
+Нужно один раз, и только если хотите второй канал плюс ссылку-подписку.
+
+1. Домен делегирован на Cloudflare (NS меняются у регистратора).
+2. DNS-запись: `A` на IP сервера, **Proxied** (оранжевое облако). Серое облако
+   бессмысленно — тогда клиент видит ваш IP и обхода блокировки по IP нет.
+   AAAA не нужна: Cloudflare сам отдаёт клиентам IPv6, а до origin ходит по IPv4.
+3. **SSL/TLS → Full (strict)**. При Flexible Cloudflare пойдёт на origin по HTTP,
+   и TLS-сервер разводчика его не примет.
+4. **SSL/TLS → Origin Server → Create Certificate**, файлы положить в
+   `configs/cloudflare-cert.pem` и `configs/cloudflare-key.pem` (том `./configs`
+   уже смонтирован). Без них контейнер не стартует — это лучше, чем молча
+   отдавать клиентам 5xx.
+5. **Network → WebSockets: On.** Без этого VLESS+WS не работает вообще.
+6. **Security → Bots → Bot Fight Mode: Off** — режет нестандартный трафик.
+7. В `.env`: `XRAY_DOMAIN=<домен>`, `XRAY_PORT` равен `XRAY_REALITY_PORT`.
+
+Проверка после деплоя:
+
+```bash
+# Разводчик отвечает на домене (не 5xx от Cloudflare)
+curl -sI https://<домен> -o /dev/null -w '%{http_code}\n'
+
+# Reality на том же порту принимает чужой SNI и притворяется сайтом-маской
+echo | openssl s_client -connect <IP>:443 -servername "$XRAY_REALITY_SNI" 2>/dev/null \
+  | openssl x509 -noout -subject
+```
+
+Первый запрос должен дать код приложения (не 502/525), второй — сертификат
+маскировочного сайта, а не ваш.
+
+Без `XRAY_DOMAIN` ничего этого не нужно: остаётся один Reality-канал, nginx не
+запускается, а бот выдаёт прямую `vless://`-ссылку вместо подписки.
+
+### IPv6
+
+`XRAY_IPV6=true` (по умолчанию) включает дуалстек сразу в трёх местах:
+
+- конфиг сервера — `dns.queryStrategy: UseIP` и `domainStrategy: UseIP` на
+  freedom-outbound'е (раньше оба были `UseIPv4`), Reality биндится на `::`;
+- подписка sing-box — `domain_strategy: prefer_ipv4` вместо `ipv4_only`, снят
+  блок `::/0` в `route.rules`, в TUN добавлен ULA-адрес IPv6;
+- готовые настройки Hiddify — `ipv6-mode: prefer_ipv4`.
+
+Заблокированными остаются только служебные диапазоны (`::1/128`, `fc00::/7`,
+`fe80::/10`) — это защита от доступа во внутреннюю сеть хоста, а не часть
+поддержки IPv6. Блок QUIC (UDP 443) не менялся — он лечит зависание YouTube и
+поиска.
+
+Если у VPS пропал исходящий IPv6 — `XRAY_IPV6=false`, иначе дуалстек-домены
+будут виснуть на таймауте Happy Eyeballs. IPv6 в туннеле AmneziaWG настраивается
+отдельно — `AWG_ADDRESS6`.
+
+Перед включением стоит проверить на хосте два факта:
+
+```bash
+# 1. Исходящий IPv6 реально работает
+curl -6 -s https://ifconfig.co
+
+# 2. bindv6only=0 — иначе сокет Reality на '::' перестанет принимать IPv4,
+#    и отвалятся ВСЕ клиенты без IPv6. Значение по умолчанию в Linux — 0.
+sysctl net.ipv6.bindv6only
+```
+
+Если `bindv6only=1`, либо верните `0` (`sysctl -w net.ipv6.bindv6only=0` плюс
+запись в `/etc/sysctl.d/`), либо поставьте `XRAY_IPV6=false` — тогда Reality
+слушает `0.0.0.0`, как раньше.
+
+### Состояние и файлы
+
+| Файл | Что внутри |
+|---|---|
+| `configs/xray.json` | рабочий конфиг, пересобирается при каждой синхронизации |
+| `configs/xray-reality.json` | ключи x25519 и shortId — переживают рестарт |
+| `configs/xray-ws.json` | случайный путь WS-эндпоинта |
+
+> ⚠️ Удаление `configs/xray-reality.json` или `configs/xray-ws.json` отключит
+> всех, кому уже выданы VLESS-ссылки: ключи и путь сгенерируются заново.
+> Клиентам с подпиской достаточно обновить её, остальным — взять ссылку в боте
+> заново.
+
+Добавление и удаление клиентов идёт через `xray api adu/rmu` — без перезапуска
+процесса, чтобы не рвать соединения остальным. Если API не ответил — процесс
+перезапускается (фолбэк).
+
+Бинарник `xray` ставится отдельным stage в `Dockerfile` (версия закреплена в
+`ARG XRAY_VERSION`). Если его в образе нет, приложение стартует штатно и
+AmneziaWG работает как раньше — `XrayService` пишет об этом в лог и остаётся
+выключенным.
+
+### Как это выглядит в боте
+
+В карточке конфига рядом с «📷 QR — AmneziaVPN» и «📄 Файл .conf» появляется
+«🌐 VLESS / подписка» (только когда Xray поднят). Она шлёт отдельное сообщение
+с подпиской, ссылками и кнопками: QR-код, QR для официального sing-box и
+готовый `.json` для импорта локальным профилем.
+
+Раздел «Инструкция» теперь двухуровневый: сначала способ подключения
+(AmneziaVPN / VLESS), потом платформа. Сводить их в один текст нельзя —
+сообщение не влезло бы в лимит Telegram.
 
 ## Прокси для Telegram (MTProto)
 
