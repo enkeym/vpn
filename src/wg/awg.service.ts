@@ -30,6 +30,7 @@ import {
 import {
   bringInterfaceDown,
   bringInterfaceUp,
+  getWanInterface,
   isBinaryAvailable,
   isInterfaceUp,
   isIpv6Available,
@@ -260,7 +261,7 @@ export class AwgService implements OnModuleInit {
     // В .env могли приехать короткие S1..S4 — с header protection они не работают
     assertValidObfuscation(obfuscation, awg3);
 
-    const { postUp, postDown } = this.buildFirewallRules();
+    const { postUp, postDown } = await this.buildFirewallRules();
 
     await this.writeConfig({
       privateKey,
@@ -302,12 +303,36 @@ export class AwgService implements OnModuleInit {
   }
 
   /**
+   * Внешний интерфейс для MASQUERADE. Имя NIC зависит от провайдера (eth0,
+   * ens3, enp1s0...) — хардкод здесь однажды уже привёл к тому, что правило
+   * NAT молча никогда не матчилось (реальный интерфейс отличался от
+   * зашитого), и трафик уходил только благодаря постороннему ручному правилу
+   * на сервере. AWG_WAN_IFACE — аварийный override, если авто-детект
+   * маршрута по какой-то причине выберет не то.
+   */
+  private async wanInterface(): Promise<string> {
+    const override = process.env.AWG_WAN_IFACE?.trim();
+    if (override) return override;
+
+    const detected = await getWanInterface();
+    if (!detected) {
+      throw new Error(
+        'Не удалось определить внешний интерфейс (ip route show default) ' +
+          'для правила MASQUERADE. Задайте его явно через AWG_WAN_IFACE.',
+      );
+    }
+
+    return detected;
+  }
+
+  /**
    * Правила фаервола интерфейса — единый источник и для нового конфига, и для
    * миграции уже существующего: разойдись они, на давно работающих серверах
    * правила навсегда остались бы в первой редакции.
    */
-  private firewallRules(): IFirewallRule[] {
+  private async firewallRules(): Promise<IFirewallRule[]> {
     const iface = this.binaries.interfaceName;
+    const wanIface = await this.wanInterface();
 
     // Без клэмпинга MSS хендшейк и мелкие пакеты (DNS, keepalive) проходят, а
     // крупные TCP-сегменты настоящих сайтов не помещаются в инкапсуляцию и тихо
@@ -323,7 +348,7 @@ export class AwgService implements OnModuleInit {
         bin: 'iptables',
         table: 'nat',
         chain: 'POSTROUTING',
-        rule: '-o eth0 -j MASQUERADE',
+        rule: `-o ${wanIface} -j MASQUERADE`,
       },
       { bin: 'iptables', table: 'mangle', chain: 'FORWARD', rule: clamp },
     ];
@@ -342,7 +367,7 @@ export class AwgService implements OnModuleInit {
         bin: 'ip6tables',
         table: 'nat',
         chain: 'POSTROUTING',
-        rule: '-o eth0 -j MASQUERADE',
+        rule: `-o ${wanIface} -j MASQUERADE`,
         optional: true,
       },
       {
@@ -355,8 +380,11 @@ export class AwgService implements OnModuleInit {
     ];
   }
 
-  private buildFirewallRules(): { postUp: string[]; postDown: string[] } {
-    const rules = this.firewallRules();
+  private async buildFirewallRules(): Promise<{
+    postUp: string[];
+    postDown: string[];
+  }> {
+    const rules = await this.firewallRules();
 
     const render = (rule: IFirewallRule, op: '-A' | '-D'): string => {
       const table = rule.table ? `-t ${rule.table} ` : '';
@@ -418,7 +446,7 @@ export class AwgService implements OnModuleInit {
     // себе их не получат: PostUp/PostDown пишутся только при создании файла.
     // Набор не дополняется, а заменяется целиком — файл под управлением сервиса
     // (0600), и только так его состояние гарантированно сходится с кодом.
-    const { postUp, postDown } = this.buildFirewallRules();
+    const { postUp, postDown } = await this.buildFirewallRules();
     if (
       config.postUp.join('\n') !== postUp.join('\n') ||
       config.postDown.join('\n') !== postDown.join('\n')

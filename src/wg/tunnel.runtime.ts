@@ -146,6 +146,19 @@ export async function readRuntimeStats(
   return stats;
 }
 
+/**
+ * Интерфейс с дефолтным маршрутом наружу — цель для MASQUERADE. Имя NIC
+ * зависит от провайдера (eth0, ens3, enp1s0...) и хардкодить его нельзя.
+ */
+export async function getWanInterface(): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync('ip route show default');
+    return stdout.match(/\bdev\s+(\S+)/)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Есть ли бинарь в PATH — по нему решается, доступен ли туннель вообще */
 export async function isBinaryAvailable(binary: string): Promise<boolean> {
   try {
