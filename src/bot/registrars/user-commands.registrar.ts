@@ -354,12 +354,6 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.sendVlessJsonFile(ctx, ctx.match[1]);
     });
 
-    // Прокси для Telegram (SOCKS5 через Xray) — отдельный от туннеля канал
-    bot.callbackQuery(/^tg_proxy:(.+)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showTelegramProxy(ctx, ctx.match[1]);
-    });
-
     // Редактирование описания своего конфига (только для админов)
     bot.callbackQuery(/^edit_description:(.+)$/, async (ctx) => {
       if (!ctx.from || !isAdmin(String(ctx.from.id))) {

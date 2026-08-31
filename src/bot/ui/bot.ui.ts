@@ -9,7 +9,6 @@ import {
   savingsPercent,
   type PaidDuration,
 } from 'src/payment/pricing';
-import type { ITelegramProxyLink } from 'src/xray/xray.service';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
@@ -596,15 +595,12 @@ export const BotUi = {
     return keyboard;
   },
 
-  // proxyAvailable — SOCKS5-прокси для Telegram поднят на сервере
-  // (PeersService.isTelegramProxyAvailable).
-  // vlessAvailable — поднят Xray (PeersService.isXrayAvailable). Оба флага
-  // передаются снаружи, а не читаются из env здесь: доступность канала —
-  // состояние сервиса, и UI не должен решать это за него.
+  // vlessAvailable — поднят Xray (PeersService.isXrayAvailable). Передаётся
+  // снаружи, а не читается из env здесь: доступность канала — состояние
+  // сервиса, и UI не должен решать это за него.
   peerDetailsKeyboard: (
     peer: TPeer,
     isAdmin: boolean = false,
-    proxyAvailable: boolean = false,
     vlessAvailable: boolean = false,
   ) => {
     const expired = isExpired(peer);
@@ -625,14 +621,6 @@ export const BotUi = {
     if (vlessAvailable) {
       rows.push([
         { text: '🌐 VLESS / подписка', data: `vless_menu:${peer.name}` },
-      ]);
-    }
-
-    // Прокси — бонус к активной подписке: истёкшему или поставленному на паузу
-    // конфигу кнопку не показываем.
-    if (proxyAvailable && !expired && !peer.paused) {
-      rows.push([
-        { text: '✈️ Прокси для Telegram', data: `tg_proxy:${peer.name}` },
       ]);
     }
 
@@ -725,41 +713,6 @@ export const BotUi = {
     '🌐 *VLESS сейчас недоступен*\n\n' +
     'Второй канал на сервере не запущен. Подключение по AmneziaVPN ' +
     '(QR-код и файл .conf) работает как обычно.',
-
-  // === Прокси для Telegram (SOCKS5 через Xray) ===
-
-  telegramProxyText: (link: ITelegramProxyLink) =>
-    '✈️ *Прокси для Telegram*\n\n' +
-    'Отдельный канал только для Telegram: мессенджер соединяется с нашим ' +
-    'сервером напрямую, VPN при этом включать не нужно. Остальной трафик ' +
-    'устройства через прокси *не идёт* — для него по-прежнему нужен конфиг.\n\n' +
-    '👇 Нажмите кнопку — Telegram сам предложит подключить прокси.\n\n' +
-    'Если кнопка не сработала, скопируйте ссылку и откройте её:\n' +
-    `\`${link.deepLink}\`\n\n` +
-    'Или добавьте вручную (Настройки → Данные и память → Прокси → ' +
-    'Добавить прокси → SOCKS5):\n' +
-    `⚙️ Сервер: \`${link.host}\`, порт: \`${link.port}\`\n` +
-    `👤 Логин: \`${link.user}\`\n` +
-    `🔑 Пароль: \`${link.pass}\`\n` +
-    '\n_Прокси доступен, пока активна подписка._',
-
-  telegramProxyKeyboard: (link: ITelegramProxyLink, peerName: string) =>
-    new InlineKeyboard()
-      .url('✈️ Подключить прокси', link.shareUrl)
-      .row()
-      .text('« К конфигу', `manage_peer:${peerName}`),
-
-  /** Прокси выключен на сервере либо подписка по конфигу уже неактивна */
-  telegramProxyUnavailable: (peerName: string) => ({
-    text:
-      '✈️ *Прокси для Telegram*\n\n' +
-      'Сейчас прокси недоступен — он либо отключён, либо подписка по этому ' +
-      'конфигу неактивна. Продлите конфиг или попробуйте позже.',
-    keyboard: new InlineKeyboard().text(
-      '« К конфигу',
-      `manage_peer:${peerName}`,
-    ),
-  }),
 
   // === Приветственные сообщения ===
 

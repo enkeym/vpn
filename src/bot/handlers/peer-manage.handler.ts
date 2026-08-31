@@ -83,7 +83,6 @@ export class PeerManageHandler {
         reply_markup: BotUi.peerDetailsKeyboard(
           peer,
           isAdmin,
-          this.peersService.isTelegramProxyAvailable(),
           this.peersService.isXrayAvailable(),
         ),
         parse_mode: 'Markdown',
@@ -120,7 +119,6 @@ export class PeerManageHandler {
         reply_markup: BotUi.peerDetailsKeyboard(
           peer,
           isAdmin,
-          this.peersService.isTelegramProxyAvailable(),
           this.peersService.isXrayAvailable(),
         ),
         parse_mode: 'Markdown',
@@ -398,43 +396,6 @@ export class PeerManageHandler {
         })
         .catch(() => {});
     }
-  }
-
-  // === Прокси для Telegram ===
-
-  /**
-   * Ссылка общая для всех клиентов (логин и пароль SOCKS одни на инстанс),
-   * поэтому право на неё перепроверяется здесь, а не только скрытием кнопки:
-   * карточка конфига могла остаться в чате с тех пор, когда подписка была
-   * активна.
-   */
-  async showTelegramProxy(ctx: Context, peerName: string) {
-    const link = this.peersService.getTelegramProxyLink();
-
-    let allowed = false;
-    if (link) {
-      try {
-        const peer = await this.peersService.findPeer(peerName);
-        const expired = peer.expiresAt ? new Date() > peer.expiresAt : false;
-        allowed = !peer.paused && !expired;
-      } catch {
-        this.logger.warn(`Прокси: конфиг ${peerName} не найден`);
-      }
-    }
-
-    if (!link || !allowed) {
-      const fallback = BotUi.telegramProxyUnavailable(peerName);
-      await safeEditMessageText(ctx, fallback.text, {
-        reply_markup: fallback.keyboard,
-        parse_mode: 'Markdown',
-      });
-      return;
-    }
-
-    await safeEditMessageText(ctx, BotUi.telegramProxyText(link), {
-      reply_markup: BotUi.telegramProxyKeyboard(link, peerName),
-      parse_mode: 'Markdown',
-    });
   }
 
   // === Замена конфига ===
