@@ -214,6 +214,9 @@ export class MainHandler {
       windows: BotUi.instructionWindows,
       macos: BotUi.instructionMacos,
       linux: BotUi.instructionLinux,
+      // Не платформа, а режим работы клиента — но экран того же вида и с тем
+      // же возвратом, поэтому отдельного обработчика не заводим.
+      split: BotUi.instructionSplitTunneling,
     };
 
     const text = instructions[platform] || 'Инструкция не найдена';
