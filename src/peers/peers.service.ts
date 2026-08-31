@@ -23,7 +23,7 @@ import {
 } from 'drizzle-orm';
 import { AwgService } from 'src/wg/awg.service';
 import { XrayService } from 'src/xray/xray.service';
-import type { IXrayClient } from 'src/xray/xray.service';
+import type { IXrayClient, ITelegramProxyLink } from 'src/xray/xray.service';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import type { DiscountEligibleDuration } from 'src/payment/pricing';
@@ -250,6 +250,16 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    */
   isSubscriptionAvailable(): boolean {
     return this.xrayService.isCdnEnabled();
+  }
+
+  /** Поднят ли SOCKS5-прокси для Telegram (XRAY_SOCKS_ENABLED). */
+  isTelegramProxyAvailable(): boolean {
+    return this.xrayService.isTelegramProxyEnabled();
+  }
+
+  /** Ссылка на прокси для Telegram; null — прокси выключен. */
+  getTelegramProxyLink(): ITelegramProxyLink | null {
+    return this.xrayService.getTelegramProxyLink();
   }
 
   private async syncWgWithDb() {

@@ -9,7 +9,7 @@ import {
   savingsPercent,
   type PaidDuration,
 } from 'src/payment/pricing';
-import type { IMtprotoProxyLink } from 'src/mtproto/mtproto.service';
+import type { ITelegramProxyLink } from 'src/xray/xray.service';
 
 // Экранирование специальных символов Markdown
 function escapeMarkdown(text: string): string {
@@ -596,7 +596,8 @@ export const BotUi = {
     return keyboard;
   },
 
-  // proxyAvailable — MTProto-прокси настроен на сервере (MtprotoService.enabled).
+  // proxyAvailable — SOCKS5-прокси для Telegram поднят на сервере
+  // (PeersService.isTelegramProxyAvailable).
   // vlessAvailable — поднят Xray (PeersService.isXrayAvailable). Оба флага
   // передаются снаружи, а не читаются из env здесь: доступность канала —
   // состояние сервиса, и UI не должен решать это за него.
@@ -725,9 +726,9 @@ export const BotUi = {
     'Второй канал на сервере не запущен. Подключение по AmneziaVPN ' +
     '(QR-код и файл .conf) работает как обычно.',
 
-  // === Прокси для Telegram (MTProto) ===
+  // === Прокси для Telegram (SOCKS5 через Xray) ===
 
-  telegramProxyText: (link: IMtprotoProxyLink) =>
+  telegramProxyText: (link: ITelegramProxyLink) =>
     '✈️ *Прокси для Telegram*\n\n' +
     'Отдельный канал только для Telegram: мессенджер соединяется с нашим ' +
     'сервером напрямую, VPN при этом включать не нужно. Остальной трафик ' +
@@ -735,13 +736,14 @@ export const BotUi = {
     '👇 Нажмите кнопку — Telegram сам предложит подключить прокси.\n\n' +
     'Если кнопка не сработала, скопируйте ссылку и откройте её:\n' +
     `\`${link.deepLink}\`\n\n` +
-    `⚙️ Сервер: \`${link.host}:${link.port}\`\n` +
-    (link.fakeTlsDomain
-      ? `🔒 Соединение маскируется под TLS-сеанс с \`${link.fakeTlsDomain}\`\n`
-      : '') +
+    'Или добавьте вручную (Настройки → Данные и память → Прокси → ' +
+    'Добавить прокси → SOCKS5):\n' +
+    `⚙️ Сервер: \`${link.host}\`, порт: \`${link.port}\`\n` +
+    `👤 Логин: \`${link.user}\`\n` +
+    `🔑 Пароль: \`${link.pass}\`\n` +
     '\n_Прокси доступен, пока активна подписка._',
 
-  telegramProxyKeyboard: (link: IMtprotoProxyLink, peerName: string) =>
+  telegramProxyKeyboard: (link: ITelegramProxyLink, peerName: string) =>
     new InlineKeyboard()
       .url('✈️ Подключить прокси', link.shareUrl)
       .row()

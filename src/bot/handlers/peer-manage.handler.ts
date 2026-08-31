@@ -9,7 +9,6 @@ import {
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
 import { MainHandler } from './main.handler';
-import { MtprotoService } from 'src/mtproto/mtproto.service';
 import { SubscriptionService } from 'src/subscription/subscription.service';
 
 // Состояние ожидания ввода описания для своих конфигов
@@ -26,7 +25,6 @@ export class PeerManageHandler {
   constructor(
     private readonly peersService: PeersService,
     private readonly mainHandler: MainHandler,
-    private readonly mtprotoService: MtprotoService,
     private readonly subscriptionService: SubscriptionService,
   ) {}
 
@@ -85,7 +83,7 @@ export class PeerManageHandler {
         reply_markup: BotUi.peerDetailsKeyboard(
           peer,
           isAdmin,
-          this.mtprotoService.enabled,
+          this.peersService.isTelegramProxyAvailable(),
           this.peersService.isXrayAvailable(),
         ),
         parse_mode: 'Markdown',
@@ -122,7 +120,7 @@ export class PeerManageHandler {
         reply_markup: BotUi.peerDetailsKeyboard(
           peer,
           isAdmin,
-          this.mtprotoService.enabled,
+          this.peersService.isTelegramProxyAvailable(),
           this.peersService.isXrayAvailable(),
         ),
         parse_mode: 'Markdown',
@@ -405,12 +403,13 @@ export class PeerManageHandler {
   // === Прокси для Telegram ===
 
   /**
-   * Ссылка общая для всех клиентов (mtg держит один секрет), поэтому право
-   * на неё перепроверяется здесь, а не только скрытием кнопки: карточка конфига
-   * могла остаться в чате с тех пор, когда подписка была активна.
+   * Ссылка общая для всех клиентов (логин и пароль SOCKS одни на инстанс),
+   * поэтому право на неё перепроверяется здесь, а не только скрытием кнопки:
+   * карточка конфига могла остаться в чате с тех пор, когда подписка была
+   * активна.
    */
   async showTelegramProxy(ctx: Context, peerName: string) {
-    const link = this.mtprotoService.getProxyLink();
+    const link = this.peersService.getTelegramProxyLink();
 
     let allowed = false;
     if (link) {

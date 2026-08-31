@@ -11,7 +11,6 @@ import { FamilyHandler } from './handlers/family.handler';
 import { AdminHandler } from './handlers/admin.handler';
 import { AutopayHandler } from './handlers/autopay.handler';
 import { PaymentModule } from 'src/payment/payment.module';
-import { MtprotoModule } from 'src/mtproto/mtproto.module';
 import { SubscriptionModule } from 'src/subscription/subscription.module';
 import { InvoiceService } from './invoice/invoice.service';
 import { MainMenuService } from './menu/main-menu.service';
@@ -25,7 +24,6 @@ import { AdminCommandsRegistrar } from './registrars/admin-commands.registrar';
     PeersModule,
     FamilyModule,
     BlockedModule,
-    MtprotoModule,
     // Готовый sing-box-конфиг файлом для карточки конфига (PeerManageHandler).
     SubscriptionModule,
     forwardRef(() => PaymentModule),

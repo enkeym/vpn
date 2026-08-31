@@ -72,7 +72,7 @@ sudo sysctl --system
 ```bash
 sudo ufw allow 22/tcp      # не заблокируйте себе SSH
 sudo ufw allow 443/tcp     # nginx: Reality + CDN-канал
-sudo ufw allow 8443/tcp    # MTProto-прокси (если нужен)
+sudo ufw allow 8443/tcp    # прокси Telegram, SOCKS5 (если нужен)
 sudo ufw allow 4500/udp    # публичный порт AmneziaWG
 sudo ufw enable
 ```
@@ -116,7 +116,7 @@ cp .env.example .env
 ```bash
 docker compose -p vpn-bot build
 docker compose -p vpn-bot up -d
-docker compose -p vpn-bot --profile mtproto up -d   # если нужен прокси Telegram
+make tg-proxy-up   # если нужен прокси Telegram (SOCKS5 внутри Xray)
 ```
 
 Миграции БД применяются сами при старте, отдельной команды не нужно.
@@ -302,21 +302,21 @@ base64 со ссылками (`src/subscription`).
 | `PORT` (3000) | NestJS | нет, наружу торчит только `/sub/` и `/` |
 
 Внутренние порты намеренно начинаются с 8444, а не с 8443: в `network_mode: host`
-localhost контейнера — это localhost хоста, а 8443 занят MTProto-прокси.
+localhost контейнера — это localhost хоста, а 8443 занят прокси для Telegram.
 
 **443/tcp закреплён за этим узлом.** Нестандартный порт для DPI — отдельный
 маркер, такой трафик режут в первую очередь, и сам Xray предупреждает об этом
-при старте. Ради этого MTProto-прокси уведён на 8443 (`MTPROTO_PORT`): для
-основного VPN порт важнее, чем для прокси Telegram.
+при старте. Ради этого прокси для Telegram уведён на 8443 (`XRAY_SOCKS_PORT`):
+для основного VPN порт важнее, чем для прокси Telegram.
 
-> ⚠️ Смена `MTPROTO_PORT` меняет выдаваемую `tg://`-ссылку. У `mtg` 2.x один
-> секрет на инстанс, ссылка общая — все ранее выданные ссылки на прежний порт
-> перестают работать. Новую бот отдаёт сам после перезапуска, отдельного
-> действия в БД не требуется.
+> ⚠️ Смена `XRAY_SOCKS_PORT` меняет выдаваемую `tg://socks`-ссылку. Пара
+> логин/пароль одна на инстанс, ссылка общая — все ранее выданные ссылки на
+> прежний порт перестают работать. Новую бот отдаёт сам после перезапуска,
+> отдельного действия в БД не требуется.
 
 ```bash
 sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality + CDN)
-sudo ufw allow 8443/tcp   # MTPROTO_PORT — прокси Telegram
+sudo ufw allow 8443/tcp   # XRAY_SOCKS_PORT — прокси Telegram
 ```
 
 `/peers` и `/metrics/` наружу намеренно не проксируются: они закрыты ключами, но
@@ -425,7 +425,7 @@ AmneziaWG работает как раньше — `XrayService` пишет об
 (AmneziaVPN / VLESS), потом платформа. Сводить их в один текст нельзя —
 сообщение не влезло бы в лимит Telegram.
 
-## Прокси для Telegram (MTProto)
+## Прокси для Telegram (SOCKS5)
 
 Отдельный от `awg0` канал: проксирует только трафик Telegram, весь остальной
 трафик через него не идёт. Даёт кнопку «✈️ Прокси для Telegram» в меню
@@ -433,35 +433,42 @@ AmneziaWG работает как раньше — `XrayService` пишет об
 паузе) подпиской. Полезен как запасной канал: Telegram остаётся доступен,
 даже если VPN-клиент не поднят.
 
-Демон — [`mtg`](https://github.com/9seconds/mtg) v2 в faketls-режиме (маскирует
-соединение под TLS-сеанс с обычным сайтом). Логику ссылки и валидацию env
-берёт на себя `MtprotoService` (`src/mtproto/mtproto.service.ts`).
+Это SOCKS5-инбаунд внутри того же процесса Xray, что обслуживает VLESS
+(`XrayService`, тег инбаунда `socks-tg`). Отдельного контейнера нет.
 
-> ⚠️ mtg 2.x принимает ровно один секрет на инстанс. Ссылка получается общая
-> для всех клиентов, отозвать доступ у одного нельзя — смена `MTPROTO_SECRET`
-> отключает сразу всех. Точечный per-user отзыв потребовал бы другого демона.
+> Раньше здесь был MTProto-прокси на демоне `mtg`. Его FakeTLS-сигнатуру
+> научились ловить, и канал перестал подключаться. SOCKS5 не «надёжнее
+> криптографически» — своего шифрования у него нет вообще, Telegram шифрует
+> трафик сам поверх него. Выигрыш в другом: у соединения нет узнаваемого
+> хендшейка, по которому вычисляли mtg. Ссылки `vless://` внутри себя Telegram
+> подключать не умеет, поэтому Reality-канал эту кнопку заменить не может —
+> мессенджер понимает ровно две схемы: `tg://proxy` и `tg://socks`.
+
+> ⚠️ Пара логин/пароль одна на инстанс — как раньше секрет mtg. Ссылка общая
+> для всех клиентов, отозвать доступ у одного нельзя: удаление
+> `configs/xray-socks.json` генерирует новую пару и отключает сразу всех.
+
+Выход с этого инбаунда разрешён только в сети Telegram — явным списком CIDR в
+`routing` (`TELEGRAM_NETS` в `src/xray/xray.service.ts`). Утёкший пароль
+поэтому не превращает сервер в открытый релей: через него нельзя ходить
+никуда, кроме мессенджера.
 
 | Переменная | Назначение |
 |---|---|
-| `MTPROTO_ENABLED` | `true` — показывать кнопку и отдавать ссылку (по умолчанию `false`) |
-| `MTPROTO_SECRET` | секрет faketls, см. генерацию ниже |
-| `MTPROTO_PORT` | TCP-порт прокси (по умолчанию `8443`) |
-| `MTPROTO_HOST` | хост в выдаваемой ссылке; пусто — берётся `WG_HOST` |
+| `XRAY_SOCKS_ENABLED` | `true` — поднять инбаунд, показывать кнопку и ссылку (по умолчанию `false`) |
+| `XRAY_SOCKS_PORT` | TCP-порт прокси (по умолчанию `8443`) |
+
+Логин и пароль в `.env` не задаются: Xray генерирует их при первом старте и
+хранит в `configs/xray-socks.json` — как ключи Reality и путь WS.
 
 ### Включение
 
-Сервис `mtg` вынесен в отдельный docker-compose профиль (`mtproto`) — обычным
-`up` не поднимается, только явно.
-
 ```bash
-make mtproto-up
+make tg-proxy-up
 ```
 
-Генерирует `MTPROTO_SECRET` в `.env`, только если его там ещё нет (повторный
-запуск существующий секрет не трогает — иначе у уже выданных ссылок сменился
-бы адрес), выставляет `MTPROTO_ENABLED=true`, поднимает `mtg` и пересоздаёт
-`vpn-bot`, чтобы он подхватил новый `.env`. Домен маскировки по умолчанию —
-`www.cloudflare.com`, переопределяется: `make mtproto-up MTPROTO_DOMAIN=example.com`.
+Выставляет `XRAY_SOCKS_ENABLED=true` в `.env` и пересоздаёт `vpn-bot`, чтобы
+он подхватил новый `.env`. Выключить — `make tg-proxy-down`.
 
 Порт при этом не открывает — при `network_mode: host` docker его не
 пробрасывает (та же логика, что у `AWG_PUBLIC_PORT`, см. `docs/scaling.md`),
@@ -471,25 +478,15 @@ make mtproto-up
 sudo ufw allow 8443/tcp
 ```
 
-Логи прокси — `make mtproto-logs`, остановить — `make mtproto-down`.
-
-Вручную, шаг за шагом (то же самое, что делает `make mtproto-up`):
+Проверить, что инбаунд поднялся и слушает порт:
 
 ```bash
-docker run --rm nineseconds/mtg:2 generate-secret --hex www.cloudflare.com
-# вывод → MTPROTO_SECRET в .env, MTPROTO_ENABLED=true
-docker compose -p vpn-bot --profile mtproto up -d
-docker compose -p vpn-bot up -d --force-recreate vpn-bot
+docker compose -p vpn-bot logs vpn-bot | grep -i socks
+ss -tlnp | grep 8443
 ```
 
-Проверить, что демон поднялся и слушает порт:
-
-```bash
-docker compose -p vpn-bot --profile mtproto logs mtg
-```
-
-Кнопка в боте появится сразу — `MtprotoService` собирает ссылку при старте
-приложения из `.env`, отдельного действия в БД не требуется.
+Кнопка в боте появится сразу после рестарта — ссылка собирается из параметров
+процесса, отдельного действия в БД не требуется.
 
 ## Project setup
 

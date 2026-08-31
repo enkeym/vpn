@@ -24,53 +24,22 @@ clean:
 	docker image prune -af --filter "label=com.docker.compose.project=$(NAME)"
 	docker volume prune -f --filter "label=com.docker.compose.project=$(NAME)"
 
-# Домен, под TLS которого маскируется прокси (faketls). Дефолт берётся из
-# .env (MTPROTO_DOMAIN), чтобы make mtp-up без аргументов помнил последний
-# использованный домен, а не тихо откатывался на cloudflare.com. Разовое
-# переопределение: make mtp-up MTPROTO_DOMAIN=example.com
-MTPROTO_DOMAIN ?= $(shell grep -E '^MTPROTO_DOMAIN=.+' .env 2>/dev/null | cut -d= -f2-)
-ifeq ($(strip $(MTPROTO_DOMAIN)),)
-MTPROTO_DOMAIN := www.cloudflare.com
-endif
-
-# Генерирует MTPROTO_SECRET, только если его ещё нет в .env (повторный запуск
-# существующий секрет не трогает — иначе пересоздание меняло бы ссылку у уже
-# выданных клиентов), включает MTPROTO_ENABLED и поднимает mtg. vpn-bot
-# пересоздаётся, чтобы подхватить новый .env — docker compose up без
-# --force-recreate не гарантированно перечитывает env_file на лету.
-mtp-up:
-	@if grep -qE '^MTPROTO_DOMAIN=' .env 2>/dev/null; then \
-		sed -i "s|^MTPROTO_DOMAIN=.*|MTPROTO_DOMAIN=$(MTPROTO_DOMAIN)|" .env; \
+# Прокси для Telegram (SOCKS5) живёт внутри Xray, отдельного контейнера у него
+# больше нет. Включение — XRAY_SOCKS_ENABLED=true в .env; логин и пароль Xray
+# генерирует сам в configs/xray-socks.json. vpn-bot пересоздаётся, чтобы
+# подхватить новый .env — docker compose up без --force-recreate не
+# гарантированно перечитывает env_file на лету.
+tg-proxy-up:
+	@if grep -qE '^XRAY_SOCKS_ENABLED=' .env 2>/dev/null; then \
+		sed -i 's|^XRAY_SOCKS_ENABLED=.*|XRAY_SOCKS_ENABLED=true|' .env; \
 	else \
-		printf '\nMTPROTO_DOMAIN=%s\n' "$(MTPROTO_DOMAIN)" >> .env; \
+		printf '\nXRAY_SOCKS_ENABLED=true\n' >> .env; \
 	fi
-	@if ! grep -qE '^MTPROTO_SECRET=.+' .env 2>/dev/null; then \
-		echo "MTPROTO_SECRET не задан — генерирую (домен маскировки: $(MTPROTO_DOMAIN))"; \
-		SECRET=$$(docker run --rm nineseconds/mtg:2 generate-secret --hex $(MTPROTO_DOMAIN)); \
-		if [ -z "$$SECRET" ]; then \
-			echo "Не удалось сгенерировать секрет — проверь, что образ nineseconds/mtg:2 доступен"; \
-			exit 1; \
-		fi; \
-		if grep -qE '^MTPROTO_SECRET=' .env 2>/dev/null; then \
-			sed -i "s|^MTPROTO_SECRET=.*|MTPROTO_SECRET=$$SECRET|" .env; \
-		else \
-			printf '\nMTPROTO_SECRET=%s\n' "$$SECRET" >> .env; \
-		fi; \
-		echo "Секрет записан в .env"; \
-	else \
-		echo "MTPROTO_SECRET уже задан — использую существующий"; \
-	fi
-	@if grep -qE '^MTPROTO_ENABLED=' .env 2>/dev/null; then \
-		sed -i 's|^MTPROTO_ENABLED=.*|MTPROTO_ENABLED=true|' .env; \
-	else \
-		printf '\nMTPROTO_ENABLED=true\n' >> .env; \
-	fi
-	docker compose -p $(NAME) --profile mtproto up -d
 	docker compose -p $(NAME) up -d --force-recreate vpn-bot
-	@echo "Готово. Логи прокси: make mtproto-logs"
+	@echo "Готово. Ссылку возьмите в боте: карточка конфига → «Прокси для Telegram»"
 
-mtp-down:
-	docker compose -p $(NAME) --profile mtproto stop mtg
-
-mtp-logs:
-	docker compose -p $(NAME) --profile mtproto logs -f mtg
+tg-proxy-down:
+	@if grep -qE '^XRAY_SOCKS_ENABLED=' .env 2>/dev/null; then \
+		sed -i 's|^XRAY_SOCKS_ENABLED=.*|XRAY_SOCKS_ENABLED=false|' .env; \
+	fi
+	docker compose -p $(NAME) up -d --force-recreate vpn-bot

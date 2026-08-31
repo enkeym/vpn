@@ -68,6 +68,55 @@ interface IXrayRealityParams {
   shortId: string;
 }
 
+/**
+ * Логин и пароль SOCKS5-инбаунда для Telegram. Хранятся в
+ * configs/xray-socks.json: пара уезжает клиенту прямо в tg://socks-ссылке,
+ * и после рестарта она обязана остаться прежней — иначе выданные ссылки умрут.
+ */
+interface IXraySocksParams {
+  user: string;
+  pass: string;
+}
+
+/** Готовая к выдаче пользователю ссылка на SOCKS5-прокси для Telegram */
+export interface ITelegramProxyLink {
+  /** https://t.me/socks?… — по клику Telegram сам открывает диалог подключения */
+  shareUrl: string;
+  /** tg://socks?… — та же ссылка схемой приложения, на случай ручного копирования */
+  deepLink: string;
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+}
+
+/**
+ * Сети Telegram — единственное, куда выпускается SOCKS-инбаунд. Пароль на нём
+ * один на всех (как раньше секрет mtg), то есть рано или поздно утечёт; с этим
+ * списком утёкшая ссылка остаётся бесполезной для всего, кроме мессенджера, и
+ * сервер не превращается в открытый релей.
+ *
+ * Явные CIDR, а не geoip:telegram — по той же причине, что и в блокировке
+ * приватных сетей ниже: отсутствующая в geoip.dat категория роняет загрузку
+ * конфига целиком, то есть прокси для мессенджера утащил бы за собой VLESS.
+ * Список официальных подсетей Telegram меняется раз в несколько лет.
+ */
+const TELEGRAM_NETS = [
+  '91.108.4.0/22',
+  '91.108.8.0/22',
+  '91.108.12.0/22',
+  '91.108.16.0/22',
+  '91.108.20.0/22',
+  '91.108.56.0/22',
+  '149.154.160.0/20',
+  '185.76.151.0/24',
+  '2001:67c:4e8::/48',
+  '2001:b28:f23c::/48',
+  '2001:b28:f23d::/48',
+  '2001:b28:f23f::/48',
+  '2a0a:f280::/32',
+];
+
 /** Публичные параметры каналов — из них SubscriptionService собирает outbound'ы. */
 export interface IXrayPublicParams {
   /** null — домен не задан, CDN-канал выключен (остаётся только Reality). */
@@ -98,6 +147,10 @@ export interface IXrayPublicParams {
  * 2. VLESS+Reality — прямой TCP на реальный IP сервера, без CDN и без WS.
  *    Слушает XRAY_REALITY_PORT напрямую (контейнер в network_mode: host,
  *    nginx перед Xray в этой ветке нет — см. README).
+ *
+ * Плюс SOCKS5-инбаунд для Telegram (XRAY_SOCKS_ENABLED) — не путь обхода для
+ * всего трафика, а замена MTProto-прокси: мессенджер подключает его сам, без
+ * VPN-клиента. Выход с него разрешён только в сети Telegram.
  */
 @Injectable()
 export class XrayService implements OnModuleInit, OnModuleDestroy {
@@ -113,6 +166,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly realityParamsPath = path.join(
     process.cwd(),
     '/configs/xray-reality.json',
+  );
+  private readonly socksParamsPath = path.join(
+    process.cwd(),
+    '/configs/xray-socks.json',
   );
   private readonly configPath = path.join(process.cwd(), '/configs/xray.json');
 
@@ -137,7 +194,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   /**
    * Внутренний порт Reality — используется, только когда перед Xray стоит
    * nginx-разводчик (см. behindProxy). Не 8443: там в network_mode: host живёт
-   * MTProto-прокси, а localhost контейнера — это localhost хоста.
+   * SOCKS5-прокси для Telegram, а localhost контейнера — это localhost хоста.
    */
   private readonly internalRealityPort = Number(
     process.env.XRAY_INTERNAL_REALITY_PORT || 8444,
@@ -146,6 +203,14 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
   );
+  /**
+   * SOCKS5-прокси для Telegram — третий канал, заменивший MTProto (mtg).
+   * Выключен по умолчанию: инбаунд смотрит наружу, и порт надо открыть в
+   * фаерволе руками (network_mode: host).
+   */
+  private readonly socksEnabled = process.env.XRAY_SOCKS_ENABLED === 'true';
+  /** Публичный порт SOCKS5. 8443 — тот же, что раньше слушал mtg. */
+  private readonly socksPort = Number(process.env.XRAY_SOCKS_PORT || 8443);
   /** Пусто — CDN-канал (WS+TLS) не поднимается, остаётся только Reality. */
   private readonly domain = process.env.XRAY_DOMAIN || null;
   /** Адрес сервера в прямой Reality-ссылке. Общий с AmneziaWG (WG_HOST). */
@@ -167,6 +232,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
   private wsParams: IXrayWsParams | null = null;
   private realityParams: IXrayRealityParams | null = null;
+  private socksParams: IXraySocksParams | null = null;
   private clients: IXrayClient[] = [];
 
   /** false — бинарника нет, выключено через env или не задан HOST. */
@@ -215,6 +281,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       .runExclusive(async () => {
         await this.loadOrGenerateWsParams();
         await this.loadOrGenerateRealityParams();
+        if (this.socksEnabled) await this.loadOrGenerateSocksParams();
         await this.writeConfig();
         this.startProcess();
         this.enabled = true;
@@ -520,6 +587,35 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     return links;
   }
 
+  /** Поднят ли SOCKS5-прокси для Telegram — от этого зависит кнопка в карточке конфига. */
+  isTelegramProxyEnabled(): boolean {
+    return this.enabled && this.socksEnabled && this.socksParams !== null;
+  }
+
+  /**
+   * Ссылка на SOCKS5-прокси для Telegram. null — прокси выключен или Xray не
+   * поднялся. Пара логин/пароль общая для всех клиентов (как раньше секрет
+   * mtg): отозвать доступ у одного нельзя, пересоздание
+   * configs/xray-socks.json отключает сразу всех.
+   */
+  getTelegramProxyLink(): ITelegramProxyLink | null {
+    if (!this.isTelegramProxyEnabled() || !this.socksParams) return null;
+
+    const { user, pass } = this.socksParams;
+    const query =
+      `server=${encodeURIComponent(this.host)}&port=${this.socksPort}` +
+      `&user=${encodeURIComponent(user)}&pass=${encodeURIComponent(pass)}`;
+
+    return {
+      shareUrl: `https://t.me/socks?${query}`,
+      deepLink: `tg://socks?${query}`,
+      host: this.host,
+      port: this.socksPort,
+      user,
+      pass,
+    };
+  }
+
   /**
    * Кумулятивный per-user трафик через StatsService (растёт с момента
    * старта процесса, как счётчики WireGuard — не дельта). Ключ Map — email
@@ -600,6 +696,30 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       JSON.stringify(this.realityParams, null, 2),
     );
     this.logger.log('Сгенерированы новые Reality-ключи (x25519 + shortId)');
+  }
+
+  private async loadOrGenerateSocksParams(): Promise<void> {
+    if (existsSync(this.socksParamsPath)) {
+      const raw = await readFile(this.socksParamsPath, 'utf-8');
+      const parsed = JSON.parse(raw) as Partial<IXraySocksParams>;
+
+      if (parsed.user && parsed.pass) {
+        this.socksParams = { user: parsed.user, pass: parsed.pass };
+        return;
+      }
+    }
+
+    // base64url: пара уезжает в query tg://socks-ссылки, и лишнее
+    // экранирование в ней только мешает пользователю копировать руками.
+    this.socksParams = {
+      user: `tg${randomBytes(4).toString('hex')}`,
+      pass: randomBytes(12).toString('base64url'),
+    };
+    await writeFile(
+      this.socksParamsPath,
+      JSON.stringify(this.socksParams, null, 2),
+    );
+    this.logger.log('Сгенерирована новая пара логин/пароль для SOCKS5-прокси');
   }
 
   private async generateRealityParams(): Promise<IXrayRealityParams> {
@@ -738,6 +858,69 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    // SOCKS5 для Telegram. Отдельный инбаунд, а не канал VLESS: мессенджер
+    // умеет ровно две ссылки — tg://proxy (MTProto) и tg://socks, и подключить
+    // vless:// внутри себя не может. Пара логин/пароль одна на всех, поэтому
+    // выход ограничен сетями Telegram (см. TELEGRAM_NETS ниже в routing).
+    // udp не включаем: клиенты Telegram через SOCKS5 его не используют,
+    // а UDP-ассоциация потребовала бы отдавать наружу ещё и адрес релея.
+    if (this.socksEnabled && this.socksParams) {
+      inbounds.push({
+        tag: 'socks-tg',
+        listen: this.ipv6Enabled ? '::' : '0.0.0.0',
+        port: this.socksPort,
+        protocol: 'socks',
+        settings: {
+          auth: 'password',
+          accounts: [
+            { user: this.socksParams.user, pass: this.socksParams.pass },
+          ],
+          udp: false,
+        },
+      });
+    }
+
+    const routingRules: Record<string, unknown>[] = [
+      { type: 'field', inboundTag: ['api'], outboundTag: 'api' },
+      // Блокируем клиентам доступ во внутренние/локальные сети сервера
+      // (loopback, docker-сеть, LAN). Иначе через туннель были бы доступны
+      // Stats API (127.0.0.1:8881), health, внутренний WS и прочие сервисы
+      // контейнера — а в network_mode: host это вся внутренняя сеть хоста.
+      // Явные CIDR вместо geoip:private — не зависит от geoip.dat.
+      // IPv6-диапазоны остаются заблокированы и при XRAY_IPV6=true:
+      // включён выход в глобальный IPv6, а не в служебные сети.
+      {
+        type: 'field',
+        outboundTag: 'block',
+        ip: [
+          '0.0.0.0/8',
+          '10.0.0.0/8',
+          '100.64.0.0/10',
+          '127.0.0.0/8',
+          '169.254.0.0/16',
+          '172.16.0.0/12',
+          '192.168.0.0/16',
+          '::1/128',
+          'fc00::/7',
+          'fe80::/10',
+        ],
+      },
+    ];
+
+    // Порядок важен: сначала пропускаем Telegram, следом глушим всё
+    // остальное с этого инбаунда — правило-«хвост» без списка адресов.
+    if (this.socksEnabled && this.socksParams) {
+      routingRules.push(
+        {
+          type: 'field',
+          inboundTag: ['socks-tg'],
+          ip: TELEGRAM_NETS,
+          outboundTag: 'direct',
+        },
+        { type: 'field', inboundTag: ['socks-tg'], outboundTag: 'block' },
+      );
+    }
+
     return {
       log: { loglevel: 'warning' },
       // Резолвинг на сервере. С IPv6 спрашиваем и AAAA (UseIP), иначе только
@@ -771,34 +954,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           },
         },
       },
-      routing: {
-        rules: [
-          { type: 'field', inboundTag: ['api'], outboundTag: 'api' },
-          // Блокируем клиентам доступ во внутренние/локальные сети сервера
-          // (loopback, docker-сеть, LAN). Иначе через туннель были бы доступны
-          // Stats API (127.0.0.1:8881), health, внутренний WS и прочие сервисы
-          // контейнера — а в network_mode: host это вся внутренняя сеть хоста.
-          // Явные CIDR вместо geoip:private — не зависит от geoip.dat.
-          // IPv6-диапазоны остаются заблокированы и при XRAY_IPV6=true:
-          // включён выход в глобальный IPv6, а не в служебные сети.
-          {
-            type: 'field',
-            outboundTag: 'block',
-            ip: [
-              '0.0.0.0/8',
-              '10.0.0.0/8',
-              '100.64.0.0/10',
-              '127.0.0.0/8',
-              '169.254.0.0/16',
-              '172.16.0.0/12',
-              '192.168.0.0/16',
-              '::1/128',
-              'fc00::/7',
-              'fe80::/10',
-            ],
-          },
-        ],
-      },
+      routing: { rules: routingRules },
       inbounds,
       outbounds: [
         // UseIP — дуалстек: домены резолвятся и в A, и в AAAA. При
