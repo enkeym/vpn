@@ -739,7 +739,11 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     });
 
     return {
-      log: { loglevel: 'warning' },
+      // access: 'none' — иначе Xray пишет строку на КАЖДОЕ принятое соединение
+      // ("from ... accepted tcp:...") в stdout, а startProcess прокидывает stdout
+      // в logger.debug: на активном Reality-канале это сотни строк в минуту.
+      // Ошибки (loglevel) при этом остаются.
+      log: { loglevel: 'warning', access: 'none' },
       // Резолвинг на сервере. С IPv6 спрашиваем и AAAA (UseIP), иначе только
       // A-записи — см. XRAY_IPV6.
       dns: {
