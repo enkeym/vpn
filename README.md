@@ -108,7 +108,7 @@ cp .env.example .env
 
 Минимум, без которого не поедет: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS`,
 `WG_HOST` (IP сервера). Для второго канала — `XRAY_DOMAIN`. Для оплаты —
-`YOOKASSA_*` и `RECEIPT_CUSTOMER_EMAIL`.
+`YOOKASSA_*`.
 
 ### 6. Сборка и запуск
 

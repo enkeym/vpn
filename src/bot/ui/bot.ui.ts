@@ -15,27 +15,6 @@ function escapeMarkdown(text: string): string {
   return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 }
 
-/**
- * Строка с ссылками на оферту и политику конфиденциальности. Акцепт оферты —
- * действием (оплатой), 152-ФЗ уведомление об обработке ПДн. URL берутся из env
- * (LEGAL_OFFER_URL / LEGAL_PRIVACY_URL) в момент вызова, а не при импорте, —
- * ConfigModule к этому времени уже загрузил .env в process.env. Если ни один URL
- * не задан — строка пустая (ничего не показываем).
- */
-function legalNoticeText(): string {
-  const offer = process.env.LEGAL_OFFER_URL?.trim();
-  const privacy = process.env.LEGAL_PRIVACY_URL?.trim();
-  const links: string[] = [];
-  if (offer) links.push(`[Оферту](${offer})`);
-  if (privacy) links.push(`[Политику конфиденциальности](${privacy})`);
-  if (links.length === 0) return '';
-  return (
-    'ℹ️ _Оплачивая подписку и пользуясь ботом, вы принимаете ' +
-    links.join(' и ') +
-    ', и даёте согласие на обработку персональных данных._'
-  );
-}
-
 function isExpired(peer: TPeer): boolean {
   if (!peer.expiresAt) return false;
   return new Date() > peer.expiresAt;
@@ -145,7 +124,7 @@ export const BotUi = {
       kb.text('🆓 Пробный период', 'create_trial_config').row();
     }
     if (showGetVpn) {
-      kb.text('📄 Получить VPN', 'show_create_options').row();
+      kb.text('📄 Получить доступ', 'show_create_options').row();
     }
     return kb
       .text('📂 Мои конфиги', 'list_configs')
@@ -159,7 +138,7 @@ export const BotUi = {
     if (showTrial) {
       kb.text('🆓 Пробный период', 'create_trial_config').row();
     }
-    kb.text('📄 Получить VPN', 'show_create_options').row();
+    kb.text('📄 Получить доступ', 'show_create_options').row();
     return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
@@ -173,7 +152,7 @@ export const BotUi = {
     if (showTrial) {
       kb.text('🆓 Пробный период', 'create_trial_config').row();
     }
-    kb.text('📄 Получить VPN', 'show_create_options').row();
+    kb.text('📄 Получить доступ', 'show_create_options').row();
     return kb
       .text('📂 Мои конфиги', 'list_configs')
       .row()
@@ -229,28 +208,40 @@ export const BotUi = {
   adminSettingsTitle: (paymentEnabled: boolean, testPayment: boolean) =>
     '⚙️ *Параметры*\n\n' +
     `💳 Приём оплаты: *${paymentEnabled ? 'включён' : 'выключен'}*\n` +
-    `🧪 Тестовая оплата: *${testPayment ? 'включена (1 ₽ — только для админов)' : 'выключена'}*\n\n` +
-    (testPayment
-      ? '🧪 _У админов «Получить VPN» ведёт в тарифы с ценой 1 ₽ — полный клиентский путь: счёт, оплата, выдача конфига._\n' +
+    (paymentEnabled
+      ? `   └ 🧪 Тестовая оплата: *${testPayment ? 'включена (1 ₽ — только для админов)' : 'выключена'}*\n\n`
+      : '   └ 🧪 Тестовая оплата: *недоступна* — сначала включите приём оплаты\n\n') +
+    (paymentEnabled && testPayment
+      ? '🧪 _У админов «Получить доступ» ведёт в тарифы с ценой 1 ₽ — полный клиентский путь: счёт, оплата, выдача конфига._\n' +
         '✅ _Обычные клиенты продолжают платить полную цену — продажи не ломаются. Группу «Семья» режим не затрагивает._\n\n'
       : '') +
     'Изменения применяются мгновенно, без перезапуска бота.',
 
-  adminSettingsKeyboard: (paymentEnabled: boolean, testPayment: boolean) =>
-    new InlineKeyboard()
+  // Тестовая оплата — подрежим основной: её переключатель показывается только
+  // при включённом приёме оплаты, иначе состояние «включена» вводит в
+  // заблуждение (счёт всё равно не выставится).
+  adminSettingsKeyboard: (paymentEnabled: boolean, testPayment: boolean) => {
+    const kb = new InlineKeyboard()
       .text(
         paymentEnabled ? '💳 Оплата: ВКЛ ✅' : '💳 Оплата: ВЫКЛ ⛔',
         'admin_toggle_payment',
       )
-      .row()
-      .text(
+      .row();
+
+    if (paymentEnabled) {
+      kb.text(
         testPayment
           ? '🧪 Тестовая оплата: ВКЛ ✅'
           : '🧪 Тестовая оплата: ВЫКЛ ⛔',
         'admin_toggle_test_payment',
-      )
-      .row()
-      .text('« К панели администратора', 'admin_panel'),
+      ).row();
+    }
+
+    return kb.text('« К панели администратора', 'admin_panel');
+  },
+
+  testPaymentRequiresPaymentAlert:
+    'Сначала включите приём оплаты — тестовая оплата работает только внутри него',
 
   adminStatsText: (stats: {
     totalConfigs: number;
@@ -405,14 +396,11 @@ export const BotUi = {
 
   selectDurationTitle: '⏱ *Выберите срок действия конфига:*',
 
-  /** Строка с ссылками на оферту/политику (пустая, если URL не заданы). */
-  legalNotice: legalNoticeText,
-
   // Меню оплаты для обычных пользователей (все платные тарифы)
   paymentPlansTitle: (hasDiscount: boolean, testPayment = false) =>
-    '💳 *Тарифы TUNEL VPN*\n\n' +
+    '💳 *Тарифы TUNEL*\n\n' +
     'Выберите срок — сразу откроется счёт ЮKassa. После успешной оплаты конфиг придёт в этот чат автоматически.\n\n' +
-    '🛡 _AmneziaVPN с обфускацией — трафик не распознаётся как VPN_\n' +
+    '🛡 _Современное шифрование трафика между вашим устройством и сервером_\n' +
     '📱 _Один конфиг: Android, iOS, Windows, macOS, Linux_\n' +
     `💰 _Чем длиннее срок, тем дешевле месяц: от ${PRICING_PLANS[30].price} ₽ до ${monthlyEquivalent(365)} ₽_\n\n` +
     (hasDiscount
@@ -421,8 +409,7 @@ export const BotUi = {
     '❗️ *iPhone / iPad:* перед покупкой откройте «📖 Инструкция» → «🍎 iOS / iPhone»: AmneziaVPN ставится только после смены региона Apple ID.\n\n' +
     (testPayment
       ? '⚠️ Тестовый режим админа: в ЮKassa спишется *1 ₽* за любой тариф. У клиентов — полная цена.\n\n'
-      : '') +
-    legalNoticeText(),
+      : ''),
 
   paymentMenuUnavailable:
     '💳 *Оплата временно недоступна*\n\n' +
@@ -462,7 +449,7 @@ export const BotUi = {
   /** Предложение после успешной оплаты — автосписание по умолчанию выключено */
   autopayOfferText: (durationDays: PaidDuration, methodTitle: string | null) =>
     '🔄 *Включить автопродление?*\n\n' +
-    `Чтобы VPN не отключился в неподходящий момент, бот может сам продлевать подписку на *${durationDays} дн.* — списание *${getPlanPrice(durationDays)} ₽* за сутки до окончания срока.\n\n` +
+    `Чтобы доступ не прервался в неподходящий момент, бот может сам продлевать подписку на *${durationDays} дн.* — списание *${getPlanPrice(durationDays)} ₽* за сутки до окончания срока.\n\n` +
     (methodTitle ? `💳 Карта: ${escapeMarkdown(methodTitle)}\n` : '') +
     '✅ Отключить можно в любой момент — в меню конфига.\n' +
     '🔔 О каждом списании предупредим заранее.\n\n' +
@@ -507,7 +494,7 @@ export const BotUi = {
       '\n' +
       (state.enabled
         ? '_Спишем автоматически за сутки до окончания срока и пришлём конфиг. Предупреждение придёт за 3 дня._'
-        : '_Включите, чтобы подписка продлевалась сама и VPN не отключился._')
+        : '_Включите, чтобы подписка продлевалась сама и доступ не прерывался._')
     );
   },
 
@@ -579,7 +566,7 @@ export const BotUi = {
   emptyConfigsKeyboard: (showGetVpn = true) => {
     const kb = new InlineKeyboard();
     if (showGetVpn) {
-      kb.text('📄 Получить VPN', 'show_create_options').row();
+      kb.text('📄 Получить доступ', 'show_create_options').row();
     }
     return kb.text('« Назад в меню', 'main_menu');
   },
@@ -718,19 +705,19 @@ export const BotUi = {
 
   welcomeMessageAdmin:
     '👋 *Добро пожаловать, Администратор!*\n\n' +
-    '🔧 Вы имеете полный доступ к управлению TUNEL VPN.\n\n' +
+    '🔧 Вы имеете полный доступ к управлению сервисом TUNEL.\n\n' +
     '🛠 Группа «Семья», поиск и управление клиентами, статистика, аналитика, ' +
     'Рупор и Параметры — в разделе *«Панель администратора»* внизу меню.\n\n' +
     'Выберите действие:',
 
   welcomeMessageFamily:
-    '👋 *Добро пожаловать в TUNEL VPN!*\n\n' +
+    '👋 *Добро пожаловать в TUNEL!*\n\n' +
     '📍 *Сервер:* Финляндия\n' +
     '⚡ *Скорость:* до *200 Мбит/с*\n' +
     '🛡 *Шифрование трафика* и приватность соединения\n\n' +
     '🏠 Вы являетесь членом группы «Семья».\n\n' +
     'Вам доступно:\n' +
-    '• 📄 Создание VPN конфигов\n' +
+    '• 📄 Создание конфигов доступа\n' +
     '• 📂 Управление своими конфигами\n' +
     '• 📖 Инструкции по установке\n\n' +
     '❗️ *iPhone / iPad:* AmneziaVPN нет в российском App Store — сначала смените регион Apple ID (раздел «📖 Инструкция» → «🍎 iOS / iPhone»).\n\n' +
@@ -738,7 +725,7 @@ export const BotUi = {
     'Выберите действие:',
 
   welcomeMessageUser:
-    '🔐 *TUNEL VPN*\n\n' +
+    '🔐 *TUNEL — защищённое соединение*\n\n' +
     '📍 *Сервер:* Финляндия  ⚡ *до 200 Мбит/с*\n\n' +
     'Шифруем интернет-трафик между вашим устройством и нашим сервером: данные защищены в открытых Wi-Fi, а провайдер не видит содержимое соединения.\n\n' +
     '*Что вы получаете:*\n' +
@@ -755,11 +742,11 @@ export const BotUi = {
     '💬 *По всем вопросам и за поддержкой:* @CharlieWaldo\n\n' +
     'Выберите действие 👇',
 
-  welcomeMessage: '👋 *TUNEL VPN*\n\nВыберите действие:',
+  welcomeMessage: '👋 *TUNEL*\n\nВыберите действие:',
   creatingConfig: '⏳ *Создаю конфигурацию...*',
   noConfigs:
     '📂 *У вас пока нет конфигураций*\n\n' +
-    'Нажмите «Получить VPN», чтобы:\n' +
+    'Нажмите «Получить доступ», чтобы:\n' +
     '• Получить пробный конфиг на 3 дня (_бесплатно, один раз_)\n' +
     '• Или выбрать тариф от 30 дней до года\n\n' +
     'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
@@ -775,7 +762,7 @@ export const BotUi = {
       '*Дальнейшие шаги:*\n' +
       '1. Установите приложение AmneziaVPN\n' +
       '2. Откройте в нём этот файл и нажмите «Подключить»\n' +
-      '3. Готово — VPN активен\n\n' +
+      '3. Готово — защищённое соединение активно\n\n' +
       '⚠️ _Конфиг открывается только в AmneziaVPN — официальный клиент WireGuard его не примет._\n\n' +
       '_Подробная инструкция для каждой платформы — в разделе «Инструкция»._\n\n' +
       '_На телефоне можно использовать кнопку «QR-код» в карточке конфига для быстрой настройки._';
@@ -1497,7 +1484,7 @@ export const BotUi = {
     '• Либо отсканируйте QR-код из карточки конфига\n\n' +
     '*Шаг 3: Подключитесь*\n' +
     '• Нажмите кнопку подключения\n' +
-    '• Разрешите создание VPN-соединения\n' +
+    '• Разрешите приложению создать защищённое соединение\n' +
     '• Готово! 🎉\n\n' +
     '⚠️ _Официальный клиент WireGuard такой конфиг не откроет._',
 

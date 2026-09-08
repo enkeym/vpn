@@ -96,58 +96,6 @@ export class PaymentService {
     return (await this.isTestPaymentFor(telegramId)) ? 1 : nominalRub;
   }
 
-  /**
-   * Объект чека для ЮKassa (54-ФЗ / 422-ФЗ для самозанятого). Без чека платёж
-   * самозанятого не фискализируется. Контакт покупателя берётся из
-   * RECEIPT_CUSTOMER_EMAIL (пока не собираем личный email клиента — чек
-   * регистрируется в ФНС и хранится на служебном контакте продавца).
-   * vat_code=1 — «без НДС»: самозанятый на НПД НДС не платит.
-   *
-   * Возвращает undefined, если контакт не настроен — тогда receipt не
-   * прикладывается (иначе ЮKassa отклонит платёж с неполным чеком). Настройка
-   * автофискализации самозанятого в ЛК ЮKassa — обязательна, см. docs/legal.
-   */
-  private buildReceipt(
-    amountRub: number,
-    description: string,
-  ):
-    | {
-        customer: { email: string };
-        items: Array<{
-          description: string;
-          quantity: string;
-          amount: { value: string; currency: 'RUB' };
-          vat_code: number;
-          payment_subject: 'service';
-          payment_mode: 'full_payment';
-        }>;
-      }
-    | undefined {
-    const email = this.configService
-      .get<string>('RECEIPT_CUSTOMER_EMAIL')
-      ?.trim();
-    if (!email) {
-      this.logger.warn(
-        'RECEIPT_CUSTOMER_EMAIL не задан — чек (54-ФЗ/НПД) не будет сформирован. Настройте контакт и автофискализацию самозанятого в ЮKassa.',
-      );
-      return undefined;
-    }
-    return {
-      customer: { email },
-      items: [
-        {
-          // Наименование услуги в чеке — не более 128 символов
-          description: description.slice(0, 128),
-          quantity: '1',
-          amount: { value: amountRub.toFixed(2), currency: 'RUB' },
-          vat_code: 1,
-          payment_subject: 'service',
-          payment_mode: 'full_payment',
-        },
-      ],
-    };
-  }
-
   getYookassaReturnUrl(): string {
     const raw =
       this.configService.get<string>('TELEGRAM_BOT_USERNAME')?.trim() || 'bot';
@@ -185,9 +133,8 @@ export class PaymentService {
     if (peerName) metadata.peerName = peerName;
 
     const description = peerName
-      ? `Продление VPN TUNEL на ${durationDays} дней`
-      : `Оплата VPN TUNEL на ${durationDays} дней`;
-    const receipt = this.buildReceipt(chargeRub, description);
+      ? `Продление подписки TUNEL на ${durationDays} дней`
+      : `Подписка TUNEL на ${durationDays} дней`;
 
     try {
       const response = await axios.post(
@@ -201,7 +148,6 @@ export class PaymentService {
             return_url: this.getYookassaReturnUrl(),
           },
           description,
-          ...(receipt ? { receipt } : {}),
           metadata,
         },
         {
@@ -258,8 +204,7 @@ export class PaymentService {
     const chargeRub = await this.getBilledAmountRub(amount, telegramId);
     const idempotenceKey = randomUUID();
 
-    const description = `Автопродление VPN TUNEL на ${durationDays} дней`;
-    const receipt = this.buildReceipt(chargeRub, description);
+    const description = `Автопродление подписки TUNEL на ${durationDays} дней`;
 
     const response = await axios.post<IYooKassaPaymentResponse>(
       this.apiUrl,
@@ -268,7 +213,6 @@ export class PaymentService {
         capture: true,
         payment_method_id: paymentMethodId,
         description,
-        ...(receipt ? { receipt } : {}),
         metadata: {
           telegramId,
           durationDays: String(durationDays),

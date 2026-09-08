@@ -33,9 +33,18 @@ export class SettingsService {
 
   async setPaymentEnabled(value: boolean): Promise<void> {
     await this.setBool(PAYMENT_ENABLED_KEY, value);
+    if (!value) {
+      await this.setBool(TEST_PAYMENT_KEY, false);
+    }
   }
 
+  /**
+   * Тестовая оплата — подрежим приёма оплаты, а не второй равноправный
+   * флаг: при выключенном приёме она всегда выключена, даже если в БД
+   * или .env осталось true.
+   */
   async isTestPayment(): Promise<boolean> {
+    if (!(await this.isPaymentEnabled())) return false;
     return this.getBool(
       TEST_PAYMENT_KEY,
       this.configService.get<string>('TEST_PAYMENT') === 'true',

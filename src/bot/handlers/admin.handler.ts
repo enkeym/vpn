@@ -93,6 +93,15 @@ export class AdminHandler {
   }
 
   async toggleTestPayment(ctx: Context) {
+    if (!(await this.paymentService.isPaymentEnabled())) {
+      await ctx.answerCallbackQuery({
+        text: BotUi.testPaymentRequiresPaymentAlert,
+        show_alert: true,
+      });
+      await this.showSettings(ctx);
+      return;
+    }
+
     const current = await this.paymentService.isTestPayment();
     await this.paymentService.setTestPayment(!current);
     this.logger.log(
