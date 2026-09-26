@@ -10,7 +10,11 @@ import {
   sendPeerConfigFileMessage,
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
-import { safeEditMessageText } from '../utils/safe-edit-message';
+import {
+  editPromptMessage,
+  type IPromptMessage,
+  safeEditMessageText,
+} from '../utils/safe-edit-message';
 
 // Состояние ожидания ввода для добавления члена группы
 // userId -> { promptMessageId: number, chatId: number }
@@ -130,14 +134,15 @@ export class FamilyHandler {
   private async rearmAddMemberPrompt(
     ctx: Context,
     adminId: string,
+    prompt: IPromptMessage | undefined,
     text: string,
   ) {
-    const errorMsg = await ctx.reply(text, {
+    const promptMessageId = await editPromptMessage(ctx, prompt, text, {
       parse_mode: 'Markdown',
       reply_markup: BotUi.cancelKeyboard(),
     });
     this.setAwaitingInput(adminId, {
-      promptMessageId: errorMsg.message_id,
+      promptMessageId,
       chatId: ctx.chat!.id,
     });
   }
@@ -157,31 +162,37 @@ export class FamilyHandler {
       // Игнорируем ошибку удаления
     }
 
-    // Удаляем prompt-сообщение
-    if (state) {
-      try {
-        await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-      } catch {
-        // Игнорируем ошибку удаления
-      }
-    }
-
     const resolved = resolveTelegramIdInput(message, adminId);
 
     if (resolved.kind === 'admin_self') {
-      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.cannotAddAdminSelf);
+      await this.rearmAddMemberPrompt(
+        ctx,
+        adminId,
+        state,
+        BotUi.cannotAddAdminSelf,
+      );
       return;
     }
     if (resolved.kind === 'hidden') {
-      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.forwardHiddenUser);
+      await this.rearmAddMemberPrompt(
+        ctx,
+        adminId,
+        state,
+        BotUi.forwardHiddenUser,
+      );
       return;
     }
     if (resolved.kind === 'not_from_user') {
-      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.forwardNotFromUser);
+      await this.rearmAddMemberPrompt(
+        ctx,
+        adminId,
+        state,
+        BotUi.forwardNotFromUser,
+      );
       return;
     }
     if (resolved.kind === 'none') {
-      await this.rearmAddMemberPrompt(ctx, adminId, BotUi.invalidInput);
+      await this.rearmAddMemberPrompt(ctx, adminId, state, BotUi.invalidInput);
       return;
     }
 
@@ -189,13 +200,13 @@ export class FamilyHandler {
 
     try {
       const member = await this.familyService.addMember(adminId, telegramId);
-      await ctx.reply(BotUi.memberAdded(member), {
+      await editPromptMessage(ctx, state, BotUi.memberAdded(member), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToFamilyKeyboard(),
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.reply(BotUi.addMemberError(errorMsg), {
+      await editPromptMessage(ctx, state, BotUi.addMemberError(errorMsg), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToFamilyKeyboard(),
       });
@@ -535,22 +546,20 @@ export class FamilyHandler {
       // Игнорируем ошибку удаления
     }
 
-    // Удаляем prompt-сообщение
-    try {
-      await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-    } catch {
-      // Игнорируем ошибку удаления
-    }
-
     if (newName.length < 1 || newName.length > 50) {
-      const errorMsg = await ctx.reply(BotUi.invalidNameInput, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelEditNameKeyboard(memberId),
-      });
-      // Сохраняем новое prompt-сообщение для повторной попытки
+      const promptMessageId = await editPromptMessage(
+        ctx,
+        state,
+        BotUi.invalidNameInput,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.cancelEditNameKeyboard(memberId),
+        },
+      );
+      // Prompt снова ждёт ввода для повторной попытки
       this.setAwaitingNameEdit(userId, {
         memberId,
-        promptMessageId: errorMsg.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
       return;
@@ -558,13 +567,13 @@ export class FamilyHandler {
 
     try {
       await this.familyService.updateDisplayName(memberId, newName);
-      await ctx.reply(BotUi.nameUpdated(newName), {
+      await editPromptMessage(ctx, state, BotUi.nameUpdated(newName), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToMemberKeyboard(memberId),
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.reply(BotUi.editNameError(errorMsg), {
+      await editPromptMessage(ctx, state, BotUi.editNameError(errorMsg), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToMemberKeyboard(memberId),
       });
@@ -639,27 +648,25 @@ export class FamilyHandler {
       // Игнорируем ошибку удаления
     }
 
-    // Удаляем prompt-сообщение
-    try {
-      await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-    } catch {
-      // Игнорируем ошибку удаления
-    }
-
     // Проверка на удаление описания
     const newDescription = input === '-' ? null : input;
 
     // Валидация длины
     if (newDescription && newDescription.length > 200) {
-      const errorMsg = await ctx.reply(BotUi.invalidDescriptionInput, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, memberId),
-      });
-      // Сохраняем новое prompt-сообщение для повторной попытки
+      const promptMessageId = await editPromptMessage(
+        ctx,
+        state,
+        BotUi.invalidDescriptionInput,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.cancelEditDescriptionKeyboard(peerName, memberId),
+        },
+      );
+      // Prompt снова ждёт ввода для повторной попытки
       this.setAwaitingDescriptionEdit(userId, {
         peerName,
         memberId,
-        promptMessageId: errorMsg.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
       return;
@@ -667,16 +674,26 @@ export class FamilyHandler {
 
     try {
       await this.peersService.updatePeerDescription(peerName, newDescription);
-      await ctx.reply(BotUi.descriptionUpdated(newDescription), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToPeerKeyboard(peerName, memberId),
-      });
+      await editPromptMessage(
+        ctx,
+        state,
+        BotUi.descriptionUpdated(newDescription),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToPeerKeyboard(peerName, memberId),
+        },
+      );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.reply(BotUi.editDescriptionError(errorMsg), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToPeerKeyboard(peerName, memberId),
-      });
+      await editPromptMessage(
+        ctx,
+        state,
+        BotUi.editDescriptionError(errorMsg),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToPeerKeyboard(peerName, memberId),
+        },
+      );
     }
   }
 

@@ -78,3 +78,47 @@ export async function safeEditMessageText(
   });
   return sent.message_id;
 }
+
+/** Сообщение-приглашение к вводу, которое ждёт текстовый ответ админа/пользователя */
+export interface IPromptMessage {
+  chatId: number;
+  promptMessageId: number;
+}
+
+/**
+ * Ответ на текстовый ввод рисуем в том же сообщении, где висел prompt.
+ * Prompt — это отредактированное сообщение меню (часто якорь главного меню):
+ * удалить его и прислать новый reply значит оставить якорь на мёртвом
+ * сообщении, и следующий /start или «В меню» с файла присылает второе меню
+ * рядом с живым. Новый reply — только если prompt уже не отредактировать.
+ */
+export async function editPromptMessage(
+  ctx: Context,
+  prompt: IPromptMessage | undefined,
+  text: string,
+  extra?: EditExtra,
+): Promise<number> {
+  if (prompt) {
+    try {
+      await ctx.api.editMessageText(
+        prompt.chatId,
+        prompt.promptMessageId,
+        text,
+        extra,
+      );
+      return prompt.promptMessageId;
+    } catch (err) {
+      if (isMessageNotModifiedError(err)) return prompt.promptMessageId;
+      await ctx.api
+        .deleteMessage(prompt.chatId, prompt.promptMessageId)
+        .catch(() => {});
+    }
+  }
+
+  const sent = await ctx.reply(text, {
+    parse_mode: extra?.parse_mode,
+    reply_markup: extra?.reply_markup,
+    link_preview_options: extra?.link_preview_options,
+  });
+  return sent.message_id;
+}

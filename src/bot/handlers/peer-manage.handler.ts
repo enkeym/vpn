@@ -2,7 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Context, InputFile } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
-import { safeEditMessageText } from '../utils/safe-edit-message';
+import {
+  editPromptMessage,
+  safeEditMessageText,
+} from '../utils/safe-edit-message';
 import {
   closeMediaMessage,
   sendPeerConfigFileMessage,
@@ -198,25 +201,23 @@ export class PeerManageHandler {
       // Игнорируем ошибку удаления
     }
 
-    // Удаляем prompt-сообщение
-    try {
-      await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-    } catch {
-      // Игнорируем ошибку удаления
-    }
-
     // Проверка на удаление описания
     const newDescription = input === '-' ? null : input;
 
     // Валидация длины
     if (newDescription && newDescription.length > 200) {
-      const errorMsg = await ctx.reply(BotUi.invalidDescriptionInput, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelEditOwnDescriptionKeyboard(peerName),
-      });
+      const promptMessageId = await editPromptMessage(
+        ctx,
+        state,
+        BotUi.invalidDescriptionInput,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.cancelEditOwnDescriptionKeyboard(peerName),
+        },
+      );
       this.setAwaitingDescriptionEdit(userId, {
         peerName,
-        promptMessageId: errorMsg.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
       return;
@@ -224,16 +225,26 @@ export class PeerManageHandler {
 
     try {
       await this.peersService.updatePeerDescription(peerName, newDescription);
-      await ctx.reply(BotUi.descriptionUpdated(newDescription), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
-      });
+      await editPromptMessage(
+        ctx,
+        state,
+        BotUi.descriptionUpdated(newDescription),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+        },
+      );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.reply(BotUi.editDescriptionError(errorMsg), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
-      });
+      await editPromptMessage(
+        ctx,
+        state,
+        BotUi.editDescriptionError(errorMsg),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToOwnPeerKeyboard(peerName),
+        },
+      );
     }
   }
 

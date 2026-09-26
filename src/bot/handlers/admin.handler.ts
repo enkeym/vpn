@@ -12,7 +12,10 @@ import {
   sendPeerConfigFileMessage,
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
-import { safeEditMessageText } from '../utils/safe-edit-message';
+import {
+  editPromptMessage,
+  safeEditMessageText,
+} from '../utils/safe-edit-message';
 
 // Состояние ожидания ввода текста рассылки («Рупор»)
 // adminId -> { promptMessageId: number, chatId: number }
@@ -162,17 +165,9 @@ export class AdminHandler {
       // Игнорируем ошибку удаления
     }
 
-    if (state) {
-      try {
-        await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-      } catch {
-        // Игнорируем ошибку удаления
-      }
-    }
-
     const userIds = await this.peersService.getBroadcastUserIds();
     if (userIds.length === 0) {
-      await ctx.reply(BotUi.broadcastEmptyText, {
+      await editPromptMessage(ctx, state, BotUi.broadcastEmptyText, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToAdminPanelKeyboard(),
       });
@@ -180,10 +175,15 @@ export class AdminHandler {
     }
 
     pendingBroadcastText.set(adminId, text);
-    await ctx.reply(BotUi.broadcastConfirmText(text, userIds.length), {
-      parse_mode: 'Markdown',
-      reply_markup: BotUi.broadcastConfirmKeyboard(),
-    });
+    await editPromptMessage(
+      ctx,
+      state,
+      BotUi.broadcastConfirmText(text, userIds.length),
+      {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.broadcastConfirmKeyboard(),
+      },
+    );
   }
 
   async confirmBroadcast(ctx: Context) {
@@ -292,15 +292,6 @@ export class AdminHandler {
       // Игнорируем ошибку удаления
     }
 
-    // Удаляем prompt-сообщение
-    if (state) {
-      try {
-        await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-      } catch {
-        // Игнорируем ошибку удаления
-      }
-    }
-
     if (resolved.kind !== 'id') {
       const text =
         resolved.kind === 'hidden'
@@ -308,12 +299,12 @@ export class AdminHandler {
           : resolved.kind === 'not_from_user'
             ? BotUi.forwardNotFromUser
             : BotUi.invalidClientIdInput;
-      const errorMsg = await ctx.reply(text, {
+      const promptMessageId = await editPromptMessage(ctx, state, text, {
         parse_mode: 'Markdown',
         reply_markup: BotUi.cancelClientSearchKeyboard(),
       });
       this.setAwaitingClientSearch(adminId, {
-        promptMessageId: errorMsg.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
       return;
@@ -326,7 +317,9 @@ export class AdminHandler {
 
     // Показываем сообщение "Клиент найден" с кнопкой открыть меню
     // Клиент создаётся как "оболочка" даже если конфигов нет
-    await ctx.reply(
+    await editPromptMessage(
+      ctx,
+      state,
       BotUi.clientFoundText(telegramId, peers.length, isBlocked),
       {
         parse_mode: 'Markdown',
@@ -851,29 +844,27 @@ export class AdminHandler {
       // Игнорируем ошибку удаления
     }
 
-    // Удаляем prompt-сообщение
-    try {
-      await ctx.api.deleteMessage(state.chatId, state.promptMessageId);
-    } catch {
-      // Игнорируем ошибку удаления
-    }
-
     // Проверка на удаление описания
     const newDescription = input === '-' ? null : input;
 
     // Валидация длины
     if (newDescription && newDescription.length > 200) {
-      const errorMsg = await ctx.reply(BotUi.invalidDescriptionInput, {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.cancelClientEditDescriptionKeyboard(
-          peerName,
-          clientTelegramId,
-        ),
-      });
+      const promptMessageId = await editPromptMessage(
+        ctx,
+        state,
+        BotUi.invalidDescriptionInput,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.cancelClientEditDescriptionKeyboard(
+            peerName,
+            clientTelegramId,
+          ),
+        },
+      );
       this.setAwaitingClientDescriptionEdit(userId, {
         peerName,
         clientTelegramId,
-        promptMessageId: errorMsg.message_id,
+        promptMessageId,
         chatId: ctx.chat.id,
       });
       return;
@@ -881,22 +872,32 @@ export class AdminHandler {
 
     try {
       await this.peersService.updatePeerDescription(peerName, newDescription);
-      await ctx.reply(BotUi.descriptionUpdated(newDescription), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToClientPeerKeyboard(
-          peerName,
-          clientTelegramId,
-        ),
-      });
+      await editPromptMessage(
+        ctx,
+        state,
+        BotUi.descriptionUpdated(newDescription),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToClientPeerKeyboard(
+            peerName,
+            clientTelegramId,
+          ),
+        },
+      );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      await ctx.reply(BotUi.editDescriptionError(errorMsg), {
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.backToClientPeerKeyboard(
-          peerName,
-          clientTelegramId,
-        ),
-      });
+      await editPromptMessage(
+        ctx,
+        state,
+        BotUi.editDescriptionError(errorMsg),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.backToClientPeerKeyboard(
+            peerName,
+            clientTelegramId,
+          ),
+        },
+      );
     }
   }
 
