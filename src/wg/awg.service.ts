@@ -102,8 +102,8 @@ export class AwgService implements OnModuleInit {
    */
   private readonly allowedIps = readAllowedIps(process.env.AWG_ALLOWED_IPS);
   private readonly clientDns = readClientDns(process.env.AWG_DNS);
-  /** 1420 — проверено на живых клиентах: junk-пакеты объём добавляют, запас держит */
-  private readonly clientMtu = Number(process.env.AWG_MTU || 1420);
+  /** 1280 — минимум для IPv6 и запас под junk-пакеты и мобильные сети с урезанным MTU */
+  private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
 
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом. По
