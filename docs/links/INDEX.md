@@ -10,3 +10,4 @@
 - peers — `peers.md` — cron пиров и URL подписки
 - payment — `payment.md` — вебхук ЮKassa, allow-list, тестовый режим
 - bot — `bot.md` — callback-роуты и токен бота
+- deploy — `deploy.md` — CI-деплой по ssh ↔ таргеты Makefile и ветка `dev`

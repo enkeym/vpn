@@ -5,9 +5,10 @@ on:
     branches: [main, dev]
   pull_request:
 
+# На push не отменяем: новый пуш оборвал бы ssh посреди `make build && make up`.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -54,3 +55,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Dependency audit (prod, high+)
         run: pnpm audit --prod --audit-level=high
+
+  # Ключ в authorized_keys закреплён за command=deploy-dispatch: shell он не даёт,
+  # аргумент — только имя проекта; ветку и команду сборки знает сервер.
+  # DEPLOY_HOST — host:port.
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-vpn-new
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 "ssh://deploy@$DEPLOY_HOST" vpn-new
