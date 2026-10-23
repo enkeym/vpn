@@ -155,6 +155,16 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly realitySni =
     process.env.XRAY_REALITY_SNI || 'www.wikipedia.org';
   /**
+   * Прежние SNI, которые Reality продолжает принимать после смены
+   * XRAY_REALITY_SNI. Подписка подхватит новый SNI сама, а уже выданные
+   * прямые vless://-ссылки несут старый — без этого списка они умерли бы
+   * разом. В новые ссылки не попадают.
+   */
+  private readonly realityExtraSni = (process.env.XRAY_REALITY_EXTRA_SNI || '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  /**
    * IPv6 наружу. На сервере он есть, поэтому по умолчанию включён: без него
    * Xray резолвил бы только A-записи, и ресурсы, доступные лишь по IPv6, из
    * туннеля не открывались бы. Выключается XRAY_IPV6=false — нужно, если у
@@ -727,7 +737,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           // xver — версия PROXY protocol, которую Reality ШЛЁТ на dest.
           // Маскировочный сайт про PROXY ничего не знает, поэтому 0.
           xver: 0,
-          serverNames: [this.realitySni],
+          serverNames: [...new Set([this.realitySni, ...this.realityExtraSni])],
           privateKey: this.realityParams.privateKey,
           shortIds: ['', this.realityParams.shortId],
         },

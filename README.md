@@ -343,6 +343,23 @@ echo | openssl s_client -connect <IP>:443 -servername "$XRAY_REALITY_SNI" 2>/dev
 Первый запрос должен дать код приложения (не 502/525), второй — сертификат
 маскировочного сайта, а не ваш.
 
+### Self-steal для Reality
+
+Если на мобильном Reality не подключается (ТСПУ режет SNI чужого сайта на IP
+хостера), сайтом-маской делается свой поддомен. Нужен заданный `XRAY_DOMAIN`.
+
+1. DNS: `A` поддомена (например `r.<домен>`) на IP сервера, **DNS only** (серое
+   облако) — сертификат должен отдавать наш IP, а не Cloudflare.
+2. Сертификат Let's Encrypt через DNS-01 (порта 80 в схеме нет), файлы — в
+   `configs/steal-cert.pem` и `configs/steal-key.pem`. После продления:
+   `docker exec vpn-tgbot nginx -s reload`.
+3. В `.env`: `XRAY_INTERNAL_STEAL_PORT=8446`,
+   `XRAY_REALITY_DEST=127.0.0.1:8446`, `XRAY_REALITY_SNI=r.<домен>`, прежний SNI —
+   в `XRAY_REALITY_EXTRA_SNI`, чтобы выданные `vless://` не умерли. `make rebuild`.
+
+Проверка: `curl -sI --resolve r.<домен>:443:<IP> https://r.<домен>/` — ответ с
+сертификатом Let's Encrypt без `-k`. Подписка подхватит новый SNI при обновлении.
+
 Без `XRAY_DOMAIN` ничего этого не нужно: остаётся один Reality-канал, nginx не
 запускается, а бот выдаёт прямую `vless://`-ссылку вместо подписки.
 

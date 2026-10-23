@@ -16,6 +16,12 @@ paths:
 - `XRAY_PORT` (порт в ссылках, `src/xray/xray.service.ts:port`) обязан равняться
   `XRAY_REALITY_PORT` — это слушает nginx; сверку делает только
   `docker/docker-entrypoint.sh`, и то предупреждением.
+- `XRAY_INTERNAL_STEAL_PORT` — включает self-steal сервер в `docker/nginx.conf`
+  (блок `__STEAL_BEGIN__`…`__STEAL_END__` вырезается `docker/docker-entrypoint.sh`,
+  если порт пуст) и обязан совпадать с портом в `XRAY_REALITY_DEST`
+  (`src/xray/xray.service.ts:realityDest`): иначе Reality ходит в пустой порт и
+  не проходит ни один хендшейк. Сверка — только предупреждение в entrypoint.
+  Без `XRAY_DOMAIN` nginx нет, entrypoint падает.
 
 ## Контракты
 - PROXY protocol — `proxy_protocol on` в `docker/nginx.conf` ↔
@@ -29,3 +35,12 @@ paths:
 - WS-путь из xray-ws.json (том configs, не в git) nginx не знает: `location /` в
   `docker/nginx.conf` отдаёт всё, кроме `/sub/` и `/`, на WS-порт. Новый
   публичный путь NestJS — добавить `location` перед этим фолбэком.
+- Self-steal: SNI-домен (`XRAY_REALITY_SNI`) — DNS only (серое облако), A на IP
+  сервера; за Cloudflare он отдаст чужой сертификат, и смысл self-steal пропадёт.
+  Сертификат `configs/steal-cert.pem`/`steal-key.pem` (Let's Encrypt, DNS-01 —
+  порта 80 нет) после продления подхватывается `nginx -s reload` внутри
+  контейнера, рестарт не нужен. На этот порт ходит только Reality с `xver: 0`,
+  поэтому `listen` без `proxy_protocol`.
+- Смена `XRAY_REALITY_SNI` — старый SNI перенести в `XRAY_REALITY_EXTRA_SNI`
+  (`src/xray/xray.service.ts:realityExtraSni` → `serverNames`): подписка
+  обновится сама, а выданные `vless://` несут старый SNI.
