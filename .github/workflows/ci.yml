@@ -34,7 +34,8 @@ jobs:
         run: pnpm exec tsc --noEmit -p tsconfig.json
 
       - name: Unit tests
-        run: pnpm test -- --ci --passWithNoTests
+        # Без `--`: pnpm 10 передаёт его в jest буквально, и флаги становятся шаблоном пути.
+        run: pnpm test --ci --passWithNoTests
 
       - name: Build
         run: pnpm build
