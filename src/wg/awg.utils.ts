@@ -479,6 +479,29 @@ export function readAdvancedFromEnv(
   return advanced;
 }
 
+/**
+ * Дописывает в существующий конфиг пакеты-имитации из .env, которых в файле
+ * ещё нет. Без этого AWG_I1 работал только при первом создании awg0.conf, а
+ * у живого сервера правка .env молча ни на что не влияла. Записанные в файле
+ * значения не трогает — источник истины остаётся файлом. Возвращает список
+ * добавленных ключей.
+ */
+export function fillAdvancedFromEnv(
+  config: IAwgServerConfig,
+  fromEnv: TAwgAdvanced,
+): TAwgAdvancedKey[] {
+  const added: TAwgAdvancedKey[] = [];
+
+  for (const key of AWG_ADVANCED_KEYS) {
+    if (!config.advanced[key] && fromEnv[key]) {
+      config.advanced[key] = fromEnv[key];
+      added.push(key);
+    }
+  }
+
+  return added;
+}
+
 function parseSectionLines(lines: string[]): Map<string, string[]> {
   const values = new Map<string, string[]>();
 
