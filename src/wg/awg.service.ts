@@ -108,8 +108,15 @@ export class AwgService implements OnModuleInit {
    */
   private readonly allowedIps = readAllowedIps(process.env.AWG_ALLOWED_IPS);
   private readonly clientDns = readClientDns(process.env.AWG_DNS);
-  /** 1280 — минимум для IPv6 и запас под junk-пакеты и мобильные сети с урезанным MTU */
-  private readonly clientMtu = Number(process.env.AWG_MTU || 1280);
+  /**
+   * Одно значение на оба конца туннеля: и в клиентский конфиг, и в [Interface]
+   * сервера. Без строки MTU в файле awg-quick считает её сам (route MTU - 80 =
+   * 1420) — сервер заворачивал клиенту внутренние пакеты по 1420 байт, а его
+   * интерфейс с MTU 1280 их молча отбрасывал: хендшейк проходил, мелочь
+   * (DNS, ACK) ходила, а любая крупная загрузка висла.
+   * 1280 — минимум для IPv6 и запас под junk-пакеты и мобильные сети с урезанным MTU.
+   */
+  private readonly tunnelMtu = Number(process.env.AWG_MTU || 1280);
 
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом. По
@@ -273,6 +280,7 @@ export class AwgService implements OnModuleInit {
       privateKey,
       address: this.serverAddress(),
       listenPort: this.port,
+      mtu: this.tunnelMtu,
       obfuscation,
       advanced: readAdvancedFromEnv(),
       awg3,
@@ -462,6 +470,17 @@ export class AwgService implements OnModuleInit {
         `Адрес интерфейса изменился: «${config.address}» → «${address}». Обновляю ${this.filePath}.`,
       );
       config.address = address;
+      restartRequired = true;
+    }
+
+    // MTU живёт только в `awg-quick up` (strip его выбрасывает), поэтому
+    // расхождение — это перезапуск интерфейса. Конфиги, созданные до появления
+    // этой строки, молча работали с awg-quick-дефолтом 1420 против 1280 у клиентов.
+    if (config.mtu !== this.tunnelMtu) {
+      this.logger.warn(
+        `MTU интерфейса изменился: ${config.mtu || 'авто'} → ${this.tunnelMtu}. Обновляю ${this.filePath}.`,
+      );
+      config.mtu = this.tunnelMtu;
       restartRequired = true;
     }
 
@@ -727,7 +746,7 @@ export class AwgService implements OnModuleInit {
 PrivateKey = ${peer.privateKey}
 Address = ${address}
 DNS = ${this.clientDns}
-MTU = ${this.clientMtu}
+MTU = ${this.tunnelMtu}
 ${obfuscationLines(obfuscation, advanced, awg3)}
 
 [Peer]

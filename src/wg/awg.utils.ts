@@ -117,6 +117,8 @@ export interface IAwgServerConfig {
   privateKey: string;
   address: string;
   listenPort: number;
+  /** 0 — в файле строки MTU нет: awg-quick посчитает её сам (route MTU - 80) */
+  mtu: number;
   obfuscation: IAwgObfuscation;
   advanced: TAwgAdvanced;
   awg3: IAwg3Options;
@@ -632,6 +634,7 @@ export function parseAwgConfig(content: string): IAwgServerConfig {
     privateKey: requireValue(iface, 'privatekey'),
     address: requireValue(iface, 'address'),
     listenPort: requireNumber(iface, 'listenport'),
+    mtu: optionalNumber(iface, 'mtu') ?? 0,
     obfuscation,
     advanced,
     awg3,
@@ -679,6 +682,7 @@ export function serializeAwgConfig(config: IAwgServerConfig): string {
       `PrivateKey = ${config.privateKey}`,
       `Address = ${config.address}`,
       `ListenPort = ${config.listenPort}`,
+      ...(config.mtu ? [`MTU = ${config.mtu}`] : []),
       obfuscationLines(config.obfuscation, config.advanced, config.awg3),
       ...config.postUp.map((cmd) => `PostUp = ${cmd}`),
       ...config.postDown.map((cmd) => `PostDown = ${cmd}`),
