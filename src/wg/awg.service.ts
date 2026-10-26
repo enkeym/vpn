@@ -27,6 +27,7 @@ import {
   getSubnetPrefix,
   readAllowedIps,
   readClientDns,
+  readLegacyPublicPorts,
 } from './tunnel.utils';
 import {
   bringInterfaceDown,
@@ -159,6 +160,17 @@ export class AwgService implements OnModuleInit {
    */
   public readonly publicPort = Number(
     process.env.AWG_PUBLIC_PORT || process.env.AWG_PORT || 51821,
+  );
+
+  /**
+   * Порты прежних редакций AWG_PUBLIC_PORT: REDIRECT для них держим наравне с
+   * текущим. Смена порта не перевыпускает уже скачанные файлы — они остаются со
+   * старым Endpoint, и без этих правил отваливаются все, кому конфиг выдали до
+   * смены. Раньше правило держалось на хосте сиротой от прошлого PostUp и
+   * исчезало вместе с таблицей nat на первой перезагрузке.
+   */
+  private readonly legacyPublicPorts = readLegacyPublicPorts(
+    process.env.AWG_LEGACY_PUBLIC_PORTS,
   );
 
   public readonly host = process.env.WG_HOST || '';
@@ -370,12 +382,16 @@ export class AwgService implements OnModuleInit {
     // В host-режиме docker проброс публичного порта не делает. Только с `-i`
     // внешнего интерфейса: без него REDIRECT цепляет и трафик клиентов из
     // туннеля (QUIC на udp/443) и заворачивает его в сам awg0.
-    if (this.publicPort !== this.port) {
+    const redirectPorts = [
+      ...new Set([this.publicPort, ...this.legacyPublicPorts]),
+    ].filter((port) => port !== this.port);
+
+    for (const port of redirectPorts) {
       rules.push({
         bin: 'iptables',
         table: 'nat',
         chain: 'PREROUTING',
-        rule: `-i ${wanIface} -p udp --dport ${this.publicPort} -j REDIRECT --to-ports ${this.port}`,
+        rule: `-i ${wanIface} -p udp --dport ${port} -j REDIRECT --to-ports ${this.port}`,
         checkFirst: true,
       });
     }

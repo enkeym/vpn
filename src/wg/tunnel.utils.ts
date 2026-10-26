@@ -27,6 +27,33 @@ export function readAllowedIps(rawValue: string | undefined): string {
   return normalizeCsv(rawValue, AWG_DEFAULT_ALLOWED_IPS);
 }
 
+/**
+ * Публичные порты, на которые смотрят уже выданные конфиги. Endpoint клиента
+ * берётся из текущего AWG_PUBLIC_PORT, но файлы, скачанные до его смены, живут
+ * у людей на телефонах со старым портом — без REDIRECT для него эти клиенты
+ * просто перестают подключаться. Правило когда-то добавил PostUp прошлой
+ * редакции и оно осталось на хосте сиротой: PostDown нового набора его не
+ * знает, восстановить после перезагрузки некому.
+ */
+export function readLegacyPublicPorts(rawValue: string | undefined): number[] {
+  const ports = (rawValue || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => Number(item));
+
+  const invalid = ports.filter(
+    (port) => !Number.isInteger(port) || port < 1 || port > 65535,
+  );
+  if (invalid.length > 0) {
+    throw new Error(
+      `AWG_LEGACY_PUBLIC_PORTS содержит не порты: ${invalid.join(', ')}`,
+    );
+  }
+
+  return [...new Set(ports)];
+}
+
 /** DNS-серверы клиентского конфига. Только IPv4: у туннеля нет IPv6-маршрута */
 export function readClientDns(rawValue: string | undefined): string {
   return normalizeCsv(rawValue, '1.1.1.1, 8.8.8.8');
