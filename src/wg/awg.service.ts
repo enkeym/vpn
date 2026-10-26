@@ -74,6 +74,11 @@ interface IFirewallRule {
    * выполняет PostUp с `set -e`, а NAT66 и ip6tables-mangle собраны не в каждом ядре.
    */
   optional?: boolean;
+  /**
+   * Перед `-A` проверяем `-C`: правило могли уже поставить руками на хосте
+   * (README, iptables-persistent), и второй экземпляр пережил бы PostDown.
+   */
+  checkFirst?: boolean;
 }
 
 @Injectable()
@@ -354,6 +359,19 @@ export class AwgService implements OnModuleInit {
       { bin: 'iptables', table: 'mangle', chain: 'FORWARD', rule: clamp },
     ];
 
+    // В host-режиме docker проброс публичного порта не делает. Только с `-i`
+    // внешнего интерфейса: без него REDIRECT цепляет и трафик клиентов из
+    // туннеля (QUIC на udp/443) и заворачивает его в сам awg0.
+    if (this.publicPort !== this.port) {
+      rules.push({
+        bin: 'iptables',
+        table: 'nat',
+        chain: 'PREROUTING',
+        rule: `-i ${wanIface} -p udp --dport ${this.publicPort} -j REDIRECT --to-ports ${this.port}`,
+        checkFirst: true,
+      });
+    }
+
     if (!this.ipv6Enabled) return rules;
 
     return [
@@ -390,6 +408,10 @@ export class AwgService implements OnModuleInit {
     const render = (rule: IFirewallRule, op: '-A' | '-D'): string => {
       const table = rule.table ? `-t ${rule.table} ` : '';
       const line = `${rule.bin} ${table}${op} ${rule.chain} ${rule.rule}`;
+      if (op === '-A' && rule.checkFirst) {
+        const check = `${rule.bin} ${table}-C ${rule.chain} ${rule.rule}`;
+        return `${check} 2>/dev/null || ${line}`;
+      }
       // Удаление терпимо к ошибкам всегда: awg-quick выполняет PostDown с
       // `set -e`, и правило, оставшееся от прошлой редакции набора, иначе
       // оборвало бы опускание интерфейса на полпути

@@ -79,13 +79,14 @@ sudo ufw enable
 `awg0` слушает `AWG_PORT` (51821), а клиентам в `Endpoint` уходит
 `AWG_PUBLIC_PORT` (4500) — мобильные операторы режут нестандартные UDP-порты, а
 4500 (IPsec NAT-T) пропускают везде. В host-режиме docker этот проброс не
-делает, нужен REDIRECT на хосте:
+делает, REDIRECT `AWG_PUBLIC_PORT → AWG_PORT` контейнер ставит сам при
+подъёме `awg0` (PostUp, только на внешнем интерфейсе, с проверкой `-C`; его
+можно задать через `AWG_WAN_IFACE`). Руками ничего делать не нужно.
 
-```bash
-sudo iptables -t nat -A PREROUTING -p udp --dport 4500 -j REDIRECT --to-ports 51821
-sudo apt install -y iptables-persistent   # чтобы правило пережило перезагрузку
-sudo netfilter-persistent save
-```
+Правило обязательно привязано к внешнему интерфейсу (`-i`): без него REDIRECT
+цепляет и трафик клиентов из туннеля (напр. QUIC на udp/443) и заворачивает его в
+сам AmneziaWG. Если раньше такое правило ставилось вручную, оставьте его только
+с `-i` или удалите — дубль безвреден, но `iptables-persistent` лишний.
 
 ### 4. Сертификат Cloudflare
 
