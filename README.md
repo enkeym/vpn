@@ -166,7 +166,7 @@ WireGuard (`wg0`) удалён: интерфейс с включённой об�
 | Порт | `AWG_PORT` (51821) |
 | Подсеть | `AWG_ADDRESS` (10.9.0.0/16) |
 | Конфиг сервера | `configs/awg0.conf` |
-| MTU клиента | `AWG_MTU` (1280) |
+| MTU клиента | `AWG_MTU` (1200); `awg0` — то же, но не ниже 1280 при включённом IPv6 |
 | AllowedIPs | `AWG_ALLOWED_IPS` (`0.0.0.0/0, ::/0`) |
 | Клиент | **AmneziaVPN ≥ 5.0.0.5 или AmneziaWG ≥ 3.0.1** |
 

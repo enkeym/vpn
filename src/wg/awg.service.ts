@@ -47,6 +47,9 @@ import type {
   ITunnelCredentials,
 } from './tunnel.types';
 
+/** RFC 8200: на интерфейсе с MTU ниже этого Linux выключает IPv6 */
+const IPV6_MIN_MTU = 1280;
+
 /**
  * AmneziaWG 3 — единственный туннель сервиса: форк WireGuard, маскирующий трафик
  * мусорными пакетами, пакетами-имитациями чужих протоколов и шифрованием
@@ -110,14 +113,12 @@ export class AwgService implements OnModuleInit {
   private readonly allowedIps = readAllowedIps(process.env.AWG_ALLOWED_IPS);
   private readonly clientDns = readClientDns(process.env.AWG_DNS);
   /**
-   * Одно значение на оба конца туннеля: и в клиентский конфиг, и в [Interface]
-   * сервера. Без строки MTU в файле awg-quick считает её сам (route MTU - 80 =
-   * 1420) — сервер заворачивал клиенту внутренние пакеты по 1420 байт, а его
-   * интерфейс с MTU 1280 их молча отбрасывал: хендшейк проходил, мелочь
-   * (DNS, ACK) ходила, а любая крупная загрузка висла.
-   * 1280 — минимум для IPv6 и запас под junk-пакеты и мобильные сети с урезанным MTU.
+   * MTU клиентского конфига. 1200, а не 1280: на мобильных сетях (464XLAT,
+   * DPI оператора) снаружи не проходят пакеты крупнее ~1300 байт, а 1280 +
+   * заголовок WG + S4 + UDP/IP туда не влезает — телефон подключался только
+   * после ручного занижения MTU в .conf.
    */
-  private readonly tunnelMtu = Number(process.env.AWG_MTU || 1280);
+  private readonly clientMtu = Number(process.env.AWG_MTU || 1200);
 
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом. По
@@ -292,7 +293,7 @@ export class AwgService implements OnModuleInit {
       privateKey,
       address: this.serverAddress(),
       listenPort: this.port,
-      mtu: this.tunnelMtu,
+      mtu: this.serverMtu(),
       obfuscation,
       advanced: readAdvancedFromEnv(),
       awg3,
@@ -303,6 +304,19 @@ export class AwgService implements OnModuleInit {
 
     this.logger.log(`Конфигурация AmneziaWG создана: ${this.filePath}`);
     return false;
+  }
+
+  /**
+   * MTU awg0 совпадает с клиентским — без строки MTU awg-quick ставил 1420, и
+   * сервер заворачивал клиенту пакеты, которые тот не мог принять. Исключение —
+   * включённый IPv6: ядро снимает v6-адреса с интерфейса с MTU < 1280, и
+   * дуалстек-сайты повисли бы у всех. TCP это расхождение не задевает: размер
+   * сегментов задаёт MSS из SYN клиента.
+   */
+  private serverMtu(): number {
+    return this.ipv6Enabled
+      ? Math.max(this.clientMtu, IPV6_MIN_MTU)
+      : this.clientMtu;
   }
 
   /** Address интерфейса: IPv4 всегда, IPv6 — если он доступен и не выключен */
@@ -491,12 +505,13 @@ export class AwgService implements OnModuleInit {
 
     // MTU живёт только в `awg-quick up` (strip его выбрасывает), поэтому
     // расхождение — это перезапуск интерфейса. Конфиги, созданные до появления
-    // этой строки, молча работали с awg-quick-дефолтом 1420 против 1280 у клиентов.
-    if (config.mtu !== this.tunnelMtu) {
+    // этой строки, молча работали с awg-quick-дефолтом 1420.
+    const mtu = this.serverMtu();
+    if (config.mtu !== mtu) {
       this.logger.warn(
-        `MTU интерфейса изменился: ${config.mtu || 'авто'} → ${this.tunnelMtu}. Обновляю ${this.filePath}.`,
+        `MTU интерфейса изменился: ${config.mtu || 'авто'} → ${mtu}. Обновляю ${this.filePath}.`,
       );
-      config.mtu = this.tunnelMtu;
+      config.mtu = mtu;
       restartRequired = true;
     }
 
@@ -762,7 +777,7 @@ export class AwgService implements OnModuleInit {
 PrivateKey = ${peer.privateKey}
 Address = ${address}
 DNS = ${this.clientDns}
-MTU = ${this.tunnelMtu}
+MTU = ${this.clientMtu}
 ${obfuscationLines(obfuscation, advanced, awg3)}
 
 [Peer]
