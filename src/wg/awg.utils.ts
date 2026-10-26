@@ -480,26 +480,29 @@ export function readAdvancedFromEnv(
 }
 
 /**
- * Дописывает в существующий конфиг пакеты-имитации из .env, которых в файле
- * ещё нет. Без этого AWG_I1 работал только при первом создании awg0.conf, а
- * у живого сервера правка .env молча ни на что не влияла. Записанные в файле
- * значения не трогает — источник истины остаётся файлом. Возвращает список
- * добавленных ключей.
+ * Переносит в существующий конфиг пакеты-имитации из .env: дописывает
+ * недостающие и заменяет отличающиеся. Без этого AWG_I1 работал только при
+ * первом создании awg0.conf, а подобрать имитацию под оператора можно было
+ * лишь правкой файла руками на сервере. В отличие от Jc..H4, здесь .env
+ * главнее файла: I1..I5 — client-side, у уже выданных конфигов хендшейк от их
+ * смены не ломается. Ключ, не заданный в .env, в файле остаётся как есть.
+ * Возвращает список изменённых ключей.
  */
-export function fillAdvancedFromEnv(
+export function applyAdvancedFromEnv(
   config: IAwgServerConfig,
   fromEnv: TAwgAdvanced,
 ): TAwgAdvancedKey[] {
-  const added: TAwgAdvancedKey[] = [];
+  const changed: TAwgAdvancedKey[] = [];
 
   for (const key of AWG_ADVANCED_KEYS) {
-    if (!config.advanced[key] && fromEnv[key]) {
-      config.advanced[key] = fromEnv[key];
-      added.push(key);
+    const value = fromEnv[key];
+    if (value && config.advanced[key] !== value) {
+      config.advanced[key] = value;
+      changed.push(key);
     }
   }
 
-  return added;
+  return changed;
 }
 
 function parseSectionLines(lines: string[]): Map<string, string[]> {

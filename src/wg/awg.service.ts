@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { Mutex } from 'async-mutex';
 import {
   assertValidObfuscation,
-  fillAdvancedFromEnv,
+  applyAdvancedFromEnv,
   generateHeaderProtectionKey,
   generateObfuscation,
   obfuscationLines,
@@ -460,15 +460,15 @@ export class AwgService implements OnModuleInit {
       restartRequired = true;
     }
 
-    // I1..I5 — client-side: на хендшейк с уже выданными конфигами без них не
-    // влияют, поэтому дописываются без AWG_ALLOW_CONFIG_UPGRADE. Хранятся в
+    // I1..I5 — client-side: на хендшейк с уже выданными конфигами не
+    // влияют, поэтому применяются без AWG_ALLOW_CONFIG_UPGRADE. Хранятся в
     // файле ради buildClientConfig — новые конфиги получат имитацию сами.
     // Перезапуск — потому что параметры обфускации читаются при подъёме
     // интерфейса, а не через syncconf.
-    const advancedAdded = fillAdvancedFromEnv(config, readAdvancedFromEnv());
-    if (advancedAdded.length > 0) {
+    const advancedChanged = applyAdvancedFromEnv(config, readAdvancedFromEnv());
+    if (advancedChanged.length > 0) {
       this.logger.warn(
-        `В ${this.filePath} добавлены пакеты-имитации из .env (${advancedAdded.join(', ')}). ` +
+        `В ${this.filePath} обновлены пакеты-имитации из .env (${advancedChanged.join(', ')}). ` +
           'Чтобы они появились у клиентов, конфиг нужно заново скачать из бота.',
       );
       restartRequired = true;

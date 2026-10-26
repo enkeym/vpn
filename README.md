@@ -214,7 +214,7 @@ docker compose build --build-arg AWG_GO_REF=<sha> --build-arg AWG_TOOLS_REF=<sha
 | `AWG_CONTENT_PADDING` | client-side | случайная набивка данных, диапазон |
 | `AWG_PERSISTENT_KEEPALIVE` | client-side | число или диапазон (`22-30`) |
 | `AWG_REKEY_*`, `AWG_REJECT_AFTER_TIME`, `AWG_KEEPALIVE_TIMEOUT`, `AWG_MAX_HANDSHAKE_ATTEMPTS` | client-side | тайминги протокола |
-| `AWG_I1..AWG_I5` | client-side | пакеты-имитации DNS/QUIC/SIP перед хендшейком; без `I1` мобильные операторы режут хендшейк. Дописываются и в существующий `awg0.conf`, если там их нет |
+| `AWG_I1..AWG_I5` | client-side | пакеты-имитации DNS/QUIC/SIP перед хендшейком; без `I1` мобильные операторы режут хендшейк. Применяются и к существующему `awg0.conf`: недостающие дописываются, отличающиеся заменяются (`.env` здесь главнее файла — у выданных конфигов хендшейк от этого не ломается) |
 
 Header protection использует `S1..S4` как nonce, поэтому все четыре обязаны быть ≥ 8.
 
