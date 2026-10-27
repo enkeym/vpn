@@ -383,14 +383,26 @@ export class AwgService implements OnModuleInit {
       '-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu';
 
     const rules: IFirewallRule[] = [
-      { bin: 'iptables', chain: 'FORWARD', rule: `-i ${iface} -j ACCEPT` },
+      {
+        bin: 'iptables',
+        chain: 'FORWARD',
+        rule: `-i ${iface} -j ACCEPT`,
+        checkFirst: true,
+      },
       {
         bin: 'iptables',
         table: 'nat',
         chain: 'POSTROUTING',
         rule: `-o ${wanIface} -j MASQUERADE`,
+        checkFirst: true,
       },
-      { bin: 'iptables', table: 'mangle', chain: 'FORWARD', rule: clamp },
+      {
+        bin: 'iptables',
+        table: 'mangle',
+        chain: 'FORWARD',
+        rule: clamp,
+        checkFirst: true,
+      },
     ];
 
     // В host-режиме docker проброс публичного порта не делает. Только с `-i`
@@ -419,6 +431,7 @@ export class AwgService implements OnModuleInit {
         chain: 'FORWARD',
         rule: `-i ${iface} -j ACCEPT`,
         optional: true,
+        checkFirst: true,
       },
       {
         bin: 'ip6tables',
@@ -426,6 +439,7 @@ export class AwgService implements OnModuleInit {
         chain: 'POSTROUTING',
         rule: `-o ${wanIface} -j MASQUERADE`,
         optional: true,
+        checkFirst: true,
       },
       {
         bin: 'ip6tables',
@@ -433,6 +447,7 @@ export class AwgService implements OnModuleInit {
         chain: 'FORWARD',
         rule: clamp,
         optional: true,
+        checkFirst: true,
       },
     ];
   }
@@ -768,10 +783,13 @@ export class AwgService implements OnModuleInit {
       : '';
 
     // Адреса клиента в туннеле: без v6-адреса клиент всё равно забирает ::/0
-    // из AllowedIPs, а выпустить IPv6-пакеты ему некуда
-    const address = this.ipv6Enabled
-      ? `${peer.ip}/32, ${deriveClientIpv6(this.interfaceAddress6, peer.ip)}/128`
-      : `${peer.ip}/32`;
+    // из AllowedIPs, а выпустить IPv6-пакеты ему некуда. При MTU < 1280 v6-адрес
+    // не выдаём: Android не поднимает IPv6 на таком интерфейсе, и подключение
+    // падает с ErrorCode 1000
+    const address =
+      this.ipv6Enabled && this.clientMtu >= IPV6_MIN_MTU
+        ? `${peer.ip}/32, ${deriveClientIpv6(this.interfaceAddress6, peer.ip)}/128`
+        : `${peer.ip}/32`;
 
     return `[Interface]
 PrivateKey = ${peer.privateKey}
