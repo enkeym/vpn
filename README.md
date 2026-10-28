@@ -356,6 +356,11 @@ sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality + CDN)
 5. **Network → WebSockets: On.** Без этого VLESS+WS не работает вообще.
 6. **Security → Bots → Bot Fight Mode: Off** — режет нестандартный трафик.
 7. В `.env`: `XRAY_DOMAIN=<домен>`, `XRAY_PORT` равен `XRAY_REALITY_PORT`.
+8. Чтобы запись следовала за `PUBLIC_IPV4` после бана IP: `CF_API_TOKEN`,
+   `CF_ZONE_ID`, `CF_DNS_RECORDS=<домен>` и `CF_DNS_PROXIED=true`. Флаг один на
+   все имена списка, а `WG_HOST` и Reality-SNI за оранжевым облаком не работают,
+   поэтому `true` — только когда в списке одно CDN-имя; их A-записи тогда
+   правятся руками.
 
 Проверка после деплоя:
 
