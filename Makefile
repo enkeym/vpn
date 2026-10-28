@@ -28,6 +28,10 @@ backup:
 restore:
 	NAME="$(NAME)" FILE="$(FILE)" FORCE="$(FORCE)" bash scripts/restore.sh
 
+# Один раз на новом хосте: sysctl, фаервол, проверка cpus (нужен root).
+bootstrap:
+	NAME="$(NAME)" bash scripts/bootstrap-host.sh
+
 clean:
 	docker image prune -af --filter "label=com.docker.compose.project=$(NAME)"
 	docker volume prune -f --filter "label=com.docker.compose.project=$(NAME)"

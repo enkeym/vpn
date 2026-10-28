@@ -16,6 +16,10 @@ paths:
 - `configs/`, `data/`, `.env` вне git: `reset --hard` их не трогает, пока они в
   `.gitignore`. Убрал оттуда — деплой затрёт ключи Reality и `awg0.conf`, и все
   выданные конфиги отвалятся.
+- `make bootstrap` (`scripts/bootstrap-host.sh`) читает первый `cpus:` из `docker-compose.yml`
+  (это `limits`) и сверяет с `nproc`; переставишь `reservations` выше `limits` — проверка
+  начнёт сравнивать не то. Порты фаервола (443/tcp, 443/udp, `AWG_PUBLIC_PORT`/udp) должны
+  совпадать с тем, что слушают nginx и `awg0`.
 - Правки руками на сервере диспетчер не затирает, а падает на `git status --porcelain`.
 - `make backup` кладёт `vpn-backup-*.tgz` в корень (или `OUT=`): маска в `.gitignore`
   обязательна, иначе untracked-архив остановит деплой. Копия БД идёт через
