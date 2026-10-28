@@ -8,6 +8,17 @@ import { resolveWanInterface } from './wan-interface';
 
 const execFileAsync = promisify(execFile);
 
+/** Фактическое состояние хоста для отчёта на старте */
+export interface IHostChecks {
+  /** Адрес из PUBLIC_IPV4, если он применён; иначе null */
+  ip: string | null;
+  wan: string | null;
+  addressOnWan: boolean;
+  snatFirst: boolean;
+  /** null — /proc/sys не читается */
+  ipForward: boolean | null;
+}
+
 /** Контейнер идёт не от root: ip и iptables — через sudo, как и в awg-quick */
 async function sudo(bin: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('sudo', [bin, ...args]);
@@ -31,6 +42,7 @@ export class HostNetworkService implements OnApplicationBootstrap {
   private readonly configuredIp = (process.env.PUBLIC_IPV4 ?? '').trim();
   private applied: Promise<void> | null = null;
   private activeIp: string | null = null;
+  private activeWan: string | null = null;
 
   constructor(private readonly notification: NotificationService) {}
 
@@ -69,6 +81,7 @@ export class HostNetworkService implements OnApplicationBootstrap {
       await this.ensureAddress(wan, this.configuredIp);
       await this.ensureSnat(wan, this.configuredIp);
       this.activeIp = this.configuredIp;
+      this.activeWan = wan;
       this.logger.log(
         `PUBLIC_IPV4 ${this.configuredIp}: адрес на ${wan}, SNAT первым в POSTROUTING`,
       );
@@ -83,12 +96,52 @@ export class HostNetworkService implements OnApplicationBootstrap {
     }
   }
 
-  private async ensureAddress(wan: string, ip: string): Promise<void> {
-    const out = await sudo('ip', ['-4', '-o', 'addr', 'show', 'dev', wan]);
+  /**
+   * Что реально стоит на хосте сейчас, а не что записано в .env: отчёт на старте
+   * должен ловить расхождение, поэтому правила перечитываются.
+   */
+  async collectChecks(): Promise<IHostChecks> {
+    const ipForward = await this.readIpForward();
+    const ip = this.activeIp;
+    const wan = this.activeWan;
+    if (!ip || !wan) {
+      return {
+        ip: null,
+        wan: null,
+        addressOnWan: false,
+        snatFirst: false,
+        ipForward,
+      };
+    }
 
-    // Маска не важна: адрес с /24 от провайдера тоже считается присутствующим,
-    // второй раз добавлять его нельзя
-    if (out.includes(` inet ${ip}/`)) return;
+    try {
+      return {
+        ip,
+        wan,
+        addressOnWan: await this.hasAddress(wan, ip),
+        snatFirst: await this.isSnatFirst(wan, ip),
+        ipForward,
+      };
+    } catch {
+      return { ip, wan, addressOnWan: false, snatFirst: false, ipForward };
+    }
+  }
+
+  private async hasAddress(wan: string, ip: string): Promise<boolean> {
+    const out = await sudo('ip', ['-4', '-o', 'addr', 'show', 'dev', wan]);
+    // Маска не важна: адрес с /24 от провайдера тоже считается присутствующим
+    return out.includes(` inet ${ip}/`);
+  }
+
+  private async isSnatFirst(wan: string, ip: string): Promise<boolean> {
+    const out = await sudo('iptables', ['-t', 'nat', '-S', 'POSTROUTING']);
+    const first = out.split('\n').find((l) => l.startsWith('-A POSTROUTING'));
+    return first === `-A POSTROUTING -o ${wan} -j SNAT --to-source ${ip}`;
+  }
+
+  private async ensureAddress(wan: string, ip: string): Promise<void> {
+    // Второй раз добавлять адрес нельзя
+    if (await this.hasAddress(wan, ip)) return;
 
     await sudo('ip', ['addr', 'add', `${ip}/32`, 'dev', wan]);
   }
@@ -134,27 +187,28 @@ export class HostNetworkService implements OnApplicationBootstrap {
     await sudo('iptables', [...nat, '-I', 'POSTROUTING', '1', ...spec]);
   }
 
+  private async readIpForward(): Promise<boolean | null> {
+    try {
+      const value = await readFile('/proc/sys/net/ipv4/ip_forward', 'utf8');
+      return value.trim() === '1';
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * В host-режиме docker не даёт контейнеру менять sysctl: /proc/sys смонтирован
    * только на чтение. Значение выставляет `make bootstrap` на хосте — здесь
    * только громко сообщаем, что без него клиенты подключатся и не выйдут в сеть.
+   * Админу это уходит в стартовом отчёте (StartupReportService), отдельный алерт
+   * дал бы два сообщения на один запуск.
    */
   private async checkIpForward(): Promise<void> {
-    let value: string;
-    try {
-      value = (await readFile('/proc/sys/net/ipv4/ip_forward', 'utf8')).trim();
-    } catch {
-      return;
-    }
-    if (value === '1') return;
+    if ((await this.readIpForward()) !== false) return;
 
     this.logger.error(
       'net.ipv4.forwarding=0: клиенты VPN подключатся, но трафик не пойдёт. ' +
         'Выставьте на хосте: sysctl -w net.ipv4.ip_forward=1',
-    );
-    await this.notification.notifyAdmins(
-      '⚠️ *ip\\_forward=0*: клиенты VPN подключатся, но трафик не пойдёт.\n' +
-        'На хосте: `sysctl -w net.ipv4.ip_forward=1`',
     );
   }
 }

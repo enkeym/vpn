@@ -1,9 +1,17 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { NotificationService } from '../notification/notification.service';
 import { HostNetworkService } from './host-network.service';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
 const REQUEST_TIMEOUT_MS = 10_000;
+
+/** Итог синхронизации для отчёта на старте */
+export interface IDnsSyncStatus {
+  enabled: boolean;
+  ip: string | null;
+  ok: string[];
+  /** «имя: причина» */
+  failed: string[];
+}
 
 interface ICfDnsRecord {
   id: string;
@@ -39,20 +47,36 @@ export class DnsSyncService implements OnApplicationBootstrap {
   // Серое облако по умолчанию: за прокси Cloudflare Reality и AWG не работают
   private readonly proxied = process.env.CF_DNS_PROXIED === 'true';
 
-  constructor(
-    private readonly hostNetwork: HostNetworkService,
-    private readonly notification: NotificationService,
-  ) {}
+  private synced: Promise<IDnsSyncStatus> | null = null;
+
+  constructor(private readonly hostNetwork: HostNetworkService) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    if (!this.token) return;
+    await this.ensureSynced();
+  }
+
+  /** Идемпотентно: отчёт на старте ждёт тот же промис, порядок хуков не важен */
+  ensureSynced(): Promise<IDnsSyncStatus> {
+    this.synced ??= this.sync();
+    return this.synced;
+  }
+
+  private async sync(): Promise<IDnsSyncStatus> {
+    const status: IDnsSyncStatus = {
+      enabled: false,
+      ip: null,
+      ok: [],
+      failed: [],
+    };
+    if (!this.token) return status;
 
     if (!this.zoneId || this.records.length === 0) {
       this.logger.warn(
         'CF_API_TOKEN задан, но нет CF_ZONE_ID или CF_DNS_RECORDS — DNS не синхронизируется',
       );
-      return;
+      return status;
     }
+    status.enabled = true;
 
     await this.hostNetwork.ensureApplied();
     const ip = this.hostNetwork.snatSourceIp;
@@ -60,26 +84,25 @@ export class DnsSyncService implements OnApplicationBootstrap {
       this.logger.warn(
         'PUBLIC_IPV4 не применён — A-записи в Cloudflare не трогаем',
       );
-      return;
+      return status;
     }
+    status.ip = ip;
 
     // Падение одной записи не должно оставлять остальные на старом адресе
-    const failed: string[] = [];
     for (const name of this.records) {
       try {
         await this.upsert(name, ip);
+        status.ok.push(name);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         this.logger.error(`DNS ${name}: ${reason}`);
-        failed.push(`${name}: ${reason.slice(0, 120)}`);
+        status.failed.push(`${name}: ${reason.slice(0, 120)}`);
       }
     }
 
-    if (failed.length > 0) {
-      await this.notification.notifyAdmins(
-        `⚠️ *DNS не обновлён* (${ip})\n\`${failed.join('\n')}\``,
-      );
-    }
+    // Ошибки попадут в одно стартовое сообщение StartupReportService — без отдельного
+    // алерта здесь, чтобы админ не получал два сообщения на один запуск
+    return status;
   }
 
   private async upsert(name: string, ip: string): Promise<void> {
