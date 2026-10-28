@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 NAME="${NAME:-vpn-bot}"
 # 443/tcp — nginx (Reality + CDN), 443/udp — QUIC/HTTP3 до CDN-имени,
-# AWG_PUBLIC_PORT/udp — публичный порт AmneziaWG (PostUp сам делает REDIRECT на AWG_PORT)
+# AWG_PUBLIC_PORT/udp — публичный порт AmneziaWG (PostUp сам делает DNAT на AWG_PORT)
 AWG_PUBLIC_PORT="${AWG_PUBLIC_PORT:-4500}"
 SYSCTL_FILE="/etc/sysctl.d/99-vpn.conf"
 

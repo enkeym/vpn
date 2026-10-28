@@ -165,7 +165,7 @@ export class AwgService implements OnModuleInit {
   );
 
   /**
-   * Порты прежних редакций AWG_PUBLIC_PORT: REDIRECT для них держим наравне с
+   * Порты прежних редакций AWG_PUBLIC_PORT: проброс для них держим наравне с
    * текущим. Смена порта не перевыпускает уже скачанные файлы — они остаются со
    * старым Endpoint, и без этих правил отваливаются все, кому конфиг выдали до
    * смены. Раньше правило держалось на хосте сиротой от прошлого PostUp и
@@ -353,6 +353,13 @@ export class AwgService implements OnModuleInit {
    * миграции уже существующего: разойдись они, на давно работающих серверах
    * правила навсегда остались бы в первой редакции.
    */
+  /** Публичные порты, которые пробрасываются на ListenPort */
+  private forwardedPublicPorts(): number[] {
+    return [...new Set([this.publicPort, ...this.legacyPublicPorts])].filter(
+      (port) => port !== this.port,
+    );
+  }
+
   private async firewallRules(): Promise<IFirewallRule[]> {
     const iface = this.binaries.interfaceName;
     const wanIface = await resolveWanInterface();
@@ -393,18 +400,18 @@ export class AwgService implements OnModuleInit {
     ];
 
     // В host-режиме docker проброс публичного порта не делает. Только с `-i`
-    // внешнего интерфейса: без него REDIRECT цепляет и трафик клиентов из
+    // внешнего интерфейса: без него правило цепляет и трафик клиентов из
     // туннеля (QUIC на udp/443) и заворачивает его в сам awg0.
-    const redirectPorts = [
-      ...new Set([this.publicPort, ...this.legacyPublicPorts]),
-    ].filter((port) => port !== this.port);
-
-    for (const port of redirectPorts) {
+    // DNAT только на порт, а не REDIRECT: REDIRECT подменяет адрес назначения
+    // первым адресом интерфейса, и при втором IP (PUBLIC_IPV4) amneziawg-go
+    // отвечал с адреса, на который пришёл пакет, — conntrack не узнавал ответ,
+    // он уходил с порта ListenPort, и клиент его отбрасывал.
+    for (const port of this.forwardedPublicPorts()) {
       rules.push({
         bin: 'iptables',
         table: 'nat',
         chain: 'PREROUTING',
-        rule: `-i ${wanIface} -p udp --dport ${port} -j REDIRECT --to-ports ${this.port}`,
+        rule: `-i ${wanIface} -p udp --dport ${port} -j DNAT --to-destination :${this.port}`,
         checkFirst: true,
       });
     }
@@ -445,6 +452,15 @@ export class AwgService implements OnModuleInit {
   }> {
     const rules = await this.firewallRules();
 
+    // REDIRECT прежних редакций стоят в PREROUTING раньше DNAT и выигрывали бы
+    // у него; PostDown старого файла их уже не снимет — он перезаписан. Цикл —
+    // потому что правило могло задвоиться (ручная установка + PostUp).
+    const wanIface = await resolveWanInterface();
+    const legacyCleanup = this.forwardedPublicPorts().map((port) => {
+      const del = `iptables -t nat -D PREROUTING -i ${wanIface} -p udp --dport ${port} -j REDIRECT --to-ports ${this.port}`;
+      return `while ${del} 2>/dev/null; do :; done`;
+    });
+
     const render = (rule: IFirewallRule, op: '-A' | '-D'): string => {
       const table = rule.table ? `-t ${rule.table} ` : '';
       const line = `${rule.bin} ${table}${op} ${rule.chain} ${rule.rule}`;
@@ -459,7 +475,7 @@ export class AwgService implements OnModuleInit {
     };
 
     return {
-      postUp: rules.map((rule) => render(rule, '-A')),
+      postUp: [...legacyCleanup, ...rules.map((rule) => render(rule, '-A'))],
       // Снимаем в обратном порядке — в том же, в каком добавляли
       postDown: [...rules].reverse().map((rule) => render(rule, '-D')),
     };

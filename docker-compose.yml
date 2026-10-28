@@ -22,8 +22,8 @@ services:
     #     выставить на самом хосте: `sudo make bootstrap` (scripts/bootstrap-host.sh).
     #  2. Секция ports (была ниже) в host-режиме не работает — контейнер сразу
     #     слушает AWG_PORT на хосте. Публичный AWG_PUBLIC_PORT (4500) без
-    #     докеровского проброса нужно перенаправлять iptables REDIRECT на хосте,
-    #     его тоже ставит `sudo make bootstrap`.
+    #     докеровского проброса перенаправляется на AWG_PORT правилом DNAT —
+    #     его ставит PostUp awg0, руками ничего не нужно.
     network_mode: host
 
     deploy:
