@@ -148,5 +148,6 @@ NestJS `/sub/` и VLESS+WS) и всё остальное — в Reality. Без 
 ## Ветки
 
 `dev` — рабочая (AmneziaWG + Xray), `main` — только Xray. Ветки разошлись
-намеренно: фичи переносить точечно, не мержить целиком. `docs/` в дереве нет —
-ссылки на `docs/scaling.md` в README и `docker-compose.yml` устарели.
+намеренно: фичи переносить точечно, не мержить целиком. Шаги по хосту —
+`sudo make bootstrap`; переезд на новый сервер — `make restore` → `sudo make
+bootstrap` → `make up`.

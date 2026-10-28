@@ -19,11 +19,11 @@ services:
     # Из-за этого:
     #  1. sysctls ниже (были net.ipv4.ip_forward / net.ipv6.conf.all.*) docker
     #     в host-режиме применять к контейнеру не даёт — их нужно один раз
-    #     выставить на самом хосте, см. «Команды на сервере» в docs/scaling.md.
+    #     выставить на самом хосте: `sudo make bootstrap` (scripts/bootstrap-host.sh).
     #  2. Секция ports (была ниже) в host-режиме не работает — контейнер сразу
     #     слушает AWG_PORT на хосте. Публичный AWG_PUBLIC_PORT (4500) без
     #     докеровского проброса нужно перенаправлять iptables REDIRECT на хосте,
-    #     см. docs/scaling.md.
+    #     его тоже ставит `sudo make bootstrap`.
     network_mode: host
 
     deploy:
@@ -35,7 +35,7 @@ services:
           # ядро и часть памяти нужны хосту под ОС, sshd, conntrack, cron.
           # docker откажется стартовать контейнер, если cpus больше числа ядер
           # хоста — при следующем апгрейде поднимать значения синхронно с nproc.
-          # Полный список шагов апгрейда: docs/scaling.md
+          # `sudo make bootstrap` сверяет cpus с nproc и предупреждает о расхождении.
           cpus: '3.0'
           memory: 2G
         reservations:
@@ -62,8 +62,8 @@ services:
 
     # Проброса портов больше нет (network_mode: host — контейнер слушает AWG_PORT
     # напрямую на хосте). Проброс AWG_PUBLIC_PORT (4500) → AWG_PORT (51821) и
-    # открытие обоих портов в фаерволе теперь делаются на хосте вручную,
-    # см. «Команды на сервере» в docs/scaling.md.
+    # открытие обоих портов в фаерволе теперь делаются на хосте:
+    # `sudo make bootstrap` (подробности — README).
     #
     # Второй канал (VLESS через Xray) слушает здесь же, на хосте:
     #  • XRAY_REALITY_PORT (443/tcp) — публичный, открыть в фаерволе. TLS на
