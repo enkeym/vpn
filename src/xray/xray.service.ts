@@ -13,6 +13,7 @@ import { randomBytes } from 'crypto';
 import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { Mutex } from 'async-mutex';
+import { HostNetworkService } from '../network/host-network.service';
 
 const execAsync = promisify(exec);
 /**
@@ -199,11 +200,16 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private reloadTimer: NodeJS.Timeout | null = null;
   private reloadWaiters: Array<() => void> = [];
 
+  constructor(private readonly hostNetwork: HostNetworkService) {}
+
   async onModuleInit(): Promise<void> {
     if (process.env.XRAY_ENABLED === 'false') {
       this.logger.warn('Xray выключен (XRAY_ENABLED=false)');
       return;
     }
+
+    // Исходящий трафик Xray тоже должен выйти с PUBLIC_IPV4 — SNAT ставим до старта
+    await this.hostNetwork.ensureApplied();
 
     if (!this.host) {
       this.logger.warn(

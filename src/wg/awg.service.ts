@@ -32,7 +32,6 @@ import {
 import {
   bringInterfaceDown,
   bringInterfaceUp,
-  getWanInterface,
   isBinaryAvailable,
   isInterfaceUp,
   isIpv6Available,
@@ -40,6 +39,8 @@ import {
   syncInterface,
   type ITunnelBinaries,
 } from './tunnel.runtime';
+import { HostNetworkService } from '../network/host-network.service';
+import { resolveWanInterface } from '../network/wan-interface';
 import type {
   IClientConfigInput,
   IDbPeer,
@@ -191,11 +192,16 @@ export class AwgService implements OnModuleInit {
     null;
   private readonly CONFIG_CACHE_TTL = 30 * 1000;
 
+  constructor(private readonly hostNetwork: HostNetworkService) {}
+
   async onModuleInit(): Promise<void> {
     if (process.env.AWG_ENABLED === 'false') {
       this.logger.log('AmneziaWG отключён (AWG_ENABLED=false)');
       return;
     }
+
+    // PostUp ниже собирается с учётом PUBLIC_IPV4: адрес и SNAT должны быть готовы
+    await this.hostNetwork.ensureApplied();
 
     if (!this.host) {
       this.logger.warn('AmneziaWG не поднят: WG_HOST в .env не задан');
@@ -343,36 +349,17 @@ export class AwgService implements OnModuleInit {
   }
 
   /**
-   * Внешний интерфейс для MASQUERADE. Имя NIC зависит от провайдера (eth0,
-   * ens3, enp1s0...) — хардкод здесь однажды уже привёл к тому, что правило
-   * NAT молча никогда не матчилось (реальный интерфейс отличался от
-   * зашитого), и трафик уходил только благодаря постороннему ручному правилу
-   * на сервере. AWG_WAN_IFACE — аварийный override, если авто-детект
-   * маршрута по какой-то причине выберет не то.
-   */
-  private async wanInterface(): Promise<string> {
-    const override = process.env.AWG_WAN_IFACE?.trim();
-    if (override) return override;
-
-    const detected = await getWanInterface();
-    if (!detected) {
-      throw new Error(
-        'Не удалось определить внешний интерфейс (ip route show default) ' +
-          'для правила MASQUERADE. Задайте его явно через AWG_WAN_IFACE.',
-      );
-    }
-
-    return detected;
-  }
-
-  /**
    * Правила фаервола интерфейса — единый источник и для нового конфига, и для
    * миграции уже существующего: разойдись они, на давно работающих серверах
    * правила навсегда остались бы в первой редакции.
    */
   private async firewallRules(): Promise<IFirewallRule[]> {
     const iface = this.binaries.interfaceName;
-    const wanIface = await this.wanInterface();
+    const wanIface = await resolveWanInterface();
+    // MASQUERADE берёт первый адрес интерфейса, поэтому при PUBLIC_IPV4 NAT
+    // делается явным SNAT; без подтверждённого адреса остаётся MASQUERADE
+    const snatIp = this.hostNetwork.snatSourceIp;
+    const natTarget = snatIp ? `SNAT --to-source ${snatIp}` : 'MASQUERADE';
 
     // Без клэмпинга MSS хендшейк и мелкие пакеты (DNS, keepalive) проходят, а
     // крупные TCP-сегменты настоящих сайтов не помещаются в инкапсуляцию и тихо
@@ -393,7 +380,7 @@ export class AwgService implements OnModuleInit {
         bin: 'iptables',
         table: 'nat',
         chain: 'POSTROUTING',
-        rule: `-o ${wanIface} -j MASQUERADE`,
+        rule: `-o ${wanIface} -j ${natTarget}`,
         checkFirst: true,
       },
       {
