@@ -1,12 +1,28 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ReachabilityService } from '../network/reachability.service';
 import { PeersService } from './peers.service';
 
 @Injectable()
 export class PeersSchedulerService {
   private readonly logger = new Logger(PeersSchedulerService.name);
 
-  constructor(private readonly peersService: PeersService) {}
+  constructor(
+    private readonly peersService: PeersService,
+    private readonly reachability: ReachabilityService,
+  ) {}
+
+  /** Бан IP виден по недоступности из РФ раньше, чем по жалобам клиентов */
+  @Cron(CronExpression.EVERY_HOUR)
+  async handleReachability() {
+    try {
+      await this.reachability.check();
+    } catch (error) {
+      this.logger.error(
+        `Ошибка проверки доступности IP: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
 
   @Cron(CronExpression.EVERY_HOUR)
   async handleExpiredPeers() {
