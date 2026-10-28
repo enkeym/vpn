@@ -3,6 +3,8 @@ paths:
   - "Makefile"
   - "docker-compose.yml"
   - ".github/workflows/**"
+  - ".env.example"
+  - ".gitignore"
 ---
 
 ## Контракты
@@ -21,6 +23,10 @@ paths:
   начнёт сравнивать не то. Порты фаервола (443/tcp, 443/udp, `AWG_PUBLIC_PORT`/udp) должны
   совпадать с тем, что слушают nginx и `awg0`.
 - Правки руками на сервере диспетчер не затирает, а падает на `git status --porcelain`.
+  Бэкапы `.env.*` закрыты маской в `.gitignore` (кроме `.env.example`).
+- `env_file: .env` в compose читает `KEY= # текст` как значение «# текст»: в
+  `.env.example` комментарий у пустого ключа — только строкой выше, иначе на новом
+  сервере его скопируют в `.env` и сломают переменные.
 - `make backup` кладёт `vpn-backup-*.tgz` в корень (или `OUT=`): маска в `.gitignore`
   обязательна, иначе untracked-архив остановит деплой. Копия БД идёт через
   `scripts/db-backup.cjs` внутри контейнера — файл копируется в образ в `Dockerfile`.

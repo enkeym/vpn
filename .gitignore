@@ -41,6 +41,10 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 .env.local
+# Бэкапы .env (.env.bak-*) несут секреты, а untracked-файл в корне на сервере
+# останавливает деплой-диспетчер на `git status --porcelain`
+.env.*
+!.env.example
 
 # temp directory
 .temp

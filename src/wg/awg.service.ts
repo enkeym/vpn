@@ -348,11 +348,6 @@ export class AwgService implements OnModuleInit {
     ];
   }
 
-  /**
-   * Правила фаервола интерфейса — единый источник и для нового конфига, и для
-   * миграции уже существующего: разойдись они, на давно работающих серверах
-   * правила навсегда остались бы в первой редакции.
-   */
   /** Публичные порты, которые пробрасываются на ListenPort */
   private forwardedPublicPorts(): number[] {
     return [...new Set([this.publicPort, ...this.legacyPublicPorts])].filter(
@@ -360,6 +355,11 @@ export class AwgService implements OnModuleInit {
     );
   }
 
+  /**
+   * Правила фаервола интерфейса — единый источник и для нового конфига, и для
+   * миграции уже существующего: разойдись они, на давно работающих серверах
+   * правила навсегда остались бы в первой редакции.
+   */
   private async firewallRules(): Promise<IFirewallRule[]> {
     const iface = this.binaries.interfaceName;
     const wanIface = await resolveWanInterface();
@@ -454,12 +454,16 @@ export class AwgService implements OnModuleInit {
 
     // REDIRECT прежних редакций стоят в PREROUTING раньше DNAT и выигрывали бы
     // у него; PostDown старого файла их уже не снимет — он перезаписан. Цикл —
-    // потому что правило могло задвоиться (ручная установка + PostUp).
+    // потому что правило могло задвоиться (ручная установка + PostUp). Форма
+    // без `-i` — из ручной инструкции README прежних редакций: она к тому же
+    // заворачивает в awg0 QUIC клиентов из туннеля.
     const wanIface = await resolveWanInterface();
-    const legacyCleanup = this.forwardedPublicPorts().map((port) => {
-      const del = `iptables -t nat -D PREROUTING -i ${wanIface} -p udp --dport ${port} -j REDIRECT --to-ports ${this.port}`;
-      return `while ${del} 2>/dev/null; do :; done`;
-    });
+    const legacyCleanup = this.forwardedPublicPorts().flatMap((port) =>
+      [`-i ${wanIface} `, ''].map((ifaceMatch) => {
+        const del = `iptables -t nat -D PREROUTING ${ifaceMatch}-p udp --dport ${port} -j REDIRECT --to-ports ${this.port}`;
+        return `while ${del} 2>/dev/null; do :; done`;
+      }),
+    );
 
     const render = (rule: IFirewallRule, op: '-A' | '-D'): string => {
       const table = rule.table ? `-t ${rule.table} ` : '';

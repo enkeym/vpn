@@ -99,8 +99,10 @@ IP клиента берётся **только** из `req.ip` — в `main.ts`
 
 ### Сеть и деплой
 
-Контейнер работает в `network_mode: host`, поэтому sysctl, фаервол и проброс
-`4500/udp → AWG_PORT` делаются на хосте вручную (см. README). Если задан
+Контейнер работает в `network_mode: host`, поэтому sysctl и фаервол хоста
+ставит `sudo make bootstrap`, а проброс `AWG_PUBLIC_PORT → AWG_PORT` — PostUp
+awg0 (DNAT только на порт: REDIRECT ломает хендшейк на втором IP из
+`PUBLIC_IPV4`). Если задан
 `XRAY_DOMAIN`, публичный 443 слушает **nginx** внутри образа: по SNI
 (`ssl_preread`, без расшифровки) он разводит домен на внутренний TLS (дальше
 NestJS `/sub/` и VLESS+WS) и всё остальное — в Reality. Без домена nginx не
