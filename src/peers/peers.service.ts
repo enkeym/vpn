@@ -1682,11 +1682,18 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   async generatePeerQrCode(peerName: string): Promise<Buffer> {
     const config = await this.getPeerConfigString(peerName);
 
+    // С I1..I5 (QUIC-имитация) конфиг занимает килобайты: при уровне M и 512 px
+    // модули выходят меньше пикселя, и AmneziaVPN не распознаёт код. Уровень L
+    // даёт запас по ёмкости, а размер считаем от числа модулей (≥ 8 px на модуль)
+    const margin = 4;
+    const { modules } = QRCode.create(config, { errorCorrectionLevel: 'L' });
+    const width = Math.max(512, (modules.size + margin * 2) * 8);
+
     return QRCode.toBuffer(config, {
       type: 'png',
-      width: 512,
-      margin: 2,
-      errorCorrectionLevel: 'M',
+      width,
+      margin,
+      errorCorrectionLevel: 'L',
     });
   }
 
