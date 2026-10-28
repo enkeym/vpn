@@ -57,6 +57,9 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 configs/*
 
+# make backup кладёт архив в корень; untracked-файл остановил бы deploy-dispatch
+vpn-backup-*.tgz
+
 # Database
 /data
 src/database/vpn.db

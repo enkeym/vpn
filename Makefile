@@ -20,6 +20,14 @@ rebuild: down clean build up logs
 logs:
 	docker compose -p $(NAME) logs -f
 
+# Копия БД делается внутри работающего контейнера, поэтому backup требует up.
+backup:
+	NAME="$(NAME)" OUT="$(OUT)" bash scripts/backup.sh
+
+# Контейнер должен быть остановлен (make down); FORCE=1 — поверх существующих данных.
+restore:
+	NAME="$(NAME)" FILE="$(FILE)" FORCE="$(FORCE)" bash scripts/restore.sh
+
 clean:
 	docker image prune -af --filter "label=com.docker.compose.project=$(NAME)"
 	docker volume prune -f --filter "label=com.docker.compose.project=$(NAME)"

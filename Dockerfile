@@ -149,6 +149,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/drizzle ./drizzle
+# Целостная копия SQLite для make backup (запускается через docker compose exec)
+COPY scripts/db-backup.cjs ./scripts/db-backup.cjs
 
 # nginx: шаблон конфига (домен и порты подставляет entrypoint из .env) и сам
 # entrypoint, который поднимает nginx перед стартом NestJS.

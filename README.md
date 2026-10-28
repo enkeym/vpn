@@ -153,6 +153,24 @@ docker compose -p vpn-bot up -d --build
 Параметры обфускации и ключи Reality лежат в `./configs` и переживают
 пересборку — выданные клиентам конфиги продолжают работать.
 
+### Бэкап и переезд
+
+```bash
+make backup [OUT=каталог]            # контейнер запущен
+make down
+make restore FILE=vpn-backup-….tgz [FORCE=1]
+make up
+```
+
+`make backup` кладёт в `vpn-backup-<дата>.tgz` согласованную копию SQLite
+(`db.backup()`, с учётом WAL), `configs/` и `.env`. Архив содержит секреты
+(токен бота, ключи Reality/AWG) — храните вне сервера и не коммитьте.
+
+На новом сервере: `git clone`, `make restore FILE=…`, `make up`
+(`make bootstrap` для настройки хоста появится отдельным шагом).
+`FORCE=1` перезаписывает `.env`, `data/vpn.db` и файлы из архива, но не
+удаляет лишние файлы в `configs/`, которых в архиве нет.
+
 ## Протокол: AmneziaWG 3
 
 Основной туннель сервиса — AmneziaWG 3 на интерфейсе `awg0`. Классический
