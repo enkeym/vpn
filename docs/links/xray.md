@@ -41,6 +41,10 @@ paths:
   порта 80 нет) после продления подхватывается `nginx -s reload` внутри
   контейнера, рестарт не нужен. На этот порт ходит только Reality с `xver: 0`,
   поэтому `listen` без `proxy_protocol`.
+- `CF_DNS_PROXIED=true` в `src/network/dns-sync.service.ts` оранжевит ВСЕ имена из
+  `CF_DNS_RECORDS`: `XRAY_DOMAIN`, `XRAY_REALITY_SNI` и `WG_HOST` за прокси Cloudflare
+  перестают работать (Reality, AWG, self-steal). Флаг один на все имена, поэтому
+  `true` допустим, только если в `CF_DNS_RECORDS` лежит одно CDN-имя.
 - Смена `XRAY_REALITY_SNI` — старый SNI перенести в `XRAY_REALITY_EXTRA_SNI`
   (`src/xray/xray.service.ts:realityExtraSni` → `serverNames`): подписка
   обновится сама, а выданные `vless://` несут старый SNI.
