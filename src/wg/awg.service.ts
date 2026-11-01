@@ -789,20 +789,15 @@ export class AwgService implements OnModuleInit {
       ? `PresharedKey = ${peer.presharedKey}\n`
       : '';
 
-    // Адреса клиента в туннеле: без v6-адреса клиент всё равно забирает ::/0
-    // из AllowedIPs, а выпустить IPv6-пакеты ему некуда. При MTU < 1280 v6-адрес
-    // не выдаём: Android не поднимает IPv6 на таком интерфейсе, и подключение
-    // падает с ErrorCode 1000
-    const address =
-      this.ipv6Enabled && this.clientMtu >= IPV6_MIN_MTU
-        ? `${peer.ip}/32, ${deriveClientIpv6(this.interfaceAddress6, peer.ip)}/128`
-        : `${peer.ip}/32`;
+    const address = this.ipv6Enabled
+      ? `${peer.ip}/32, ${deriveClientIpv6(this.interfaceAddress6, peer.ip)}/128`
+      : `${peer.ip}/32`;
 
     return `[Interface]
 PrivateKey = ${peer.privateKey}
 Address = ${address}
 DNS = ${this.clientDns}
-MTU = ${this.clientMtu}
+MTU = ${this.serverMtu()}
 ${obfuscationLines(obfuscation, advanced, awg3)}
 
 [Peer]
