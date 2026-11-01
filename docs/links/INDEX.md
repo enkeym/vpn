@@ -7,6 +7,7 @@
 `node ~/.ai-hooks/bin/check-impact-map.mjs`.
 
 - xray — `xray.md` — Xray ↔ nginx-разводчик в образе
+- awg — `awg.md` — MTU, TCPMSS и применение PostUp/PostDown
 - peers — `peers.md` — cron пиров и URL подписки
 - payment — `payment.md` — вебхук ЮKassa, allow-list, тестовый режим
 - bot — `bot.md` — callback-роуты и токен бота

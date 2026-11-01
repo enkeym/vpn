@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import * as path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { Mutex } from 'async-mutex';
@@ -50,6 +52,10 @@ import type {
 
 /** RFC 8200: на интерфейсе с MTU ниже этого Linux выключает IPv6 */
 const IPV6_MIN_MTU = 1280;
+const TCP_MIN_MSS = 536;
+const TCP_MAX_MSS = 65535;
+const IPV6_TCP_HEADER_BYTES = 60;
+const execFileAsync = promisify(execFile);
 
 /**
  * AmneziaWG 3 — единственный туннель сервиса: форк WireGuard, маскирующий трафик
@@ -120,6 +126,7 @@ export class AwgService implements OnModuleInit {
    * после ручного занижения MTU в .conf.
    */
   private readonly clientMtu = Number(process.env.AWG_MTU || 1200);
+  private readonly tcpMss = Number(process.env.AWG_TCP_MSS || 0);
 
   /**
    * Единственный параметр AWG 3, который обязан совпасть с клиентом. По
@@ -363,6 +370,14 @@ export class AwgService implements OnModuleInit {
   private async firewallRules(): Promise<IFirewallRule[]> {
     const iface = this.binaries.interfaceName;
     const wanIface = await resolveWanInterface();
+    if (
+      this.tcpMss !== 0 &&
+      (!Number.isInteger(this.tcpMss) ||
+        this.tcpMss < TCP_MIN_MSS ||
+        this.tcpMss > this.serverMtu() - IPV6_TCP_HEADER_BYTES)
+    ) {
+      throw new Error('AWG_TCP_MSS должен помещаться в MTU туннеля');
+    }
     // MASQUERADE берёт первый адрес интерфейса, поэтому при PUBLIC_IPV4 NAT
     // делается явным SNAT; без подтверждённого адреса остаётся MASQUERADE
     const snatIp = this.hostNetwork.snatSourceIp;
@@ -398,6 +413,24 @@ export class AwgService implements OnModuleInit {
         checkFirst: true,
       },
     ];
+
+    if (this.tcpMss !== 0) {
+      const binaries: IFirewallRule['bin'][] = this.ipv6Enabled
+        ? ['iptables', 'ip6tables']
+        : ['iptables'];
+      for (const bin of binaries) {
+        for (const direction of ['-i', '-o']) {
+          rules.push({
+            bin,
+            table: 'mangle',
+            chain: 'FORWARD',
+            rule: `${direction} ${iface} -p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss ${this.tcpMss + 1}:${TCP_MAX_MSS} -j TCPMSS --set-mss ${this.tcpMss}`,
+            checkFirst: true,
+            optional: bin === 'ip6tables',
+          });
+        }
+      }
+    }
 
     // В host-режиме docker проброс публичного порта не делает. Только с `-i`
     // внешнего интерфейса: без него правило цепляет и трафик клиентов из
@@ -495,6 +528,7 @@ export class AwgService implements OnModuleInit {
    */
   private async upgradeExistingConfig(): Promise<boolean> {
     const config = await this.getConfig();
+    const previousPostDown = [...config.postDown];
 
     // awg0.conf пишется один раз при первом старте — смена AWG_PORT в .env
     // иначе осталась бы незамеченной: интерфейс поднимался бы со старым
@@ -590,6 +624,13 @@ export class AwgService implements OnModuleInit {
     }
 
     if (restartRequired || peersChanged) {
+      if (restartRequired) {
+        if (await isInterfaceUp(this.binaries.interfaceName)) {
+          await bringInterfaceDown(this.binaries, this.filePath);
+        } else {
+          await this.removeObsoleteMssRules(previousPostDown, config.postDown);
+        }
+      }
       await this.writeConfig(config);
     }
 
@@ -627,6 +668,26 @@ export class AwgService implements OnModuleInit {
 
     // Параметры обфускации задаются при создании интерфейса — как и Address
     return true;
+  }
+
+  private async removeObsoleteMssRules(
+    previous: string[],
+    next: string[],
+  ): Promise<void> {
+    for (const rule of previous) {
+      if (next.includes(rule)) continue;
+      const match = rule.match(
+        /^((?:iptables|ip6tables) -t mangle -D FORWARD -[io] ([\w-]+) -p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss \d+:\d+ -j TCPMSS --set-mss \d+) \|\| true$/,
+      );
+      if (!match || match[2] !== this.binaries.interfaceName) continue;
+      try {
+        await execFileAsync('sudo', match[1].split(' '));
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 1)) {
+          throw error;
+        }
+      }
+    }
   }
 
   private async getConfig(): Promise<IAwgServerConfig> {

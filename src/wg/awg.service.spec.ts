@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'child_process';
+import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -9,7 +10,7 @@ import { parseAwgConfig } from './awg.utils';
 
 jest.mock('fs', () => ({
   ...jest.requireActual<typeof import('fs')>('fs'),
-  existsSync: () => false,
+  existsSync: jest.fn(() => false),
 }));
 
 jest.mock('fs/promises', () => ({
@@ -26,6 +27,9 @@ jest.mock('child_process', () => {
   return {
     ...actual,
     exec: Object.assign(jest.fn(), {
+      [promisify.custom]: () => Promise.resolve({ stdout: '', stderr: '' }),
+    }),
+    execFile: Object.assign(jest.fn(), {
       [promisify.custom]: () => Promise.resolve({ stdout: '', stderr: '' }),
     }),
     spawn: jest.fn(() => {
@@ -45,6 +49,52 @@ jest.mock('child_process', () => {
 describe('AwgService client configuration', () => {
   const originalEnv = { ...process.env };
   let module: TestingModule | undefined;
+
+  beforeEach(() => {
+    process.env.PUBLIC_IPV4 = '';
+    process.env.WG_HOST = 'vpn.example.test';
+    process.env.AWG_ENABLED = 'true';
+    process.env.AWG_ADDRESS = '10.9.0.1/16';
+    process.env.AWG_ADDRESS6 = 'fd42:9::1/64';
+    process.env.AWG_MTU = '1200';
+    process.env.AWG_TCP_MSS = '0';
+    process.env.AWG_PORT = '51821';
+    process.env.AWG_PUBLIC_PORT = '443';
+    process.env.AWG_WAN_IFACE = 'test0';
+    jest.mocked(existsSync).mockReturnValue(false);
+    jest.mocked(readFile).mockResolvedValue('0');
+    jest.mocked(writeFile).mockResolvedValue(undefined);
+  });
+
+  async function createService(): Promise<AwgService> {
+    module = await Test.createTestingModule({
+      providers: [
+        ConfigService,
+        NotificationService,
+        HostNetworkService,
+        AwgService,
+      ],
+    })
+      .setLogger({ log: jest.fn(), error: jest.fn(), warn: jest.fn() })
+      .compile();
+    const service = module.get(AwgService);
+    await service.onModuleInit();
+    return service;
+  }
+
+  function serverConfigText(): string {
+    const write = jest
+      .mocked(writeFile)
+      .mock.calls.filter(
+        ([file]) =>
+          typeof file === 'string' && file.endsWith('/configs/awg0.conf'),
+      )
+      .at(-1);
+    if (typeof write?.[1] !== 'string') {
+      throw new Error('Server configuration was not written as text');
+    }
+    return write[1];
+  }
 
   afterEach(async () => {
     await module?.close();
@@ -85,28 +135,10 @@ describe('AwgService client configuration', () => {
   ])(
     'exports a usable tunnel for $mtu/$address6/kernelIpv6=$kernelIpv6',
     async ({ mtu, address6, kernelIpv6, expectedMtu, dualStack }) => {
-      process.env.PUBLIC_IPV4 = '';
-      process.env.WG_HOST = 'vpn.example.test';
-      process.env.AWG_ENABLED = 'true';
-      process.env.AWG_ADDRESS = '10.9.0.1/16';
       process.env.AWG_ADDRESS6 = address6;
       process.env.AWG_MTU = String(mtu);
-      process.env.AWG_PORT = '51821';
-      process.env.AWG_PUBLIC_PORT = '443';
-      process.env.AWG_WAN_IFACE = 'test0';
       jest.mocked(readFile).mockResolvedValue(kernelIpv6 ? '0' : '1');
-      module = await Test.createTestingModule({
-        providers: [
-          ConfigService,
-          NotificationService,
-          HostNetworkService,
-          AwgService,
-        ],
-      })
-        .setLogger({ log: jest.fn(), error: jest.fn(), warn: jest.fn() })
-        .compile();
-      const service = module.get(AwgService);
-      await service.onModuleInit();
+      const service = await createService();
 
       const config = await service.buildClientConfig({
         privateKey: Buffer.alloc(32, 8).toString('base64'),
@@ -134,6 +166,71 @@ describe('AwgService client configuration', () => {
       }
       const server = parseAwgConfig(serverContent);
       expect(server.mtu).toBe(expectedMtu);
+      expect(server.postUp.join('\n')).not.toContain('--set-mss');
+    },
+  );
+
+  it('persists scoped MSS rules and removes them when the setting is cleared', async () => {
+    process.env.AWG_TCP_MSS = '960';
+    const service = await createService();
+    expect(service.isEnabled()).toBe(true);
+    let stored = serverConfigText();
+    const first = parseAwgConfig(stored);
+    const rules = first.postUp.filter((rule) => rule.includes('--set-mss 960'));
+    expect(rules).toHaveLength(4);
+    for (const bin of ['iptables', 'ip6tables']) {
+      for (const direction of ['-i', '-o']) {
+        expect(rules).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining(
+              `${bin} -t mangle -A FORWARD ${direction} awg0`,
+            ),
+          ]),
+        );
+        expect(first.postDown).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining(
+              `${bin} -t mangle -D FORWARD ${direction} awg0`,
+            ),
+          ]),
+        );
+      }
+    }
+    await module?.close();
+    process.env.AWG_TCP_MSS = '';
+    jest.mocked(existsSync).mockReturnValue(true);
+    jest
+      .mocked(readFile)
+      .mockImplementation((file) =>
+        Promise.resolve(
+          typeof file === 'string' && file.includes('/proc/') ? '0' : stored,
+        ),
+      );
+    jest.mocked(writeFile).mockImplementation((file, data) => {
+      if (
+        typeof file === 'string' &&
+        file.endsWith('/configs/awg0.conf') &&
+        typeof data === 'string'
+      )
+        stored = data;
+      return Promise.resolve();
+    });
+
+    expect((await createService()).isEnabled()).toBe(true);
+    expect(stored).not.toContain('--set-mss');
+    expect(parseAwgConfig(stored).privateKey).toBe(first.privateKey);
+    const reloaded = stored;
+    await module?.close();
+    expect((await createService()).isEnabled()).toBe(true);
+    expect(stored).toBe(reloaded);
+  });
+
+  it.each(['invalid', '-1', '5000'])(
+    'rejects invalid MSS %s before starting the interface',
+    async (value) => {
+      process.env.AWG_TCP_MSS = value;
+      expect((await createService()).isEnabled()).toBe(false);
+      expect(writeFile).not.toHaveBeenCalled();
     },
   );
 });
