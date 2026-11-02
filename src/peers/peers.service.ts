@@ -529,7 +529,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         // позже Xray подхватит пира без бэкфилла.
         vlessUuid: randomUUID(),
         ip: credentials.ip,
-        endpoint: `${tunnel.host}:${tunnel.publicPort}`,
+        endpoint: `${tunnel.host}:${tunnel.port}`,
         paused: false,
         pausedReason: null,
         expiresAt,
@@ -1585,7 +1585,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
           presharedKey: credentials.presharedKey,
           vlessUuid: newVlessUuid,
           ip: credentials.ip,
-          endpoint: `${tunnel.host}:${tunnel.publicPort}`,
+          endpoint: `${tunnel.host}:${tunnel.port}`,
           paused: false, // Активируем конфиг при замене
           pausedAt: null,
           pausedReason: null,

@@ -12,6 +12,6 @@ paths:
 - `src/wg/awg.service.ts:upgradeExistingConfig` должен вызвать
   `src/wg/tunnel.runtime.ts:bringInterfaceDown` до записи новых PostUp/PostDown:
   awg-quick читает команды удаления с диска. Обратный порядок оставляет прежние
-  правила MSS после изменения или очистки `AWG_TCP_MSS`.
+  правила MSS после изменения или очистки `AWG_TCP_MSS` и старые перенаправления портов.
   Если интерфейс исчез при пересоздании контейнера, оставшиеся правила удаляет
-  `src/wg/awg.service.ts:removeObsoleteMssRules` по прежнему PostDown.
+  `src/wg/awg.service.ts:removeObsoleteFirewallRules` по прежнему PostDown.

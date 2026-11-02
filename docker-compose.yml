@@ -20,10 +20,6 @@ services:
     #  1. sysctls ниже (были net.ipv4.ip_forward / net.ipv6.conf.all.*) docker
     #     в host-режиме применять к контейнеру не даёт — их нужно один раз
     #     выставить на самом хосте: `sudo make bootstrap` (scripts/bootstrap-host.sh).
-    #  2. Секция ports (была ниже) в host-режиме не работает — контейнер сразу
-    #     слушает AWG_PORT на хосте. Публичный AWG_PUBLIC_PORT (4500) без
-    #     докеровского проброса перенаправляется на AWG_PORT правилом DNAT —
-    #     его ставит PostUp awg0, руками ничего не нужно.
     network_mode: host
 
     deploy:
@@ -60,11 +56,6 @@ services:
       - ./data:/app/data
       - /lib/modules:/lib/modules:ro
 
-    # Проброса портов больше нет (network_mode: host — контейнер слушает AWG_PORT
-    # напрямую на хосте). Проброс AWG_PUBLIC_PORT (4500) → AWG_PORT (51821) и
-    # открытие обоих портов в фаерволе теперь делаются на хосте:
-    # `sudo make bootstrap` (подробности — README).
-    #
     # Второй канал (VLESS через Xray) слушает здесь же, на хосте:
     #  • XRAY_REALITY_PORT (443/tcp) — публичный, открыть в фаерволе. TLS на
     #    нестандартном порту DPI режет в первую очередь, поэтому именно 443;

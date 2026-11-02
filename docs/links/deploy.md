@@ -20,7 +20,7 @@ paths:
   выданные конфиги отвалятся.
 - `make bootstrap` (`scripts/bootstrap-host.sh`) читает первый `cpus:` из `docker-compose.yml`
   (это `limits`) и сверяет с `nproc`; переставишь `reservations` выше `limits` — проверка
-  начнёт сравнивать не то. Порты фаервола (443/tcp, 443/udp, `AWG_PUBLIC_PORT`/udp) должны
+  начнёт сравнивать не то. Порты фаервола (443/tcp, `AWG_PORT`/udp из окружения Compose) должны
   совпадать с тем, что слушают nginx и `awg0`.
 - Правки руками на сервере диспетчер не затирает, а падает на `git status --porcelain`.
   Бэкапы `.env.*` закрыты маской в `.gitignore` (кроме `.env.example`).

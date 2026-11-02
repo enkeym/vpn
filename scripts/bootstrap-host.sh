@@ -7,9 +7,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NAME="${NAME:-vpn-bot}"
-# 443/tcp — nginx (Reality + CDN), 443/udp — QUIC/HTTP3 до CDN-имени,
-# AWG_PUBLIC_PORT/udp — публичный порт AmneziaWG (PostUp сам делает DNAT на AWG_PORT)
-AWG_PUBLIC_PORT="${AWG_PUBLIC_PORT:-4500}"
 SYSCTL_FILE="/etc/sysctl.d/99-vpn.conf"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -22,6 +19,12 @@ warn() { echo "⚠ $*" >&2; }
 # --- docker и compose ---
 command -v docker >/dev/null 2>&1 || { echo "docker не установлен" >&2; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "нет плагина docker compose" >&2; exit 1; }
+AWG_PORT="$(docker compose -p "$NAME" config --environment | awk -F= '$1 == "AWG_PORT" { print $2 }')"
+AWG_PORT="${AWG_PORT:-51821}"
+if [[ ! "$AWG_PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$AWG_PORT < 1 || 10#$AWG_PORT > 65535)); then
+  echo "AWG_PORT должен быть UDP-портом от 1 до 65535" >&2
+  exit 1
+fi
 [ -e /dev/net/tun ] || warn "нет /dev/net/tun — amneziawg-go не поднимется"
 
 # --- sysctl ---
@@ -39,7 +42,7 @@ echo "sysctl: $SYSCTL_FILE применён (ip_forward=$(cat /proc/sys/net/ipv4
 # --- фаервол ---
 # ufw не включаем сами: на чужом хосте это закрыло бы SSH. Если он выключен,
 # правила не добавляем и говорим об этом.
-open_ports=("443/tcp" "443/udp" "${AWG_PUBLIC_PORT}/udp")
+open_ports=("443/tcp" "${AWG_PORT}/udp")
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
   for port in "${open_ports[@]}"; do

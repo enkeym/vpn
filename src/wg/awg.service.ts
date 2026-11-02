@@ -29,7 +29,6 @@ import {
   getSubnetPrefix,
   readAllowedIps,
   readClientDns,
-  readLegacyPublicPorts,
 } from './tunnel.utils';
 import {
   bringInterfaceDown,
@@ -161,27 +160,6 @@ export class AwgService implements OnModuleInit {
   /** Порт, на котором awg0 слушает внутри контейнера */
   public readonly port = Number(process.env.AWG_PORT || 51821);
 
-  /**
-   * Порт в Endpoint клиентского конфига. Отделён от ListenPort намеренно:
-   * мобильные операторы режут нестандартные UDP-порты, поэтому наружу сервис
-   * публикуется на 4500/udp (порт IPsec NAT-T, который пропускают везде), а внутрь
-   * контейнера его прокидывает docker. Без AWG_PUBLIC_PORT совпадает с ListenPort.
-   */
-  public readonly publicPort = Number(
-    process.env.AWG_PUBLIC_PORT || process.env.AWG_PORT || 51821,
-  );
-
-  /**
-   * Порты прежних редакций AWG_PUBLIC_PORT: проброс для них держим наравне с
-   * текущим. Смена порта не перевыпускает уже скачанные файлы — они остаются со
-   * старым Endpoint, и без этих правил отваливаются все, кому конфиг выдали до
-   * смены. Раньше правило держалось на хосте сиротой от прошлого PostUp и
-   * исчезало вместе с таблицей nat на первой перезагрузке.
-   */
-  private readonly legacyPublicPorts = readLegacyPublicPorts(
-    process.env.AWG_LEGACY_PUBLIC_PORTS,
-  );
-
   public readonly host = process.env.WG_HOST || '';
 
   private enabled = false;
@@ -255,7 +233,7 @@ export class AwgService implements OnModuleInit {
       const { obfuscation, awg3 } = await this.getConfig();
       this.logger.log(
         `AmneziaWG 3 активен: ${this.binaries.interfaceName} слушает :${this.port}, ` +
-          `клиентам выдаётся Endpoint ${this.host}:${this.publicPort}, ` +
+          `клиентам выдаётся Endpoint ${this.host}:${this.port}, ` +
           `IPv6: ${this.ipv6Enabled ? this.interfaceAddress6 : 'выключён'}, ` +
           `Jc=${obfuscation.jc} S1=${obfuscation.s1} S2=${obfuscation.s2} ` +
           `S3=${obfuscation.s3} S4=${obfuscation.s4}, header protection: ` +
@@ -355,13 +333,6 @@ export class AwgService implements OnModuleInit {
     ];
   }
 
-  /** Публичные порты, которые пробрасываются на ListenPort */
-  private forwardedPublicPorts(): number[] {
-    return [...new Set([this.publicPort, ...this.legacyPublicPorts])].filter(
-      (port) => port !== this.port,
-    );
-  }
-
   /**
    * Правила фаервола интерфейса — единый источник и для нового конфига, и для
    * миграции уже существующего: разойдись они, на давно работающих серверах
@@ -432,23 +403,6 @@ export class AwgService implements OnModuleInit {
       }
     }
 
-    // В host-режиме docker проброс публичного порта не делает. Только с `-i`
-    // внешнего интерфейса: без него правило цепляет и трафик клиентов из
-    // туннеля (QUIC на udp/443) и заворачивает его в сам awg0.
-    // DNAT только на порт, а не REDIRECT: REDIRECT подменяет адрес назначения
-    // первым адресом интерфейса, и при втором IP (PUBLIC_IPV4) amneziawg-go
-    // отвечал с адреса, на который пришёл пакет, — conntrack не узнавал ответ,
-    // он уходил с порта ListenPort, и клиент его отбрасывал.
-    for (const port of this.forwardedPublicPorts()) {
-      rules.push({
-        bin: 'iptables',
-        table: 'nat',
-        chain: 'PREROUTING',
-        rule: `-i ${wanIface} -p udp --dport ${port} -j DNAT --to-destination :${this.port}`,
-        checkFirst: true,
-      });
-    }
-
     if (!this.ipv6Enabled) return rules;
 
     return [
@@ -485,19 +439,6 @@ export class AwgService implements OnModuleInit {
   }> {
     const rules = await this.firewallRules();
 
-    // REDIRECT прежних редакций стоят в PREROUTING раньше DNAT и выигрывали бы
-    // у него; PostDown старого файла их уже не снимет — он перезаписан. Цикл —
-    // потому что правило могло задвоиться (ручная установка + PostUp). Форма
-    // без `-i` — из ручной инструкции README прежних редакций: она к тому же
-    // заворачивает в awg0 QUIC клиентов из туннеля.
-    const wanIface = await resolveWanInterface();
-    const legacyCleanup = this.forwardedPublicPorts().flatMap((port) =>
-      [`-i ${wanIface} `, ''].map((ifaceMatch) => {
-        const del = `iptables -t nat -D PREROUTING ${ifaceMatch}-p udp --dport ${port} -j REDIRECT --to-ports ${this.port}`;
-        return `while ${del} 2>/dev/null; do :; done`;
-      }),
-    );
-
     const render = (rule: IFirewallRule, op: '-A' | '-D'): string => {
       const table = rule.table ? `-t ${rule.table} ` : '';
       const line = `${rule.bin} ${table}${op} ${rule.chain} ${rule.rule}`;
@@ -512,7 +453,7 @@ export class AwgService implements OnModuleInit {
     };
 
     return {
-      postUp: [...legacyCleanup, ...rules.map((rule) => render(rule, '-A'))],
+      postUp: rules.map((rule) => render(rule, '-A')),
       // Снимаем в обратном порядке — в том же, в каком добавляли
       postDown: [...rules].reverse().map((rule) => render(rule, '-D')),
     };
@@ -628,7 +569,10 @@ export class AwgService implements OnModuleInit {
         if (await isInterfaceUp(this.binaries.interfaceName)) {
           await bringInterfaceDown(this.binaries, this.filePath);
         } else {
-          await this.removeObsoleteMssRules(previousPostDown, config.postDown);
+          await this.removeObsoleteFirewallRules(
+            previousPostDown,
+            config.postDown,
+          );
         }
       }
       await this.writeConfig(config);
@@ -670,18 +614,25 @@ export class AwgService implements OnModuleInit {
     return true;
   }
 
-  private async removeObsoleteMssRules(
+  private async removeObsoleteFirewallRules(
     previous: string[],
     next: string[],
   ): Promise<void> {
     for (const rule of previous) {
       if (next.includes(rule)) continue;
-      const match = rule.match(
+      const mssMatch = rule.match(
         /^((?:iptables|ip6tables) -t mangle -D FORWARD -[io] ([\w-]+) -p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss \d+:\d+ -j TCPMSS --set-mss \d+) \|\| true$/,
       );
-      if (!match || match[2] !== this.binaries.interfaceName) continue;
+      const portMatch = rule.match(
+        /^(iptables -t nat -D PREROUTING (?:-i [\w.-]+ )?-p udp --dport \d+ -j (?:DNAT --to-destination :|REDIRECT --to-ports )\d+) \|\| true$/,
+      );
+      const command =
+        mssMatch?.[2] === this.binaries.interfaceName
+          ? mssMatch[1]
+          : portMatch?.[1];
+      if (!command) continue;
       try {
-        await execFileAsync('sudo', match[1].split(' '));
+        await execFileAsync('sudo', command.split(' '));
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 1)) {
           throw error;
@@ -863,7 +814,7 @@ ${obfuscationLines(obfuscation, advanced, awg3)}
 
 [Peer]
 PublicKey = ${serverPublicKey}
-${presharedKey}Endpoint = ${this.host}:${this.publicPort}
+${presharedKey}Endpoint = ${this.host}:${this.port}
 AllowedIPs = ${this.allowedIps}
 PersistentKeepalive = ${this.persistentKeepalive}
 `;

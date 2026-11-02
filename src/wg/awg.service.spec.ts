@@ -1,12 +1,13 @@
-import type { ChildProcess } from 'child_process';
+import { exec, execFile, ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
 import { readFile, writeFile } from 'fs/promises';
+import { promisify } from 'util';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { HostNetworkService } from '../network/host-network.service';
 import { NotificationService } from '../notification/notification.service';
 import { AwgService } from './awg.service';
-import { parseAwgConfig } from './awg.utils';
+import { parseAwgConfig, serializeAwgConfig } from './awg.utils';
 
 jest.mock('fs', () => ({
   ...jest.requireActual<typeof import('fs')>('fs'),
@@ -27,10 +28,14 @@ jest.mock('child_process', () => {
   return {
     ...actual,
     exec: Object.assign(jest.fn(), {
-      [promisify.custom]: () => Promise.resolve({ stdout: '', stderr: '' }),
+      [promisify.custom]: jest
+        .fn()
+        .mockResolvedValue({ stdout: '', stderr: '' }),
     }),
     execFile: Object.assign(jest.fn(), {
-      [promisify.custom]: () => Promise.resolve({ stdout: '', stderr: '' }),
+      [promisify.custom]: jest
+        .fn()
+        .mockResolvedValue({ stdout: '', stderr: '' }),
     }),
     spawn: jest.fn(() => {
       const child: ChildProcess = new actual.ChildProcess();
@@ -60,10 +65,15 @@ describe('AwgService client configuration', () => {
     process.env.AWG_TCP_MSS = '0';
     process.env.AWG_PORT = '51821';
     process.env.AWG_PUBLIC_PORT = '443';
+    process.env.AWG_LEGACY_PUBLIC_PORTS = '4500';
     process.env.AWG_WAN_IFACE = 'test0';
     jest.mocked(existsSync).mockReturnValue(false);
     jest.mocked(readFile).mockResolvedValue('0');
     jest.mocked(writeFile).mockResolvedValue(undefined);
+    jest.mocked(promisify(exec)).mockResolvedValue({ stdout: '', stderr: '' });
+    jest
+      .mocked(promisify(execFile))
+      .mockResolvedValue({ stdout: '', stderr: '' });
   });
 
   async function createService(): Promise<AwgService> {
@@ -151,7 +161,7 @@ describe('AwgService client configuration', () => {
       expect(config).toContain(
         `Address = 10.9.0.3/32${dualStack ? ', fd42:9::3/128' : ''}\n`,
       );
-      expect(config).toContain('Endpoint = vpn.example.test:443');
+      expect(config).toContain('Endpoint = vpn.example.test:51821');
       expect(config).toContain('AllowedIPs = 0.0.0.0/0, ::/0');
       const serverWrite = jest
         .mocked(writeFile)
@@ -166,7 +176,89 @@ describe('AwgService client configuration', () => {
       }
       const server = parseAwgConfig(serverContent);
       expect(server.mtu).toBe(expectedMtu);
+      expect(server.listenPort).toBe(51821);
+      expect(server.postUp.join('\n')).not.toContain('PREROUTING');
       expect(server.postUp.join('\n')).not.toContain('--set-mss');
+    },
+  );
+
+  it.each([true, false])(
+    'removes obsolete port rules with interface present=%s and preserves the next startup',
+    async (interfacePresent) => {
+      expect((await createService()).isEnabled()).toBe(true);
+      const first = parseAwgConfig(serverConfigText());
+      const obsolete = [
+        'iptables -t nat -D PREROUTING -i test0 -p udp --dport 443 -j DNAT --to-destination :51821',
+        'iptables -t nat -D PREROUTING -p udp --dport 4500 -j REDIRECT --to-ports 51821',
+      ];
+      let stored = serializeAwgConfig({
+        ...first,
+        postUp: [
+          ...first.postUp,
+          ...obsolete.map((rule) => rule.replace(' -D ', ' -A ')),
+        ],
+        postDown: [
+          ...obsolete.map((rule) => `${rule} || true`),
+          ...first.postDown,
+        ],
+      });
+      await module?.close();
+      jest.clearAllMocks();
+      jest.mocked(existsSync).mockReturnValue(true);
+      jest
+        .mocked(readFile)
+        .mockImplementation((file) =>
+          Promise.resolve(
+            typeof file === 'string' && file.includes('/proc/') ? '0' : stored,
+          ),
+        );
+      jest.mocked(writeFile).mockImplementation((file, data) => {
+        if (
+          typeof file === 'string' &&
+          file.endsWith('/configs/awg0.conf') &&
+          typeof data === 'string'
+        )
+          stored = data;
+        return Promise.resolve();
+      });
+      let interfaceUp = interfacePresent;
+      const run = jest.mocked(promisify(exec));
+      run.mockImplementation((command) => {
+        const result =
+          command === 'ip link show awg0' && !interfaceUp
+            ? Promise.reject(new Error('Interface absent'))
+            : Promise.resolve({ stdout: '', stderr: '' });
+        if (command.includes('awg-quick down')) {
+          expect(stored).toContain('PREROUTING');
+          interfaceUp = false;
+        }
+        return Object.assign(result, { child: new ChildProcess() });
+      });
+
+      expect((await createService()).isEnabled()).toBe(true);
+
+      expect(stored).not.toContain('PREROUTING');
+      const migrated = parseAwgConfig(stored);
+      expect(migrated.privateKey).toBe(first.privateKey);
+      expect(migrated.obfuscation).toEqual(first.obfuscation);
+      expect(migrated.awg3).toEqual(first.awg3);
+      expect(migrated.listenPort).toBe(51821);
+      if (interfacePresent) {
+        expect(run).toHaveBeenCalledWith(
+          expect.stringContaining('awg-quick down'),
+        );
+      } else {
+        for (const rule of obsolete) {
+          expect(promisify(execFile)).toHaveBeenCalledWith(
+            'sudo',
+            rule.split(' '),
+          );
+        }
+      }
+      const reloaded = stored;
+      await module?.close();
+      expect((await createService()).isEnabled()).toBe(true);
+      expect(stored).toBe(reloaded);
     },
   );
 
