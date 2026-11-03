@@ -65,6 +65,54 @@ NestJS по умолчанию слушает `HTTP_HOST=127.0.0.1`, `PORT=3000`
 достигать этого адреса с того же хоста; иной `HTTP_HOST` требует закрыть прямой
 доступ к порту приложения firewall. Не публиковать весь внутренний API через CDN.
 
+## Автоматическое продление сертификатов
+
+Сертификат self-steal продлевает `certbot.timer` через DNS-01 Cloudflare.
+API-токен хранится только на VPS в `/root/.secrets/certbot/cloudflare.ini`
+с правами 600; параметры DNS-плагина сохранены в конфигурации renewal certbot.
+
+После успешного продления `/etc/letsencrypt/renewal-hooks/deploy/vpn-nginx.sh`
+копирует `fullchain.pem` и `privkey.pem` в `configs/steal-cert.pem` и
+`configs/steal-key.pem` с правами 600. Если контейнер работает, скрипт выполняет
+`nginx -t` и `nginx -s reload` внутри него. Остановка VPN не требуется.
+
+Проверка расписания и пробное продление с выполнением hook:
+
+```sh
+systemctl status certbot.timer
+certbot renew --dry-run --run-deploy-hooks --no-random-sleep-on-renew
+```
+
+Dry run использует тестовый сервер Let's Encrypt. Его недоступность не проверяет
+работоспособность боевого продления; детали ошибки находятся в
+`/var/log/letsencrypt/letsencrypt.log`. Cloudflare Origin CA — отдельная пара
+`cloudflare-cert.pem`/`cloudflare-key.pem`, certbot её не продлевает.
+
+## Автодеплой GitHub Actions
+
+После успешного job `check` push в `dev` запускает SSH-команду `vpn-new`.
+Ключ пользователя `deploy` ограничен `restrict` и forced command
+`/usr/local/bin/deploy-dispatch`; sudo разрешает только этот root-скрипт без
+аргументов. Другие SSH-команды отклоняются. У `deploy` нет доступа к Docker
+или ключам VPN.
+
+Установленная копия скрипта обновляется отдельно от репозитория:
+
+```sh
+install -o root -g root -m 755 scripts/deploy-dispatch.sh /usr/local/bin/deploy-dispatch
+```
+
+Root-конфигурация `/etc/vpn-new/deploy.conf` с правами 600 задаёт
+`DEPLOY_PROJECT_DIR`, `DEPLOY_BRANCH`, `DEPLOY_CONTAINER` и
+`DEPLOY_HEALTH_TIMEOUT_SECONDS`. Диспетчер блокирует параллельный запуск,
+проверяет чистоту рабочего дерева, обновляет ветку только fast-forward,
+собирает образ и ждёт healthy после запуска. Расхождение истории или ручные
+изменения останавливают деплой.
+
+Секреты репозитория: `DEPLOY_HOST` (адрес:порт), `DEPLOY_SSH_KEY` и
+`DEPLOY_KNOWN_HOSTS`. При переносе VPS обновлять все три; приватный ключ и
+значения секретов в Git не сохранять.
+
 ## Если соединение не устанавливается
 
 На VPS проверить `make logs`, `ss -lntup`, `ip -4 addr`, `ip -4 route`,

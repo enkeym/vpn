@@ -40,7 +40,7 @@ COPY drizzle ./drizzle
 RUN test -n "$(find drizzle -maxdepth 1 -name '*.sql' 2>/dev/null)" || pnpm run generate
 
 # Сборка
-RUN pnpm run build
+RUN NODE_OPTIONS=--max-old-space-size=768 pnpm run build
 
 # Удаляем dev-зависимости для production
 RUN CI=true pnpm prune --prod
@@ -68,7 +68,7 @@ RUN git init /src/amneziawg-go \
     && git remote add origin https://github.com/amnezia-vpn/amneziawg-go \
     && git fetch --depth=1 origin "$AWG_GO_REF" \
     && git checkout FETCH_HEAD \
-    && go build -trimpath -ldflags="-s -w" -o /out/usr/bin/amneziawg-go
+    && GOMAXPROCS=1 GOMEMLIMIT=512MiB go build -p 1 -trimpath -ldflags="-s -w" -o /out/usr/bin/amneziawg-go
 
 RUN git init /src/amneziawg-tools \
     && cd /src/amneziawg-tools \
