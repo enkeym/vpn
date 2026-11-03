@@ -18,7 +18,6 @@ import {
   readAwg3FromEnv,
   readObfuscationFromEnv,
   serializeAwgConfig,
-  upgradeToAwg3,
   type IAwgServerConfig,
 } from './awg.utils';
 import {
@@ -143,14 +142,6 @@ export class AwgService implements OnModuleInit {
    */
   private readonly headerProtection =
     process.env.AWG_HEADER_PROTECTION === 'true';
-
-  /**
-   * Апгрейд существующего awg0.conf до AWG 3 перевыпускает параметры обфускации
-   * и разом отключает всех, кому конфиг уже выдан. Поэтому только по явному
-   * запросу: молча ломать рабочий сервер при обновлении образа нельзя.
-   */
-  private readonly allowConfigUpgrade =
-    process.env.AWG_ALLOW_CONFIG_UPGRADE === 'true';
 
   /** AWG 3 принимает и диапазон `22-30`: ровный интервал keepalive — тоже сигнатура */
   private readonly persistentKeepalive =
@@ -327,7 +318,7 @@ export class AwgService implements OnModuleInit {
   private async generateServerConfig(): Promise<boolean> {
     if (existsSync(this.filePath)) {
       this.logger.log(`Конфиг AmneziaWG найден: ${this.filePath}`);
-      return await this.upgradeExistingConfig();
+      return await this.reconcileConfig();
     }
 
     const privateKey = await generatePrivateKey();
@@ -530,15 +521,7 @@ export class AwgService implements OnModuleInit {
     };
   }
 
-  /**
-   * Конфиг, созданный до AWG 3, поднимется и так, но обфускация останется на
-   * уровне первой версии — дозаполняем недостающие поля на месте.
-   *
-   * Любая такая правка меняет параметры обфускации, а значит разом отключает
-   * всех, кому конфиг уже выдан, поэтому по умолчанию только пишем
-   * предупреждение: применяется она лишь при AWG_ALLOW_CONFIG_UPGRADE=true.
-   */
-  private async upgradeExistingConfig(): Promise<boolean> {
+  private async reconcileConfig(): Promise<boolean> {
     const config = await this.getConfig();
     const previousPostDown = [...config.postDown];
 
@@ -600,11 +583,6 @@ export class AwgService implements OnModuleInit {
       restartRequired = true;
     }
 
-    // I1..I5 — client-side: на хендшейк с уже выданными конфигами не
-    // влияют, поэтому применяются без AWG_ALLOW_CONFIG_UPGRADE. Хранятся в
-    // файле ради buildClientConfig — новые конфиги получат имитацию сами.
-    // Перезапуск — потому что параметры обфускации читаются при подъёме
-    // интерфейса, а не через syncconf.
     const advancedChanged = applyAdvancedFromEnv(config, readAdvancedFromEnv());
     if (advancedChanged.length > 0) {
       this.logger.warn(
@@ -649,40 +627,7 @@ export class AwgService implements OnModuleInit {
       await this.writeConfig(config);
     }
 
-    // upgradeToAwg3 правит config на месте, но пока файл не перезаписан, правки
-    // живут только в этом локальном объекте — getConfig читает файл заново
-    const changes = upgradeToAwg3(
-      config,
-      this.headerProtection,
-      readAwg3FromEnv(),
-    );
-
-    // Header protection выключили в .env, а ключ в файле остался: с ним клиенты,
-    // ради которых его и выключают, всё равно не подключатся
-    if (!this.headerProtection && config.awg3.headerProtectionKey) {
-      delete config.awg3.headerProtectionKey;
-      changes.push('HeaderProtectionKey');
-    }
-
-    if (changes.length === 0) return restartRequired;
-
-    if (!this.allowConfigUpgrade) {
-      this.logger.warn(
-        `Конфиг AmneziaWG расходится с текущими настройками AWG 3 (${changes.join(', ')}). ` +
-          'Обновление отключило бы всех, кому конфиг уже выдан, поэтому пропущено: ' +
-          'задайте AWG_ALLOW_CONFIG_UPGRADE=true, чтобы применить.',
-      );
-      return restartRequired;
-    }
-
-    await this.writeConfig(config);
-    this.logger.warn(
-      `Конфиг AmneziaWG обновлён до AWG 3 (${changes.join(', ')}). ` +
-        'Старые выданные файлы больше не подключатся: клиентам нужно заново скачать конфиг из бота.',
-    );
-
-    // Параметры обфускации задаются при создании интерфейса — как и Address
-    return true;
+    return restartRequired;
   }
 
   private async removeObsoleteFirewallRules(

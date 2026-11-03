@@ -9,7 +9,7 @@ paths:
   управлением `src/wg/awg.service.ts:buildClientConfig` и не уменьшаются вместе с MSS.
 
 ## Применение конфигурации
-- `src/wg/awg.service.ts:upgradeExistingConfig` должен вызвать
+- `src/wg/awg.service.ts:reconcileConfig` должен вызвать
   `src/wg/tunnel.runtime.ts:bringInterfaceDown` до записи новых PostUp/PostDown:
   awg-quick читает команды удаления с диска. Обратный порядок оставляет прежние
   правила MSS после изменения или очистки `AWG_TCP_MSS` и старые перенаправления портов.

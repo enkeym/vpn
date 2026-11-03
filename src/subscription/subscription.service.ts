@@ -97,7 +97,7 @@ export class SubscriptionService {
         tag: CDN_TAG,
         domain_strategy: domainStrategy,
         server: xray.domain,
-        server_port: xray.port,
+        server_port: xray.realityPort,
         uuid: peer.vlessUuid,
         transport: {
           type: 'ws',

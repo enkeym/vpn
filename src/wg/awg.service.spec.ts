@@ -64,8 +64,7 @@ describe('AwgService client configuration', () => {
     process.env.AWG_MTU = '1200';
     process.env.AWG_TCP_MSS = '0';
     process.env.AWG_PORT = '51821';
-    process.env.AWG_PUBLIC_PORT = '443';
-    process.env.AWG_LEGACY_PUBLIC_PORTS = '4500';
+    process.env.AWG_HEADER_PROTECTION = 'false';
     process.env.AWG_WAN_IFACE = 'test0';
     jest.mocked(existsSync).mockReturnValue(false);
     jest.mocked(readFile).mockResolvedValue('0');
@@ -185,8 +184,21 @@ describe('AwgService client configuration', () => {
   it.each([true, false])(
     'removes obsolete port rules with interface present=%s and preserves the next startup',
     async (interfacePresent) => {
+      process.env.AWG_HEADER_PROTECTION = String(interfacePresent);
       expect((await createService()).isEnabled()).toBe(true);
       const first = parseAwgConfig(serverConfigText());
+      expect(first.obfuscation.s3).toBeGreaterThan(0);
+      expect(first.obfuscation.s4).toBeGreaterThan(0);
+      for (const key of ['h1', 'h2', 'h3', 'h4'] as const) {
+        expect(first.obfuscation[key]).toMatch(/^\d+-\d+$/);
+      }
+      if (interfacePresent) {
+        expect(
+          Buffer.from(first.awg3.headerProtectionKey ?? '', 'base64'),
+        ).toHaveLength(32);
+      } else {
+        expect(first.awg3.headerProtectionKey).toBeUndefined();
+      }
       const obsolete = [
         'iptables -t nat -D PREROUTING -i test0 -p udp --dport 443 -j DNAT --to-destination :51821',
         'iptables -t nat -D PREROUTING -p udp --dport 4500 -j REDIRECT --to-ports 51821',

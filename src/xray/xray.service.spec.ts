@@ -56,8 +56,9 @@ describe('XrayService health and proxy recovery', () => {
     jest.useFakeTimers();
     process.env.PUBLIC_IPV4 = '';
     process.env.XRAY_ENABLED = 'true';
-    process.env.XRAY_HOST = 'vpn.example.test';
+    process.env.WG_HOST = 'direct.example.test';
     process.env.XRAY_DOMAIN = 'vpn.example.test';
+    process.env.XRAY_REALITY_PORT = '2053';
     process.env.XRAY_INTERNAL_REALITY_PORT = '8444';
     process.env.XRAY_INTERNAL_WS_PORT = '8880';
     listening = true;
@@ -99,6 +100,24 @@ describe('XrayService health and proxy recovery', () => {
     jest.useRealTimers();
     jest.clearAllMocks();
     process.env = { ...originalEnv };
+  });
+
+  it('uses one public port for both channel links and subscription parameters', () => {
+    const uuid = 'test-client';
+    const cdn = new URL(service.buildClientLink('test', uuid));
+    const direct = new URL(service.buildRealityClientLink('test', uuid));
+
+    expect(cdn.hostname).toBe('vpn.example.test');
+    expect(direct.hostname).toBe('direct.example.test');
+    expect(cdn.port).toBe('2053');
+    expect(direct.port).toBe(cdn.port);
+    expect(service.getPublicParams()).toEqual(
+      expect.objectContaining({
+        host: direct.hostname,
+        domain: cdn.hostname,
+        realityPort: Number(cdn.port),
+      }),
+    );
   });
 
   it('checks the public listener and both internal channels', async () => {

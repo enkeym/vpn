@@ -69,12 +69,9 @@ describe('DnsSyncService', () => {
       CF_API_TOKEN: 'test-token',
       CF_ZONE_ID: 'test-zone',
       CF_DNS_RECORDS: 'cdn.example.test,r.example.test',
-      CF_DNS_PROXIED: 'false',
       XRAY_DOMAIN: 'cdn.example.test',
-      XRAY_HOST: 'r.example.test',
       WG_HOST: 'r.example.test',
       XRAY_REALITY_SNI: 'cover.example.test',
-      XRAY_REALITY_EXTRA_SNI: '',
     });
     jest
       .mocked(promisify(execFile))
@@ -110,7 +107,7 @@ describe('DnsSyncService', () => {
     records['r.example.test'] = [
       { id: 'direct', content: '192.0.2.1', proxied: true },
     ];
-    await createService({ CF_DNS_PROXIED: 'true' });
+    await createService();
 
     const result = await service.ensureSynced();
 
@@ -149,7 +146,7 @@ describe('DnsSyncService', () => {
   it('normalizes names and refuses conflicting CDN and direct roles before API writes', async () => {
     await createService({
       CF_DNS_RECORDS: 'CDN.example.test.',
-      XRAY_HOST: ' cdn.example.test. ',
+      WG_HOST: ' cdn.example.test. ',
     });
 
     const result = await service.ensureSynced();

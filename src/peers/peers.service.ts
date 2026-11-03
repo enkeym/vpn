@@ -1713,11 +1713,13 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    * публиковать негде — остаются только прямые vless://-ссылки, поэтому null.
    */
   private buildSubscriptionUrl(vlessUuid: string): string | null {
-    const { domain, port } = this.xrayService.getPublicParams();
+    const { domain, realityPort } = this.xrayService.getPublicParams();
     if (!domain) return null;
 
     const origin =
-      port === 443 ? `https://${domain}` : `https://${domain}:${port}`;
+      realityPort === 443
+        ? `https://${domain}`
+        : `https://${domain}:${realityPort}`;
     return `${origin}/sub/${vlessUuid}`;
   }
 

@@ -39,9 +39,9 @@ Cloudflare сообщала об ограничениях доступа из р
    `AWG_WAN_IFACE` должен соответствовать его внешнему интерфейсу. Старый IP нельзя
    просто навесить на произвольный VPS. Проверить лимит CPU в compose.
 3. Задать `CF_DNS_RECORDS` только для переносимых A-записей. `XRAY_DOMAIN` будет
-   Proxied; `WG_HOST`, `XRAY_HOST` и собственные Reality SNI — DNS only. Имена
+   Proxied; `WG_HOST` и собственный Reality SNI — DNS only. Имена
    разных ролей должны отличаться. Для остальных существующих записей режим
-   сохраняется; `CF_DNS_PROXIED` задаёт режим только новых записей без роли.
+   сохраняется; новые записи без роли создаются как DNS only.
 4. До старта проверить сертификат и ключ в `configs/cloudflare-cert.pem` и
    `configs/cloudflare-key.pem`, их соответствие `XRAY_DOMAIN`. Для self-steal
    также перенести действующие `steal-cert.pem`/`steal-key.pem` и продление DNS-01.

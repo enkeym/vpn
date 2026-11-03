@@ -46,7 +46,6 @@ export class DnsSyncService implements OnApplicationBootstrap {
   private readonly token: string;
   private readonly zoneId: string;
   private readonly records: string[];
-  private readonly proxied: boolean;
   private readonly cdnName: string;
   private readonly directNames: Set<string>;
 
@@ -63,14 +62,11 @@ export class DnsSyncService implements OnApplicationBootstrap {
       .split(',')
       .map(normalizeDnsName)
       .filter(Boolean);
-    this.proxied = config.get<string>('CF_DNS_PROXIED') === 'true';
     this.cdnName = normalizeDnsName(config.get<string>('XRAY_DOMAIN', ''));
     this.directNames = new Set(
       [
         config.get<string>('WG_HOST', ''),
-        config.get<string>('XRAY_HOST', ''),
         config.get<string>('XRAY_REALITY_SNI', ''),
-        ...config.get<string>('XRAY_REALITY_EXTRA_SNI', '').split(','),
       ]
         .map(normalizeDnsName)
         .filter(Boolean),
@@ -149,7 +145,7 @@ export class DnsSyncService implements OnApplicationBootstrap {
       ? true
       : isDirect
         ? false
-        : (current?.proxied ?? this.proxied);
+        : (current?.proxied ?? false);
     if (current && current.content === ip && current.proxied === proxied) {
       return;
     }

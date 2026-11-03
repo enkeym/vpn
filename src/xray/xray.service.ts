@@ -80,7 +80,6 @@ interface IXrayRealityParams {
 export interface IXrayPublicParams {
   /** null — домен не задан, CDN-канал выключен (остаётся только Reality). */
   domain: string | null;
-  port: number;
   wsPath: string;
   host: string;
   realityPort: number;
@@ -91,22 +90,6 @@ export interface IXrayPublicParams {
   ipv6: boolean;
 }
 
-/**
- * Управляет процессом Xray-core — второй канал доступа рядом с AmneziaWG
- * (awg0). Пир получает и .conf для AmneziaVPN, и VLESS-ссылки: протоколы
- * блокируются по-разному, и клиент выбирает то, что живо на его сети.
- *
- * Два независимых пути обхода внутри самого Xray:
- *
- * 1. VLESS+WS+TLS за Cloudflare CDN. TLS терминирует reverse-proxy на хосте
- *    (порт XRAY_PORT), а сюда WS доезжает обычным HTTP на localhost —
- *    сам Xray наружу этим инбаундом не смотрит. Клиент никогда не видит
- *    реальный IP сервера, но канал зависит от доступности Cloudflare.
- *    Выключается автоматически, если XRAY_DOMAIN не задан.
- * 2. VLESS+Reality — прямой TCP на реальный IP сервера, без CDN и без WS.
- *    Слушает XRAY_REALITY_PORT напрямую (контейнер в network_mode: host,
- *    nginx перед Xray в этой ветке нет — см. README).
- */
 @Injectable()
 export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(XrayService.name);
@@ -124,11 +107,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   );
   private readonly configPath = path.join(process.cwd(), '/configs/xray.json');
 
-  /**
-   * Внешний порт CDN-канала: его слушает reverse-proxy на хосте, а не Xray.
-   * Значение уходит только в ссылки и в URL подписки.
-   */
-  public readonly port = Number(process.env.XRAY_PORT || 443);
   /** Внутренний порт WS-инбаунда — только localhost, наружу его отдаёт хостовый прокси. */
   private readonly internalWsPort = Number(
     process.env.XRAY_INTERNAL_WS_PORT || 8880,
@@ -157,21 +135,11 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   /** Пусто — CDN-канал (WS+TLS) не поднимается, остаётся только Reality. */
   private readonly domain = process.env.XRAY_DOMAIN || null;
   /** Адрес сервера в прямой Reality-ссылке. Общий с AmneziaWG (WG_HOST). */
-  private readonly host = process.env.XRAY_HOST || process.env.WG_HOST || '';
+  private readonly host = process.env.WG_HOST || '';
   private readonly realityDest =
     process.env.XRAY_REALITY_DEST || 'www.wikipedia.org:443';
   private readonly realitySni =
     process.env.XRAY_REALITY_SNI || 'www.wikipedia.org';
-  /**
-   * Прежние SNI, которые Reality продолжает принимать после смены
-   * XRAY_REALITY_SNI. Подписка подхватит новый SNI сама, а уже выданные
-   * прямые vless://-ссылки несут старый — без этого списка они умерли бы
-   * разом. В новые ссылки не попадают.
-   */
-  private readonly realityExtraSni = (process.env.XRAY_REALITY_EXTRA_SNI || '')
-    .split(',')
-    .map((name) => name.trim())
-    .filter(Boolean);
   /**
    * IPv6 наружу. На сервере он есть, поэтому по умолчанию включён: без него
    * Xray резолвил бы только A-записи, и ресурсы, доступные лишь по IPv6, из
@@ -224,7 +192,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
     if (!this.host) {
       this.logger.warn(
-        'Xray не запущен: не задан WG_HOST/XRAY_HOST — некуда указывать Reality-ссылку',
+        'Xray не запущен: не задан WG_HOST — некуда указывать Reality-ссылку',
       );
       return;
     }
@@ -506,7 +474,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
     return {
       domain: this.domain,
-      port: this.port,
       wsPath: this.wsParams.wsPath,
       host: this.host,
       realityPort: this.realityPort,
@@ -541,7 +508,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       fp: 'chrome',
     });
 
-    return `vless://${uuid}@${this.domain}:${this.port}?${query.toString()}#${encodeURIComponent(
+    return `vless://${uuid}@${this.domain}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
@@ -797,7 +764,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           // xver — версия PROXY protocol, которую Reality ШЛЁТ на dest.
           // Маскировочный сайт про PROXY ничего не знает, поэтому 0.
           xver: 0,
-          serverNames: [...new Set([this.realitySni, ...this.realityExtraSni])],
+          serverNames: [this.realitySni],
           privateKey: this.realityParams.privateKey,
           shortIds: ['', this.realityParams.shortId],
         },
@@ -925,7 +892,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     });
 
     const cdn = this.domain
-      ? `ws-cdn на localhost:${this.internalWsPort} (за nginx, ${this.domain}:${this.port})`
+      ? `ws-cdn на localhost:${this.internalWsPort} (за nginx, ${this.domain}:${this.realityPort})`
       : 'ws-cdn выключен (XRAY_DOMAIN не задан)';
     const reality = this.behindProxy
       ? `reality-direct на localhost:${this.internalRealityPort} (за nginx:${this.realityPort}, SNI-роутинг)`
