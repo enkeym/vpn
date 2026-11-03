@@ -1,8 +1,13 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { HostNetworkService } from './host-network.service';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
 const REQUEST_TIMEOUT_MS = 10_000;
+
+function normalizeDnsName(name: string): string {
+  return name.trim().toLowerCase().replace(/\.$/, '');
+}
 
 /** Итог синхронизации для отчёта на старте */
 export interface IDnsSyncStatus {
@@ -38,18 +43,39 @@ interface ICfResponse<T> {
 export class DnsSyncService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DnsSyncService.name);
 
-  private readonly token = (process.env.CF_API_TOKEN ?? '').trim();
-  private readonly zoneId = (process.env.CF_ZONE_ID ?? '').trim();
-  private readonly records = (process.env.CF_DNS_RECORDS ?? '')
-    .split(',')
-    .map((name) => name.trim().toLowerCase())
-    .filter(Boolean);
-  // Серое облако по умолчанию: за прокси Cloudflare Reality и AWG не работают
-  private readonly proxied = process.env.CF_DNS_PROXIED === 'true';
+  private readonly token: string;
+  private readonly zoneId: string;
+  private readonly records: string[];
+  private readonly proxied: boolean;
+  private readonly cdnName: string;
+  private readonly directNames: Set<string>;
 
   private synced: Promise<IDnsSyncStatus> | null = null;
 
-  constructor(private readonly hostNetwork: HostNetworkService) {}
+  constructor(
+    private readonly hostNetwork: HostNetworkService,
+    config: ConfigService,
+  ) {
+    this.token = config.get<string>('CF_API_TOKEN', '').trim();
+    this.zoneId = config.get<string>('CF_ZONE_ID', '').trim();
+    this.records = config
+      .get<string>('CF_DNS_RECORDS', '')
+      .split(',')
+      .map(normalizeDnsName)
+      .filter(Boolean);
+    this.proxied = config.get<string>('CF_DNS_PROXIED') === 'true';
+    this.cdnName = normalizeDnsName(config.get<string>('XRAY_DOMAIN', ''));
+    this.directNames = new Set(
+      [
+        config.get<string>('WG_HOST', ''),
+        config.get<string>('XRAY_HOST', ''),
+        config.get<string>('XRAY_REALITY_SNI', ''),
+        ...config.get<string>('XRAY_REALITY_EXTRA_SNI', '').split(','),
+      ]
+        .map(normalizeDnsName)
+        .filter(Boolean),
+    );
+  }
 
   async onApplicationBootstrap(): Promise<void> {
     await this.ensureSynced();
@@ -106,13 +132,25 @@ export class DnsSyncService implements OnApplicationBootstrap {
   }
 
   private async upsert(name: string, ip: string): Promise<void> {
+    const isCdn = name === this.cdnName;
+    const isDirect = this.directNames.has(name);
+    if (isCdn && isDirect) {
+      throw new Error(
+        'Один домен задан для CDN и прямого VPN: разделите XRAY_DOMAIN и прямые адреса',
+      );
+    }
     const existing = await this.cf<ICfDnsRecord[]>(
       'GET',
       `/dns_records?type=A&name=${encodeURIComponent(name)}`,
     );
 
     const current = existing[0];
-    if (current && current.content === ip && current.proxied === this.proxied) {
+    const proxied = isCdn
+      ? true
+      : isDirect
+        ? false
+        : (current?.proxied ?? this.proxied);
+    if (current && current.content === ip && current.proxied === proxied) {
       return;
     }
 
@@ -121,7 +159,7 @@ export class DnsSyncService implements OnApplicationBootstrap {
       name,
       content: ip,
       ttl: 1,
-      proxied: this.proxied,
+      proxied,
     };
 
     if (current) {

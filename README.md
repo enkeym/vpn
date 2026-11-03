@@ -329,7 +329,7 @@ base64 со ссылками (`src/subscription`).
 | `XRAY_INTERNAL_REALITY_PORT` (8444) | Xray, `127.0.0.1` | нет |
 | `XRAY_INTERNAL_WS_PORT` (8880) | Xray, `127.0.0.1` | нет |
 | `XRAY_STATS_API_PORT` (8881) | Xray, `127.0.0.1` | нет |
-| `PORT` (3000) | NestJS | нет, наружу торчит только `/sub/` и `/` |
+| `PORT` (3000) | NestJS, `HTTP_HOST=127.0.0.1` | нет, наружу торчит только `/sub/` и `/` |
 
 **443/tcp закреплён за этим узлом.** Нестандартный порт для DPI — отдельный
 маркер, такой трафик режут в первую очередь, и сам Xray предупреждает об этом
@@ -360,11 +360,24 @@ sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality + CDN)
 5. **Network → WebSockets: On.** Без этого VLESS+WS не работает вообще.
 6. **Security → Bots → Bot Fight Mode: Off** — режет нестандартный трафик.
 7. В `.env`: `XRAY_DOMAIN=<домен>`, `XRAY_PORT` равен `XRAY_REALITY_PORT`.
-8. Чтобы запись следовала за `PUBLIC_IPV4` после бана IP: `CF_API_TOKEN`,
-   `CF_ZONE_ID`, `CF_DNS_RECORDS=<домен>` и `CF_DNS_PROXIED=true`. Флаг один на
-   все имена списка, а `WG_HOST` и Reality-SNI за оранжевым облаком не работают,
-   поэтому `true` — только когда в списке одно CDN-имя; их A-записи тогда
-   правятся руками.
+8. Для переноса DNS вслед за `PUBLIC_IPV4`: `CF_API_TOKEN` с DNS:Edit для зоны,
+   `CF_ZONE_ID` и `CF_DNS_RECORDS=<CDN-домен>,<прямой-домен>`.
+   Синхронизация включает прокси для `XRAY_DOMAIN`, отключает для `WG_HOST`,
+   `XRAY_HOST`, `XRAY_REALITY_SNI` и `XRAY_REALITY_EXTRA_SNI`.
+   Остальным существующим записям сохраняется их режим; `CF_DNS_PROXIED`
+   применяется только при создании записи без известной роли. Один домен
+   нельзя одновременно использовать для CDN и прямого VPN: такая запись
+   попадёт в ошибки стартового отчёта без изменения DNS.
+
+CDN-ветка nginx принимает соединения только с IPv4-сетей Cloudflare из
+`docker/cloudflare-ipv4.conf`. Проверяется адрес TCP-соединения, а не HTTP-заголовки.
+Прямое обращение к VPS с CDN-SNI идёт в Reality, как и остальные прямые соединения.
+Это не аутентификация конкретной зоны Cloudflare. При обновлении списка
+[сетей Cloudflare](https://www.cloudflare.com/ips-v4) обновите файл и пересоберите образ.
+
+Cloudflare не скрывает IP, если на него указывает прямой домен Reality/AWG.
+Кроме того, доступ к самой сети Cloudflare может ограничиваться оператором.
+Порядок переноса и диагностика обоих случаев: [VPS migration](docs/vps-migration.md).
 
 Проверка после деплоя:
 

@@ -59,7 +59,7 @@ export class ReachabilityService {
 
     const message =
       current === 'blocked'
-        ? `🚫 \`${ip}:${this.port}\` недоступен из Москвы (check-host.net). Вероятен бан IP: смените PUBLIC\\_IPV4 и перезапустите контейнер.`
+        ? `🚫 \`${ip}:${this.port}\` недоступен с двух узлов check-host.net в Москве. Это не доказывает блокировку IP. Проверьте listener, firewall провайдера и маршрутизацию. Если VPN подключается без интернета — проверьте forwarding, NAT и DNS. Сравните доступность из другой страны перед сменой IP.`
         : `✅ \`${ip}:${this.port}\` снова доступен из Москвы.`;
     await this.notification.notifyAdmins(message);
   }

@@ -1,0 +1,211 @@
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { ConfigService } from '@nestjs/config';
+import { Test, TestingModule } from '@nestjs/testing';
+import { NotificationService } from '../notification/notification.service';
+import { DnsSyncService } from './dns-sync.service';
+import { HostNetworkService } from './host-network.service';
+
+jest.mock('child_process', () => {
+  const actual =
+    jest.requireActual<typeof import('child_process')>('child_process');
+  const { promisify } = jest.requireActual<typeof import('util')>('util');
+  return {
+    ...actual,
+    execFile: Object.assign(jest.fn(), {
+      [promisify.custom]: jest
+        .fn()
+        .mockResolvedValue({ stdout: '', stderr: '' }),
+    }),
+  };
+});
+
+describe('DnsSyncService', () => {
+  const originalEnv = { ...process.env };
+  const ip = '192.0.2.10';
+  const fetchMock = jest.fn<
+    ReturnType<typeof fetch>,
+    Parameters<typeof fetch>
+  >();
+  let module: TestingModule;
+  let service: DnsSyncService;
+  let records: Record<
+    string,
+    { id: string; content: string; proxied: boolean }[]
+  >;
+
+  async function createService(settings: Record<string, string> = {}) {
+    Object.assign(process.env, settings);
+    module = await Test.createTestingModule({
+      providers: [
+        ConfigService,
+        NotificationService,
+        HostNetworkService,
+        DnsSyncService,
+      ],
+    })
+      .setLogger({ log: jest.fn(), warn: jest.fn(), error: jest.fn() })
+      .compile();
+    service = module.get(DnsSyncService);
+  }
+
+  function writes() {
+    return fetchMock.mock.calls
+      .filter(([, options]) => options?.method !== 'GET')
+      .map(
+        ([, options]) =>
+          JSON.parse(typeof options?.body === 'string' ? options.body : '') as {
+            name: string;
+            content: string;
+            proxied: boolean;
+          },
+      );
+  }
+
+  beforeEach(() => {
+    Object.assign(process.env, {
+      PUBLIC_IPV4: ip,
+      AWG_WAN_IFACE: 'eth0',
+      CF_API_TOKEN: 'test-token',
+      CF_ZONE_ID: 'test-zone',
+      CF_DNS_RECORDS: 'cdn.example.test,r.example.test',
+      CF_DNS_PROXIED: 'false',
+      XRAY_DOMAIN: 'cdn.example.test',
+      XRAY_HOST: 'r.example.test',
+      WG_HOST: 'r.example.test',
+      XRAY_REALITY_SNI: 'cover.example.test',
+      XRAY_REALITY_EXTRA_SNI: '',
+    });
+    jest
+      .mocked(promisify(execFile))
+      .mockResolvedValue({ stdout: '', stderr: '' });
+    records = {};
+    fetchMock.mockReset().mockImplementation((url, options) => {
+      const name =
+        new URL(url instanceof Request ? url.url : url).searchParams.get(
+          'name',
+        ) ?? '';
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            success: true,
+            result: options?.method === 'GET' ? (records[name] ?? []) : {},
+          }),
+        ),
+      );
+    });
+    jest.spyOn(global, 'fetch').mockImplementation(fetchMock);
+  });
+
+  afterEach(async () => {
+    await module?.close();
+    process.env = { ...originalEnv };
+    jest.restoreAllMocks();
+  });
+
+  it('keeps CDN proxied and direct VPN records DNS-only in one migration', async () => {
+    records['cdn.example.test'] = [
+      { id: 'cdn', content: '192.0.2.1', proxied: false },
+    ];
+    records['r.example.test'] = [
+      { id: 'direct', content: '192.0.2.1', proxied: true },
+    ];
+    await createService({ CF_DNS_PROXIED: 'true' });
+
+    const result = await service.ensureSynced();
+
+    expect(result.failed).toEqual([]);
+    expect(writes()).toEqual([
+      {
+        type: 'A',
+        name: 'cdn.example.test',
+        content: ip,
+        ttl: 1,
+        proxied: true,
+      },
+      {
+        type: 'A',
+        name: 'r.example.test',
+        content: ip,
+        ttl: 1,
+        proxied: false,
+      },
+    ]);
+  });
+
+  it('preserves existing unrelated proxy modes and uses the default only for new records', async () => {
+    records['old.example.test'] = [
+      { id: 'old', content: '192.0.2.1', proxied: true },
+    ];
+    await createService({
+      CF_DNS_RECORDS: 'old.example.test,new.example.test',
+    });
+
+    await service.ensureSynced();
+
+    expect(writes().map(({ proxied }) => proxied)).toEqual([true, false]);
+  });
+
+  it('normalizes names and refuses conflicting CDN and direct roles before API writes', async () => {
+    await createService({
+      CF_DNS_RECORDS: 'CDN.example.test.',
+      XRAY_HOST: ' cdn.example.test. ',
+    });
+
+    const result = await service.ensureSynced();
+
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toContain('cdn.example.test');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not rewrite unchanged records and shares concurrent sync requests', async () => {
+    records['cdn.example.test'] = [{ id: 'cdn', content: ip, proxied: true }];
+    records['r.example.test'] = [{ id: 'direct', content: ip, proxied: false }];
+    await createService();
+
+    const results = await Promise.all([
+      service.ensureSynced(),
+      service.ensureSynced(),
+    ]);
+
+    expect(results[0]).toBe(results[1]);
+    expect(results[0].ok).toHaveLength(2);
+    expect(writes()).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each<Record<string, string>>([{ CF_API_TOKEN: '' }, { PUBLIC_IPV4: '' }])(
+    'does not write without token or applied IP: %o',
+    async (settings) => {
+      await createService(settings);
+
+      await service.ensureSynced();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('continues other records after a Cloudflare error', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: false,
+          errors: [{ message: 'access denied' }],
+        }),
+        { status: 403 },
+      ),
+    );
+    await createService();
+
+    const result = await service.ensureSynced();
+
+    expect(result.failed).toEqual([
+      'cdn.example.test: Cloudflare 403: access denied',
+    ]);
+    expect(result.ok).toEqual(['r.example.test']);
+    expect(writes()).toEqual([
+      expect.objectContaining({ name: 'r.example.test', proxied: false }),
+    ]);
+  });
+});

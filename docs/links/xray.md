@@ -2,6 +2,8 @@
 paths:
   - "src/xray/**"
   - "docker/**"
+  - "src/network/**"
+  - "src/main.ts"
 ---
 
 ## Флаги и переключатели
@@ -41,10 +43,16 @@ paths:
   порта 80 нет) после продления подхватывается `nginx -s reload` внутри
   контейнера, рестарт не нужен. На этот порт ходит только Reality с `xver: 0`,
   поэтому `listen` без `proxy_protocol`.
-- `CF_DNS_PROXIED=true` в `src/network/dns-sync.service.ts` оранжевит ВСЕ имена из
-  `CF_DNS_RECORDS`: `XRAY_DOMAIN`, `XRAY_REALITY_SNI` и `WG_HOST` за прокси Cloudflare
-  перестают работать (Reality, AWG, self-steal). Флаг один на все имена, поэтому
-  `true` допустим, только если в `CF_DNS_RECORDS` лежит одно CDN-имя.
+- DNS-роли в `src/network/dns-sync.service.ts:upsert`: `XRAY_DOMAIN` требует
+  Proxied; `WG_HOST`, `XRAY_HOST`, `XRAY_REALITY_SNI`, `XRAY_REALITY_EXTRA_SNI`
+  требуют DNS only. Конфликт ролей отклоняется до обращения к API. Для остальных
+  существующих записей сохраняется режим, для новых действует `CF_DNS_PROXIED`.
+- `docker/cloudflare-ipv4.conf` — публикуемые IPv4-сети Cloudflare для `geo` в
+  `docker/nginx.conf`; `Dockerfile` копирует список в образ. CDN-SNI попадает в
+  TLS-ветку только с адресов списка, остальные соединения идут в Reality.
+- `HTTP_HOST` в `src/main.ts:bootstrap` по умолчанию loopback; upstream приложения
+  в `docker/nginx.conf` и healthcheck в `docker-compose.yml` используют loopback.
+  Другой bind-адрес требует сохранить доступ с хоста и закрыть публичный порт приложения.
 - Смена `XRAY_REALITY_SNI` — старый SNI перенести в `XRAY_REALITY_EXTRA_SNI`
   (`src/xray/xray.service.ts:realityExtraSni` → `serverNames`): подписка
   обновится сама, а выданные `vless://` несут старый SNI.

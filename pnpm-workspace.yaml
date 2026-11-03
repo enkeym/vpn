@@ -8,3 +8,9 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
   unrs-resolver: true
+
+overrides:
+  'body-parser@>=2.0.0 <2.4.0': 2.4.0
+  'multer@>=2.0.0 <2.5.0': 2.5.0
+  'follow-redirects@>=1.16.0 <1.16.2': 1.16.2
+  'qs@>=6.0.0 <6.16.1': 6.16.1
