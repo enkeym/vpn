@@ -185,13 +185,18 @@ export class MainHandler {
 
   async showInstructions(ctx: Context) {
     await safeEditMessageText(ctx, BotUi.instructionsMenuTitle, {
-      reply_markup: BotUi.instructionsMenuKeyboard(),
+      reply_markup: BotUi.instructionsMenuKeyboard(
+        !!ctx.from && this.isAdmin(String(ctx.from.id)),
+      ),
       parse_mode: 'Markdown',
     });
   }
 
   /** Список платформ для AmneziaVPN (конфиг .conf). */
   async showAwgInstructions(ctx: Context) {
+    if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+      return this.showVlessInstructions(ctx);
+    }
     await safeEditMessageText(ctx, BotUi.instructionsAwgTitle, {
       reply_markup: BotUi.instructionsAwgKeyboard(),
       parse_mode: 'Markdown',
@@ -208,6 +213,9 @@ export class MainHandler {
   }
 
   async showInstruction(ctx: Context, platform: string) {
+    if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
+      return this.showVlessInstruction(ctx, platform);
+    }
     const instructions: Record<string, string> = {
       android: BotUi.instructionAndroid,
       ios: BotUi.instructionIos,

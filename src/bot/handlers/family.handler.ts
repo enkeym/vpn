@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Context, InputFile } from 'grammy';
+import { Context } from 'grammy';
+import { MainHandler } from './main.handler';
 import { resolveTelegramIdInput } from '../utils/resolve-telegram-id';
 import { FamilyService } from 'src/family/family.service';
 import { PeersService } from 'src/peers/peers.service';
@@ -7,6 +8,7 @@ import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 import {
+  sendCreatedPeerMessage,
   sendPeerConfigFileMessage,
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
@@ -47,6 +49,7 @@ export class FamilyHandler {
   constructor(
     private readonly familyService: FamilyService,
     private readonly peersService: PeersService,
+    private readonly mainHandler: MainHandler,
   ) {}
 
   isAwaitingInput(userId: string): boolean {
@@ -781,17 +784,14 @@ export class FamilyHandler {
 
       // Отправляем конфиг клиенту
       try {
-        const message = await ctx.api.sendDocument(
+        const message = await sendCreatedPeerMessage(
+          ctx.api,
           member.telegramId,
-          new InputFile(Buffer.from(config), `${peer.name}.conf`),
-          {
-            caption: BotUi.memberConfigCreated(
-              peer.name,
-              peer.ip,
-              peer.expiresAt,
-            ),
-            parse_mode: 'Markdown',
-          },
+          this.peersService,
+          peer,
+          config,
+          BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+          this.mainHandler.isAdmin(member.telegramId),
         );
         await this.peersService.setConfigMessageId(
           peer.name,

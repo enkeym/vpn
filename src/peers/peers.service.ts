@@ -1733,12 +1733,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     return url ? `${url}/full` : null;
   }
 
-  /**
-   * Текст со всеми способами подключения по VLESS: ссылка-подписка (в ней оба
-   * канала и авто-переключение) плюс те же каналы отдельными ссылками — на
-   * случай, когда подписка в клиент не добавляется или нужно переключить канал
-   * вручную. Второй канал доступа рядом с .conf для AmneziaVPN.
-   */
   async getPeerVlessText(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
     const vlessUuid = this.requireVlessUuid(peer);
@@ -1755,18 +1749,13 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     return (
-      `🔗 *Ссылка-подписка* — работает во всех приложениях, ` +
-      `каналы переключаются автоматически:\n\`${subscriptionUrl}\`\n\n` +
-      `*Если подписка не добавляется* — импортируйте каналы по отдельности:\n` +
+      `🔗 *Ссылка-подписка* — для приложений с поддержкой VLESS. ` +
+      `Подключение через Cloudflare (WebSocket + TLS):\n\`${subscriptionUrl}\`\n\n` +
+      `*Если подписка не добавляется* — импортируйте ссылку VLESS:\n` +
       linksBlock
     );
   }
 
-  /**
-   * QR для VLESS. В нём подписка, а не прямая ссылка: только она даёт
-   * авто-переключение каналов, и клиент (Hiddify/NekoBox/v2rayNG) распознаёт
-   * её по URL сам. Без домена подписки нет — кодируем прямую ссылку.
-   */
   async generatePeerVlessQrCode(peerName: string): Promise<Buffer> {
     const peer = await this.findPeer(peerName);
     const vlessUuid = this.requireVlessUuid(peer);

@@ -8,6 +8,7 @@ import {
 } from '../utils/safe-edit-message';
 import {
   closeMediaMessage,
+  sendCreatedPeerMessage,
   sendPeerConfigFileMessage,
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
@@ -261,12 +262,18 @@ export class PeerManageHandler {
   // === Показать QR-код конфига ===
 
   async showQrCode(ctx: Context, peerName: string) {
+    if (!ctx.from || !this.mainHandler.isAdmin(String(ctx.from.id))) {
+      return this.showVlessQrCode(ctx, peerName);
+    }
     await sendPeerQrCodeMessage(ctx, this.peersService, peerName, this.logger);
   }
 
   // === Получить файл конфига ===
 
   async sendConfigFile(ctx: Context, peerName: string) {
+    if (!ctx.from || !this.mainHandler.isAdmin(String(ctx.from.id))) {
+      return this.showVlessMenu(ctx, peerName);
+    }
     await sendPeerConfigFileMessage(
       ctx,
       this.peersService,
@@ -435,17 +442,15 @@ export class PeerManageHandler {
       }
 
       // Отправляем новый конфиг файлом (родитель удалён — нужна клавиатура с goto_peer_after_replace)
-      await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${newPeer.name}.conf`),
-        {
-          caption: BotUi.configReplaced(
-            newPeer.name,
-            newPeer.ip,
-            newPeer.expiresAt,
-          ),
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
-        },
+      await sendCreatedPeerMessage(
+        ctx.api,
+        ctx.chat.id,
+        this.peersService,
+        newPeer,
+        config,
+        BotUi.configReplaced(newPeer.name, newPeer.ip, newPeer.expiresAt),
+        !!ctx.from && this.mainHandler.isAdmin(String(ctx.from.id)),
+        BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
       );
     } catch (error) {
       this.logger.error(`Ошибка замены конфига: ${error}`);

@@ -1,5 +1,5 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { Context, InputFile } from 'grammy';
+import { Context } from 'grammy';
 import { resolveTelegramIdInput } from '../utils/resolve-telegram-id';
 import { PeersService } from 'src/peers/peers.service';
 import { BlockedUsersService } from 'src/blocked/blocked.service';
@@ -9,6 +9,7 @@ import { BotUi } from '../ui/bot.ui';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 import {
+  sendCreatedPeerMessage,
   sendPeerConfigFileMessage,
   sendPeerQrCodeMessage,
 } from '../utils/peer-media';
@@ -941,17 +942,14 @@ export class AdminHandler {
 
       // Отправляем конфиг клиенту
       try {
-        const message = await ctx.api.sendDocument(
+        const message = await sendCreatedPeerMessage(
+          ctx.api,
           telegramId,
-          new InputFile(Buffer.from(config), `${peer.name}.conf`),
-          {
-            caption: BotUi.memberConfigCreated(
-              peer.name,
-              peer.ip,
-              peer.expiresAt,
-            ),
-            parse_mode: 'Markdown',
-          },
+          this.peersService,
+          peer,
+          config,
+          BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+          this.mainHandler.isAdmin(telegramId),
         );
         await this.peersService.setConfigMessageId(
           peer.name,

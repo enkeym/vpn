@@ -1,7 +1,35 @@
 import type { Logger } from '@nestjs/common';
-import { Context, InputFile } from 'grammy';
-import type { PeersService } from 'src/peers/peers.service';
+import { Api, Context, InputFile } from 'grammy';
+import type { PeersService, TPeer } from 'src/peers/peers.service';
 import { BotUi } from '../ui/bot.ui';
+
+export async function sendCreatedPeerMessage(
+  api: Api,
+  chatId: string | number,
+  peersService: PeersService,
+  peer: TPeer,
+  config: string,
+  caption: string,
+  isAdmin: boolean,
+  keyboard = BotUi.configDeliveredKeyboard(peer.name),
+) {
+  const options = {
+    parse_mode: 'Markdown' as const,
+    reply_markup: keyboard,
+  };
+  if (isAdmin) {
+    return api.sendDocument(
+      chatId,
+      new InputFile(Buffer.from(config), `${peer.name}.conf`),
+      { ...options, caption },
+    );
+  }
+  const text = await peersService.getPeerVlessText(peer.name);
+  return api.sendMessage(chatId, `${caption}\n\n${text}`, {
+    ...options,
+    link_preview_options: { is_disabled: true },
+  });
+}
 
 /**
  * QR-код и файл конфига отправляются отдельным сообщением поверх карточки конфига —

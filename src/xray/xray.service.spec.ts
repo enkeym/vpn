@@ -6,6 +6,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HostNetworkService } from '../network/host-network.service';
 import { NotificationService } from '../notification/notification.service';
 import { XrayService } from './xray.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 
 jest.mock('fs', () => ({
   ...jest.requireActual<typeof import('fs')>('fs'),
@@ -85,6 +86,7 @@ describe('XrayService health and proxy recovery', () => {
         NotificationService,
         HostNetworkService,
         XrayService,
+        SubscriptionService,
       ],
     })
       .setLogger({ log: jest.fn(), error: jest.fn(), warn: jest.fn() })
@@ -118,6 +120,76 @@ describe('XrayService health and proxy recovery', () => {
         realityPort: Number(cdn.port),
       }),
     );
+  });
+
+  it('exports only Cloudflare with the actual TLS hostname', () => {
+    const subscription = module.get(SubscriptionService);
+    const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
+
+    const links = subscription.buildShareLinks(peer);
+    const link = new URL(links[0]);
+    const decoded = Buffer.from(
+      subscription.buildBase64Subscription(peer),
+      'base64',
+    ).toString('utf-8');
+
+    expect(links).toHaveLength(1);
+    expect(decoded).toBe(links[0]);
+    expect(link.protocol).toBe('vless:');
+    expect(link.hostname).toBe('vpn.example.test');
+    expect(link.searchParams.get('security')).toBe('tls');
+    expect(link.searchParams.get('type')).toBe('ws');
+    expect(link.searchParams.has('flow')).toBe(false);
+    expect(link.searchParams.get('path')).toBe('/test');
+    expect(link.searchParams.get('sni')).toBe('vpn.example.test');
+    expect(link.searchParams.get('fp')).toBe('chrome');
+    expect(decodeURIComponent(link.hash.slice(1))).toBe(
+      `${peer.name} · Cloudflare · TLS vpn.example.test`,
+    );
+  });
+
+  it('routes subscription DNS through VPN without a server resolution loop', () => {
+    const subscription = module.get(SubscriptionService);
+
+    const config = subscription.buildSingBoxConfig({
+      name: 'Тест',
+      vlessUuid: 'test-client',
+    });
+
+    expect(config).toEqual(
+      expect.objectContaining({
+        outbounds: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'vless',
+            tag: 'Cloudflare · TLS vpn.example.test',
+            domain_resolver: {
+              server: 'dns-bootstrap',
+              strategy: 'prefer_ipv4',
+            },
+            server: 'vpn.example.test',
+            transport: {
+              type: 'ws',
+              path: '/test',
+              headers: { Host: 'vpn.example.test' },
+            },
+          }),
+          expect.objectContaining({
+            tag: 'auto',
+            outbounds: ['Cloudflare · TLS vpn.example.test'],
+          }),
+        ]),
+        dns: expect.objectContaining({
+          final: 'dns-remote',
+          servers: [
+            expect.objectContaining({ tag: 'dns-remote', detour: 'select' }),
+            { type: 'https', tag: 'dns-bootstrap', server: '1.1.1.1' },
+          ],
+        }),
+      }),
+    );
+    expect(JSON.stringify(config)).not.toContain('reality-direct');
+    expect(JSON.stringify(config)).not.toContain('direct.example.test');
+    expect(JSON.stringify(config)).not.toContain('"type":"direct"');
   });
 
   it('checks the public listener and both internal channels', async () => {

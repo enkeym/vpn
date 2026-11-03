@@ -551,10 +551,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * транспорте, и так её может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    const links: string[] = [];
-    if (this.domain) links.push(this.buildClientLink(`${name} · CDN`, uuid));
-    links.push(this.buildRealityClientLink(`${name} · Прямой`, uuid));
-    return links;
+    return [
+      this.buildClientLink(`${name} · Cloudflare · TLS ${this.domain}`, uuid),
+    ];
   }
 
   /**

@@ -546,7 +546,7 @@ export const BotUi = {
 
   paymentSuccessTitle:
     '✅ *Оплата прошла успешно!*\n\n' +
-    'Создаю ваш конфиг... Через секунду вы получите файл.\n\n' +
+    'Создаю ваш конфиг... Через секунду вы получите данные подключения.\n\n' +
     '_Далее: откройте раздел «Инструкция» и выберите вашу платформу для пошаговой настройки._',
 
   backToMenuKeyboard: () => new InlineKeyboard().text('В меню', 'main_menu'),
@@ -595,12 +595,13 @@ export const BotUi = {
     // Клавиатура собирается рядами, пустые ряды отсеиваются на сборке:
     // при построении цепочкой .row() набор кнопок зависит от состояния конфига
     // и в клавиатуре легко появляется пустая строка.
-    const rows: IKeyboardButton[][] = [
-      [
+    const rows: IKeyboardButton[][] = [];
+    if (isAdmin) {
+      rows.push([
         { text: '📷 QR — AmneziaVPN', data: `show_qr:${peer.name}` },
         { text: '📄 Файл .conf', data: `get_config_file:${peer.name}` },
-      ],
-    ];
+      ]);
+    }
 
     // Второй канал (VLESS через Xray) — отдельным подменю: внутри ссылка-
     // подписка, прямые ссылки и QR под разные клиенты. Держать это всё в
@@ -668,9 +669,8 @@ export const BotUi = {
    */
   vlessMenuText: (peerName: string, body: string) =>
     `🌐 *VLESS для* \`${peerName}\`\n\n` +
-    'Второй способ подключения — на случай, когда AmneziaVPN на вашей сети не ' +
-    'идёт. Тот же конфиг, другой протокол: Hiddify, NekoBox, v2rayNG, ' +
-    'Streisand и другие клиенты.\n\n' +
+    'Подключение через Cloudflare: Hiddify, NekoBox, v2rayNG, Happ, ' +
+    'Streisand и другие клиенты. Прямого подключения к IP сервера в подписке нет.\n\n' +
     `${body}\n\n` +
     '_Пошагово — в разделе «Инструкция» → «VLESS»._',
 
@@ -698,8 +698,7 @@ export const BotUi = {
   /** Xray не поднялся (нет бинарника, не задан хост, процесс упал). */
   vlessUnavailable:
     '🌐 *VLESS сейчас недоступен*\n\n' +
-    'Второй канал на сервере не запущен. Подключение по AmneziaVPN ' +
-    '(QR-код и файл .conf) работает как обычно.',
+    'Попробуйте подключиться позже или обратитесь в поддержку.',
 
   // === Приветственные сообщения ===
 
@@ -749,7 +748,7 @@ export const BotUi = {
     'Нажмите «Получить доступ», чтобы:\n' +
     '• Получить пробный конфиг на 3 дня (_бесплатно, один раз_)\n' +
     '• Или выбрать тариф от 30 дней до года\n\n' +
-    'После оплаты вы получите файл конфигурации и сможете подключиться за 2–3 минуты по инструкции.',
+    'После оплаты вы получите данные подключения и сможете настроить приложение по инструкции.',
 
   configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
     let msg = `✅ *Конфиг ${name} создан!*\n\n` + `🌐 IP: \`${ip}\`\n`;
@@ -760,12 +759,9 @@ export const BotUi = {
     }
     msg +=
       '*Дальнейшие шаги:*\n' +
-      '1. Установите приложение AmneziaVPN\n' +
-      '2. Откройте в нём этот файл и нажмите «Подключить»\n' +
-      '3. Готово — защищённое соединение активно\n\n' +
-      '⚠️ _Конфиг открывается только в AmneziaVPN — официальный клиент WireGuard его не примет._\n\n' +
-      '_Подробная инструкция для каждой платформы — в разделе «Инструкция»._\n\n' +
-      '_На телефоне можно использовать кнопку «QR-код» в карточке конфига для быстрой настройки._';
+      '1. Откройте раздел «Инструкция» и выберите вашу платформу\n' +
+      '2. Импортируйте полученные данные в указанное приложение\n' +
+      '3. Нажмите «Подключить»';
     return msg;
   },
 
@@ -779,7 +775,8 @@ export const BotUi = {
     } else {
       msg += '\n⏳ Срок: ♾️ Бессрочно';
     }
-    msg += '\n\n_Скачайте новый конфиг и удалите старый из приложения._';
+    msg +=
+      '\n\n_Импортируйте новые данные подключения и удалите старый профиль из приложения._';
     return msg;
   },
 
@@ -787,7 +784,7 @@ export const BotUi = {
 
   configsListTitle: (count: number) =>
     `📂 *Ваши конфигурации (${count})*\n\n` +
-    '_Нажмите на конфиг — откроется управление, QR-код и файл для скачивания_',
+    '_Нажмите на конфиг — откроется управление и данные подключения_',
 
   peerDetailsText: (peer: TPeer, isAdmin: boolean = false) => {
     const expired = isExpired(peer);
@@ -992,9 +989,6 @@ export const BotUi = {
       .row()
       .text('📅 Изменить срок', `f_cd:${peer.name}:${mId}`)
       .row()
-      .text('📷 QR — AmneziaVPN', `f_qr:${peer.name}:${mId}`)
-      .text('📄 Файл .conf', `f_gf:${peer.name}:${mId}`)
-      .row()
       // Подменю VLESS общее для всех веток: оно отвечает новым сообщением
       // поверх карточки, поэтому memberId/telegramId в callback не нужен.
       .text('🌐 VLESS / подписка', `vless_menu:${peer.name}`)
@@ -1030,8 +1024,7 @@ export const BotUi = {
     } else {
       msg += '\n⏳ Срок: ♾️ Бессрочно';
     }
-    msg +=
-      '\n\n⚠️ _Открывается только в приложении AmneziaVPN, не в официальном клиенте WireGuard._';
+    msg += '\n\n_Настройка приложения — в разделе «Инструкция»._';
     return msg;
   },
 
@@ -1412,22 +1405,20 @@ export const BotUi = {
    */
   instructionsMenuTitle:
     '📖 *Инструкция по подключению*\n\n' +
-    'У каждого конфига *два независимых способа* подключиться. Они не заменяют, ' +
-    'а дополняют друг друга: если один на вашей сети режут — работает второй.\n\n' +
-    '🛡 *AmneziaVPN* — файл `.conf` и QR-код. Одно приложение, ничего настраивать ' +
-    'не нужно.\n' +
-    '🌐 *VLESS* — ссылка-подписка для Hiddify, NekoBox, v2rayNG, Streisand. Внутри ' +
-    'два канала, приложение само переключается на живой.\n\n' +
-    '👉 Начните с *AmneziaVPN*. Не заработало на вашей сети — возьмите *VLESS*.\n\n' +
+    '🌐 *VLESS через Cloudflare* — ссылка-подписка для Hiddify, NekoBox, Happ, v2rayNG и других клиентов.\n\n' +
+    'Подключение идёт через CDN, без автоматического перехода на прямой IP сервера.\n\n' +
     '💬 _Не получается? Поддержка:_ @CharlieWaldo',
 
-  instructionsMenuKeyboard: () =>
-    new InlineKeyboard()
-      .text('🛡 AmneziaVPN (.conf)', 'instructions_awg')
-      .row()
+  instructionsMenuKeyboard: (isAdmin = false) => {
+    const keyboard = new InlineKeyboard();
+    if (isAdmin) {
+      keyboard.text('🛡 AmneziaVPN (.conf)', 'instructions_awg').row();
+    }
+    return keyboard
       .text('🌐 VLESS / подписка', 'instructions_vless')
       .row()
-      .text('« Назад в меню', 'main_menu'),
+      .text('« Назад в меню', 'main_menu');
+  },
 
   // === Инструкции по установке AmneziaVPN ===
 
@@ -1521,6 +1512,9 @@ export const BotUi = {
 
   instructionWindows:
     '🪟 *Установка AmneziaVPN на Windows*\n\n' +
+    '*TunnelVPN 1.0.21 — ещё один вариант для AmneziaWG*\n' +
+    '• [Скачать](https://github.com/enkeym/tunnel-vpn/releases/tag/v1.0.21) → `TunnelVPN-1.0.21-setup.exe`\n' +
+    '• Добавьте файл .conf из бота, выберите основной туннель и подключитесь. Автоподключение включается в настройках и работает также после сна.\n\n' +
     '*Шаг 1: Скачайте и установите*\n' +
     '• [Страница загрузки Amnezia](https://amnezia.org/downloads)\n' +
     '• Или [релизы на GitHub](https://github.com/amnezia-vpn/amnezia-client/releases)\n' +
@@ -1639,7 +1633,7 @@ export const BotUi = {
   instructionVlessAndroid:
     '📱 *VLESS на Android*\n\n' +
     '━━━ *1. NekoBox (рекомендуем)* ━━━\n' +
-    '_Понимает нашу подписку с авто-переключением каналов._\n' +
+    '_Поддерживает нашу подписку VLESS через Cloudflare._\n' +
     '• [Скачать APK](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest) → `NekoBoxForAndroid-universal-release.apk`\n' +
     '• «➕» вверху справа → *«Import profile from clipboard»* (вставит ссылку-подписку) или *«Scan QR code»*\n' +
     '• Переключатель ⏻ внизу справа — подключиться\n\n' +
@@ -1653,7 +1647,7 @@ export const BotUi = {
     '_Тоже понимает нашу ссылку-подписку целиком._\n' +
     '• [Скачать APK](https://github.com/2dust/v2rayNG/releases/latest) — ищите файл с `arm64-v8a` в названии\n' +
     '• «+» → *«Импорт из буфера обмена»* — вставьте ссылку-подписку из бота\n' +
-    '• Оба канала появятся списком → «⋮» → *«Test all configurations»* → подключитесь к более быстрому\n\n' +
+    '• Выберите профиль *Cloudflare* и подключитесь\n\n' +
     '✅ Весь трафик (включая Telegram и YouTube) идёт через VPN.',
 
   instructionVlessIos:
@@ -1673,7 +1667,7 @@ export const BotUi = {
     '• *Shadowrocket* — платный (~$3), самый гибкий, для опытных: [App Store](https://apps.apple.com/app/shadowrocket/id932747118)\n\n' +
     '💡 _Не хотите трогать основной Apple ID?_ Создайте отдельный Apple ID с регионом США и войдите им *только* в App Store (Настройки → App Store → аккаунт), не трогая iCloud. Тогда основной аккаунт, фото и переписки останутся нетронутыми.\n\n' +
     '*Шаг 3: Добавьте конфиг*\n' +
-    '• Скопируйте *ссылку-подписку* из бота (нажмите на неё) — в ней сразу оба канала\n' +
+    '• Скопируйте *ссылку-подписку* из бота (нажмите на неё) — профиль Cloudflare\n' +
     '• Откройте приложение → «+» → «Добавить из буфера обмена» (Import from clipboard)\n' +
     '• _Или_ «+» → «Сканировать QR-код» и наведите на QR из бота\n\n' +
     '*Шаг 4: Подключитесь*\n' +

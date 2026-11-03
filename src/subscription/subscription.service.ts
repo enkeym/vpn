@@ -1,30 +1,15 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
-import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
+import { XrayService } from 'src/xray/xray.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 
 /** Минимальный набор полей пира для сборки любого формата подписки. */
 export type TSubscriptionPeer = Pick<TPeerSelect, 'name' | 'vlessUuid'>;
 
-/** Теги каналов — фигурируют и в outbound'ах, и в группах авто-выбора. */
-const CDN_TAG = 'cdn-wifi';
-const REALITY_TAG = 'reality-direct';
+const DNS_REMOTE_TAG = 'dns-remote';
+const DNS_BOOTSTRAP_TAG = 'dns-bootstrap';
+const DNS_SERVER = '1.1.1.1';
 
-/**
- * Собирает подписку в двух форматах поверх двух независимых каналов обхода:
- * 1. VLESS+WS+TLS через Cloudflare CDN — обходит блокировку по IP сервера
- *    (актуально для домашних сетей), но зависит от доступности Cloudflare.
- *    Канала нет, если XRAY_DOMAIN не задан (см. XrayService).
- * 2. VLESS+Reality — прямой TCP на IP сервера, без CDN и без WS-хендшейка,
- *    работает там, где режут именно CDN (часть мобильных операторов).
- *
- * sing-box-клиент (Hiddify, NekoBox) сам тестирует оба и держит активным
- * рабочий, переключаясь автоматически при обрыве — без участия пользователя.
- * Остальные клиенты получают те же каналы ссылками vless:// в base64.
- *
- * Третий канал — AmneziaWG (.conf для AmneziaVPN) — живёт отдельно и в
- * подписку не входит: у него свой клиент и свой формат.
- */
 @Injectable()
 export class SubscriptionService {
   constructor(private readonly xrayService: XrayService) {}
@@ -81,62 +66,42 @@ export class SubscriptionService {
     }
 
     const xray = this.xrayService.getPublicParams();
+    if (!xray.domain) {
+      throw new InternalServerErrorException('CDN-канал Xray не настроен');
+    }
 
     // Дуалстек: у сервера есть исходящий IPv6, поэтому назначения резолвятся
     // и в A, и в AAAA (IPv4 первым — он предсказуемее по маршрутам). При
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
+    const cdnTag = `Cloudflare · TLS ${xray.domain}`;
 
     const outbounds: Record<string, unknown>[] = [];
     const channelTags: string[] = [];
 
-    if (xray.domain) {
-      outbounds.push({
-        type: 'vless',
-        tag: CDN_TAG,
-        domain_strategy: domainStrategy,
-        server: xray.domain,
-        server_port: xray.realityPort,
-        uuid: peer.vlessUuid,
-        transport: {
-          type: 'ws',
-          path: xray.wsPath,
-          headers: { Host: xray.domain },
-        },
-        tls: {
-          enabled: true,
-          server_name: xray.domain,
-          // uTLS-отпечаток Chrome — чтобы DPI не отличал наш ClientHello от
-          // обычного браузера (Reality уже маскируется, WS-канал — нет).
-          utls: { enabled: true, fingerprint: 'chrome' },
-        },
-      });
-      channelTags.push(CDN_TAG);
-    }
-
     outbounds.push({
       type: 'vless',
-      tag: REALITY_TAG,
-      domain_strategy: domainStrategy,
-      server: xray.host,
+      tag: cdnTag,
+      domain_resolver: {
+        server: DNS_BOOTSTRAP_TAG,
+        strategy: domainStrategy,
+      },
+      server: xray.domain,
       server_port: xray.realityPort,
       uuid: peer.vlessUuid,
-      // XTLS Vision — обязан совпадать с инбаундом сервера и прямой
-      // vless://-ссылкой (см. XRAY_REALITY_FLOW).
-      flow: XRAY_REALITY_FLOW,
+      transport: {
+        type: 'ws',
+        path: xray.wsPath,
+        headers: { Host: xray.domain },
+      },
       tls: {
         enabled: true,
-        server_name: xray.realitySni,
+        server_name: xray.domain,
         utls: { enabled: true, fingerprint: 'chrome' },
-        reality: {
-          enabled: true,
-          public_key: xray.realityPublicKey,
-          short_id: xray.realityShortId,
-        },
       },
     });
-    channelTags.push(REALITY_TAG);
+    channelTags.push(cdnTag);
 
     outbounds.push(
       {
@@ -187,17 +152,16 @@ export class SubscriptionService {
       // которым некуда идти). Дублирует domain_strategy на каждом outbound —
       // на случай прямого импорта конфига в NekoBox без опций Hiddify.
       dns: {
-        // DoH вместо открытого DNS: системный DNS оператора травит наш домен
-        // (доказано — ручная смена DNS на телефоне всё чинит), а plain DNS по
-        // порту 53 душат по DPI. DoH идёт как обычный HTTPS и такой фильтрации
-        // не поддаётся, поэтому системный DNS телефона больше не важен.
-        //
-        // БЕЗ detour: резолвинг идёт через route.final ('select' → 'auto'),
-        // то есть через актуально живой канал. Жёсткая привязка DoH к одному
-        // каналу (detour) недопустима — если этот канал деградирует, повиснет
-        // весь резолвинг разом. 1.1.1.1 — IP, сам DoH-сервер резолвить не надо.
-        servers: [{ type: 'https', tag: 'dns-remote', server: '1.1.1.1' }],
-        final: 'dns-remote',
+        servers: [
+          {
+            type: 'https',
+            tag: DNS_REMOTE_TAG,
+            server: DNS_SERVER,
+            detour: 'select',
+          },
+          { type: 'https', tag: DNS_BOOTSTRAP_TAG, server: DNS_SERVER },
+        ],
+        final: DNS_REMOTE_TAG,
         strategy: domainStrategy,
       },
       route: {
@@ -234,7 +198,7 @@ export class SubscriptionService {
         // xray.domain и т.п.) больше не берётся неявно из dns.final — нужна
         // явная ссылка на тег DNS-сервера, иначе deprecation-предупреждение
         // (удалят в 1.14). Используем тот же сервер, что и dns.final.
-        default_domain_resolver: 'dns-remote',
+        default_domain_resolver: DNS_REMOTE_TAG,
       },
     };
   }

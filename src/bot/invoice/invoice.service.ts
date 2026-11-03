@@ -1,5 +1,6 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { Bot, InputFile, type Context } from 'grammy';
+import { Bot, type Context } from 'grammy';
+import { sendCreatedPeerMessage } from '../utils/peer-media';
 import { PeersService, TPeer } from 'src/peers/peers.service';
 import {
   PaymentService,
@@ -508,14 +509,14 @@ export class InvoiceService {
     }
     this.anchorStore.delete(telegramId);
 
-    const message = await this.bot.api.sendDocument(
+    const message = await sendCreatedPeerMessage(
+      this.bot.api,
       telegramId,
-      new InputFile(Buffer.from(config), `${peer.name}.conf`),
-      {
-        caption,
-        parse_mode: 'Markdown',
-        reply_markup: BotUi.configDeliveredKeyboard(peer.name),
-      },
+      this.peersService,
+      peer,
+      config,
+      caption,
+      this.mainHandler.isAdmin(telegramId),
     );
 
     await this.peersService.setConfigMessageId(peer.name, message.message_id);

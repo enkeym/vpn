@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from './main.handler';
-import { Context, InputFile } from 'grammy';
+import { Context } from 'grammy';
+import { sendCreatedPeerMessage } from '../utils/peer-media';
 import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
@@ -126,13 +127,14 @@ export class PeerCreateHandler {
         // Игнорируем
       }
 
-      const message = await ctx.replyWithDocument(
-        new InputFile(Buffer.from(config), `${peer.name}.conf`),
-        {
-          caption: BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
-          parse_mode: 'Markdown',
-          reply_markup: BotUi.configDeliveredKeyboard(peer.name),
-        },
+      const message = await sendCreatedPeerMessage(
+        ctx.api,
+        ctx.from.id,
+        this.peersService,
+        peer,
+        config,
+        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
+        this.mainHandler.isAdmin(String(ctx.from.id)),
       );
 
       await this.peersService.setConfigMessageId(peer.name, message.message_id);
