@@ -13,7 +13,14 @@ import { randomBytes } from 'crypto';
 import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { Mutex } from 'async-mutex';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import { HostNetworkService } from '../network/host-network.service';
+import {
+  HEALTH_CHECK_TIMEOUT_MS,
+  HEALTH_FAILURE_THRESHOLD,
+  isTcpListening,
+} from '../network/health-check';
 
 const execAsync = promisify(exec);
 /**
@@ -184,6 +191,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private enabled = false;
 
   private currentProc: ChildProcess | null = null;
+  private proxyHealthFailures = 0;
   /** true во время намеренной остановки — чтобы обработчик exit не перезапускал. */
   private shuttingDown = false;
   /**
@@ -200,7 +208,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private reloadTimer: NodeJS.Timeout | null = null;
   private reloadWaiters: Array<() => void> = [];
 
-  constructor(private readonly hostNetwork: HostNetworkService) {}
+  constructor(
+    private readonly hostNetwork: HostNetworkService,
+    private readonly config: ConfigService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     if (process.env.XRAY_ENABLED === 'false') {
@@ -257,6 +268,49 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    */
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  async isHealthy(): Promise<boolean> {
+    if (this.config.get<string>('XRAY_ENABLED') === 'false') return true;
+    if (
+      !this.enabled ||
+      !this.currentProc ||
+      this.currentProc.exitCode !== null
+    ) {
+      return false;
+    }
+    const ports = this.behindProxy
+      ? [this.realityPort, this.internalRealityPort, this.internalWsPort]
+      : [this.realityPort];
+    return (await Promise.all(ports.map(isTcpListening))).every(Boolean);
+  }
+
+  @Cron(CronExpression.EVERY_30_SECONDS, { waitForCompletion: true })
+  async restoreProxy(): Promise<void> {
+    if (!this.enabled || !this.behindProxy || this.shuttingDown) return;
+    if (await isTcpListening(this.realityPort)) {
+      this.proxyHealthFailures = 0;
+      return;
+    }
+    this.proxyHealthFailures += 1;
+    if (this.proxyHealthFailures < HEALTH_FAILURE_THRESHOLD) return;
+
+    try {
+      await execFileAsync('nginx', ['-t'], {
+        timeout: HEALTH_CHECK_TIMEOUT_MS,
+      });
+      if (this.shuttingDown) return;
+      await execFileAsync('nginx', ['-c', '/etc/nginx/nginx.conf'], {
+        timeout: HEALTH_CHECK_TIMEOUT_MS,
+      });
+      this.logger.log('nginx восстановлен после потери публичного порта');
+      this.proxyHealthFailures = 0;
+    } catch (error) {
+      this.logger.error(
+        `Не удалось восстановить nginx: ${error instanceof Error ? error.message : error}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 
   /** Поднят ли CDN-канал (нужен домен, за которым стоит TLS-прокси). */

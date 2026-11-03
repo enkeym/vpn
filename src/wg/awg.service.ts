@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -41,6 +43,10 @@ import {
   type ITunnelBinaries,
 } from './tunnel.runtime';
 import { HostNetworkService } from '../network/host-network.service';
+import {
+  HEALTH_CHECK_TIMEOUT_MS,
+  HEALTH_FAILURE_THRESHOLD,
+} from '../network/health-check';
 import { resolveWanInterface } from '../network/wan-interface';
 import type {
   IClientConfigInput,
@@ -163,6 +169,8 @@ export class AwgService implements OnModuleInit {
   public readonly host = process.env.WG_HOST || '';
 
   private enabled = false;
+  private monitoring = false;
+  private healthFailures = 0;
   private _serverPublicKeyCache: string | null = null;
   private readonly configMutex = new Mutex();
 
@@ -177,7 +185,10 @@ export class AwgService implements OnModuleInit {
     null;
   private readonly CONFIG_CACHE_TTL = 30 * 1000;
 
-  constructor(private readonly hostNetwork: HostNetworkService) {}
+  constructor(
+    private readonly hostNetwork: HostNetworkService,
+    private readonly config: ConfigService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     if (process.env.AWG_ENABLED === 'false') {
@@ -220,6 +231,7 @@ export class AwgService implements OnModuleInit {
       );
     }
 
+    this.monitoring = true;
     try {
       await this.configMutex.runExclusive(async () => {
         const restartRequired = await this.generateServerConfig();
@@ -250,6 +262,65 @@ export class AwgService implements OnModuleInit {
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  async isHealthy(): Promise<boolean> {
+    if (this.config.get<string>('AWG_ENABLED') === 'false') return true;
+    return this.enabled && (await this.runtimeHealthy());
+  }
+
+  private async runtimeHealthy(): Promise<boolean> {
+    try {
+      const { stdout } = await execFileAsync(
+        'sudo',
+        [this.binaries.cli, 'show', this.binaries.interfaceName, 'listen-port'],
+        { timeout: HEALTH_CHECK_TIMEOUT_MS },
+      );
+      return Number(stdout.trim()) === this.port;
+    } catch {
+      return false;
+    }
+  }
+
+  @Cron(CronExpression.EVERY_30_SECONDS, { waitForCompletion: true })
+  async restoreInterface(): Promise<void> {
+    if (!this.monitoring) return;
+
+    try {
+      await this.configMutex.runExclusive(async () => {
+        if (await this.runtimeHealthy()) {
+          if (!this.enabled) await this.syncSystem(true);
+          this.enabled = true;
+          this.healthFailures = 0;
+          return;
+        }
+
+        this.enabled = false;
+        this.healthFailures += 1;
+        if (this.healthFailures < HEALTH_FAILURE_THRESHOLD) return;
+
+        this.logger.warn('AmneziaWG не отвечает — восстанавливаю интерфейс');
+        if (!existsSync(this.filePath)) {
+          throw new Error('Сохранённый конфиг AmneziaWG отсутствует');
+        }
+        await this.startInterfaceUp(true);
+        await this.syncSystem(true);
+        if (!(await this.runtimeHealthy())) {
+          throw new Error(
+            'Интерфейс AmneziaWG не отвечает после восстановления',
+          );
+        }
+        this.enabled = true;
+        this.healthFailures = 0;
+        this.logger.log('AmneziaWG восстановлен');
+      });
+    } catch (error) {
+      this.enabled = false;
+      this.logger.error(
+        `Не удалось восстановить AmneziaWG: ${error instanceof Error ? error.message : error}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 
   /** Возвращает true, если применение изменений требует перезапуска интерфейса */

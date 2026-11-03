@@ -325,4 +325,78 @@ describe('AwgService client configuration', () => {
       expect(writeFile).not.toHaveBeenCalled();
     },
   );
+
+  it('restores a missing interface after two failures without rewriting keys', async () => {
+    const service = await createService();
+    jest.mocked(existsSync).mockReturnValue(true);
+    jest.mocked(writeFile).mockClear();
+    const command = jest.mocked(promisify(exec));
+    command.mockClear();
+    command.mockImplementation((text) => {
+      const result = text.startsWith('ip link show')
+        ? Promise.reject(new Error('missing interface'))
+        : Promise.resolve({ stdout: '', stderr: '' });
+      return Object.assign(result, { child: new ChildProcess() });
+    });
+    jest
+      .mocked(promisify(execFile))
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+      .mockResolvedValue({ stdout: '51821\n', stderr: '' });
+
+    await service.restoreInterface();
+    expect(command).not.toHaveBeenCalled();
+    await service.restoreInterface();
+
+    expect(
+      command.mock.calls.some(([text]) =>
+        String(text).includes('awg-quick up'),
+      ),
+    ).toBe(true);
+    expect(service.isEnabled()).toBe(true);
+    expect(await service.isHealthy()).toBe(true);
+    expect(
+      jest
+        .mocked(writeFile)
+        .mock.calls.some(
+          ([file]) =>
+            typeof file === 'string' && file.endsWith('/configs/awg0.conf'),
+        ),
+    ).toBe(false);
+  });
+
+  it('does not recreate a missing saved configuration during recovery', async () => {
+    const service = await createService();
+    jest.mocked(writeFile).mockClear();
+    jest.mocked(promisify(exec)).mockClear();
+
+    await service.restoreInterface();
+    await service.restoreInterface();
+
+    expect(service.isEnabled()).toBe(false);
+    expect(await service.isHealthy()).toBe(false);
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(promisify(exec)).not.toHaveBeenCalled();
+  });
+
+  it('keeps a healthy interface running without restarting it', async () => {
+    const service = await createService();
+    jest
+      .mocked(promisify(execFile))
+      .mockResolvedValue({ stdout: '51821\n', stderr: '' });
+    jest.mocked(promisify(exec)).mockClear();
+
+    await service.restoreInterface();
+    await service.restoreInterface();
+
+    expect(await service.isHealthy()).toBe(true);
+    expect(promisify(exec)).not.toHaveBeenCalled();
+  });
+
+  it('reports a runtime command failure as unhealthy', async () => {
+    const service = await createService();
+    jest.mocked(promisify(execFile)).mockRejectedValue(new Error('timeout'));
+
+    expect(await service.isHealthy()).toBe(false);
+  });
 });
