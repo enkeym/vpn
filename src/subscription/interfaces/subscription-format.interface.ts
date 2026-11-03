@@ -10,7 +10,6 @@ const SINGBOX_CLIENT_MARKERS = [
   'hiddify',
   'sing-box',
   'singbox',
-  'nekobox',
   'nekoray',
   'karing',
 ] as const;
