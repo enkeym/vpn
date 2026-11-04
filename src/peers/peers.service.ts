@@ -256,7 +256,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    * «QR для sing-box» в таком режиме бессмысленны.
    */
   isSubscriptionAvailable(): boolean {
-    return this.xrayService.isCdnEnabled();
+    return this.xrayService.isTunnelEnabled();
   }
 
   private async syncWgWithDb() {
@@ -321,7 +321,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /**
-   * Синхронизация клиентов Xray (VLESS: CDN + Reality) с БД: собирает активных
+   * Синхронизация клиентов Xray (VLESS: туннель + Reality) с БД: собирает активных
    * (не на паузе) пиров и отдаёт их XrayService. Зеркало syncWgWithDb, но
    * ошибки наружу не пробрасываем — сбой второго канала не должен ронять ни
    * старт бота, ни создание/удаление пира: AmneziaWG при этом остаётся живым.
@@ -1719,8 +1719,8 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   /**
-   * URL подписки. Отдаётся по тому же домену, что и CDN-канал: /sub на NestJS
-   * проксирует reverse-proxy на хосте (см. README). Без домена подписку
+   * URL подписки. Отдаётся по тому же домену, что и туннельный канал: /sub на
+   * NestJS проксирует nginx внутри контейнера (см. README). Без домена подписку
    * публиковать негде — остаются только прямые vless://-ссылки, поэтому null.
    */
   private buildSubscriptionUrl(vlessUuid: string): string | null {
@@ -1761,7 +1761,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
     return (
       `🔗 *Ссылка-подписка* — для приложений с поддержкой VLESS. ` +
-      `Подключение через Cloudflare (WebSocket + TLS):\n\`${subscriptionUrl}\`\n\n` +
+      `Подключение через туннель zrok (WebSocket + TLS):\n\`${subscriptionUrl}\`\n\n` +
       `*Если подписка не добавляется* — импортируйте ссылку VLESS:\n` +
       linksBlock
     );

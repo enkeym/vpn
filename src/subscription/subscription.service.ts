@@ -67,7 +67,9 @@ export class SubscriptionService {
 
     const xray = this.xrayService.getPublicParams();
     if (!xray.domain) {
-      throw new InternalServerErrorException('CDN-канал Xray не настроен');
+      throw new InternalServerErrorException(
+        'Туннельный канал Xray не настроен',
+      );
     }
 
     // Дуалстек: у сервера есть исходящий IPv6, поэтому назначения резолвятся
@@ -75,14 +77,14 @@ export class SubscriptionService {
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
-    const cdnTag = `Cloudflare · TLS ${xray.domain}`;
+    const tunnelTag = `zrok · TLS ${xray.domain}`;
 
     const outbounds: Record<string, unknown>[] = [];
     const channelTags: string[] = [];
 
     outbounds.push({
       type: 'vless',
-      tag: cdnTag,
+      tag: tunnelTag,
       domain_resolver: {
         server: DNS_BOOTSTRAP_TAG,
         strategy: domainStrategy,
@@ -101,7 +103,7 @@ export class SubscriptionService {
         utls: { enabled: true, fingerprint: 'chrome' },
       },
     });
-    channelTags.push(cdnTag);
+    channelTags.push(tunnelTag);
 
     outbounds.push(
       {

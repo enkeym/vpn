@@ -66,7 +66,7 @@ interface IXrayWsParams {
 }
 
 /**
- * Постоянные параметры Reality-инбаунда (прямой TCP, без CDN). Приватный
+ * Постоянные параметры Reality-инбаунда (прямой TCP, без туннеля). Приватный
  * ключ x25519 живёт только на сервере, публичный (pbk) и shortId раздаются
  * клиентам в vless://-ссылке. Хранятся в configs/xray-reality.json.
  */
@@ -78,7 +78,7 @@ interface IXrayRealityParams {
 
 /** Публичные параметры каналов — из них SubscriptionService собирает outbound'ы. */
 export interface IXrayPublicParams {
-  /** null — домен не задан, CDN-канал выключен (остаётся только Reality). */
+  /** null — домен не задан, туннельный канал выключен (остаётся только Reality). */
   domain: string | null;
   wsPath: string;
   host: string;
@@ -95,7 +95,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(XrayService.name);
 
   /** Теги инбаундов, в которых живут VLESS-клиенты (см. buildServerConfig). */
-  private static readonly CLIENT_INBOUND_TAGS = ['ws-cdn', 'reality-direct'];
+  private static readonly CLIENT_INBOUND_TAGS = ['ws-tunnel', 'reality-direct'];
 
   private readonly wsParamsPath = path.join(
     process.cwd(),
@@ -132,7 +132,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
   );
-  /** Пусто — CDN-канал (WS+TLS) не поднимается, остаётся только Reality. */
+  /** Пусто — туннельный канал (WS+TLS) не поднимается, остаётся только Reality. */
   private readonly domain = process.env.XRAY_DOMAIN || null;
   /** Адрес сервера в прямой Reality-ссылке. Общий с AmneziaWG (WG_HOST). */
   private readonly host = process.env.WG_HOST || '';
@@ -284,17 +284,17 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Поднят ли CDN-канал (нужен домен, за которым стоит TLS-прокси). */
-  isCdnEnabled(): boolean {
+  /** Поднят ли туннельный канал (нужен домен, за которым стоит TLS-прокси). */
+  isTunnelEnabled(): boolean {
     return this.enabled && this.domain !== null;
   }
 
   /**
-   * Стоит ли перед Xray nginx-разводчик. Привязано к наличию домена
-   * ровно потому, что разводить есть смысл только при двух каналах на одном
-   * порту — такое же условие у docker-entrypoint.sh, который запускает nginx.
-   * Рассогласование здесь ломает всᑑ: если Xray ждᑑт PROXY protocol, а nginx
-   * его не шлёт (или наоборот), хендшейк не состоится вообще.
+   * Стоит ли перед Xray nginx. Привязано к наличию домена: nginx нужен и для
+   * публичного порта Reality, и как HTTP-роутер для туннеля — такое же условие
+   * у docker-entrypoint.sh, который запускает nginx. Рассогласование здесь
+   * ломает всё: если Xray ждёт PROXY protocol, а nginx его не шлёт (или
+   * наоборот), хендшейк не состоится вообще.
    */
   private get behindProxy(): boolean {
     return this.domain !== null;
@@ -469,7 +469,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private activeInboundTags(): string[] {
     return this.domain
       ? XrayService.CLIENT_INBOUND_TAGS
-      : XrayService.CLIENT_INBOUND_TAGS.filter((tag) => tag !== 'ws-cdn');
+      : XrayService.CLIENT_INBOUND_TAGS.filter((tag) => tag !== 'ws-tunnel');
   }
 
   /** Публичные параметры для сборки outbound'ов в sing-box-подписке. */
@@ -493,13 +493,13 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * vless://-ссылка для клиента через Cloudflare CDN (WS+TLS). TLS терминирует
-   * хостовый reverse-proxy настоящим сертификатом домена, поэтому insecure не нужен.
+   * vless://-ссылка для клиента через туннель (WS+TLS). TLS терминирует край
+   * туннеля настоящим сертификатом домена, поэтому insecure не нужен.
    */
   buildClientLink(name: string, uuid: string): string {
     if (!this.wsParams || !this.domain) {
       throw new InternalServerErrorException(
-        'CDN-канал Xray не настроен — невозможно собрать vless-ссылку',
+        'Туннельный канал Xray не настроен — невозможно собрать vless-ссылку',
       );
     }
 
@@ -522,9 +522,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * vless://-ссылка для клиента напрямую на IP сервера (Reality, без CDN).
-   * Работает там, где режут сам Cloudflare/WS, но не защищена от блокировки
-   * по IP — дополняет, а не заменяет CDN-канал.
+   * vless://-ссылка для клиента напрямую на IP сервера (Reality, без туннеля).
+   * Работает там, где недоступен туннель, но не защищена от блокировки по IP —
+   * дополняет, а не заменяет туннельный канал.
    */
   buildRealityClientLink(name: string, uuid: string): string {
     if (!this.realityParams) {
@@ -559,9 +559,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * транспорте, и так её может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    return [
-      this.buildClientLink(`${name} · Cloudflare · TLS ${this.domain}`, uuid),
-    ];
+    return [this.buildClientLink(`${name} · zrok · TLS ${this.domain}`, uuid)];
   }
 
   /**
@@ -710,14 +708,14 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       },
     ];
 
-    // CDN-канал есть только при заданном домене: без него TLS терминировать
-    // некому и ws-инбаунд просто некуда подключить.
+    // Туннельный канал есть только при заданном домене: без него TLS
+    // терминировать некому и ws-инбаунд просто некуда подключить.
     if (this.domain) {
       inbounds.push({
-        tag: 'ws-cdn',
-        // Только localhost — снаружи этот порт публикует reverse-proxy на
-        // хосте: он терминирует TLS сертификатом домена и проксирует сюда
-        // обычным HTTP/WS. Xray сам TLS для этого инбаунда не делает.
+        tag: 'ws-tunnel',
+        // Только localhost — снаружи этот порт публикует HTTP-роутер nginx,
+        // а TLS терминирует край туннеля и проксирует сюда обычным HTTP/WS.
+        // Xray сам TLS для этого инбаунда не делает.
         listen: '127.0.0.1',
         port: this.internalWsPort,
         protocol: 'vless',
@@ -729,9 +727,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           network: 'ws',
           wsSettings: {
             path: this.wsParams.wsPath,
-            // Cloudflare рвёт WebSocket после ~100с простоя на планах
-            // Free/Pro. Пинг раз в 30с держит канал живым, пока пользователь
-            // не шлёт трафик — без него связь умирала от одной паузы в видео.
+            // Прокси на пути могут рвать WebSocket после ~100с простоя.
+            // Пинг раз в 30с держит канал живым, пока пользователь не шлёт
+            // трафик — без него связь умирала от одной паузы в видео.
             heartbeatPeriod: 30,
           },
         },
@@ -740,9 +738,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
     inbounds.push({
       tag: 'reality-direct',
-      // С разводчиком публичный порт слушает nginx и отдаёт сюда всᑑ, чей SNI
-      // не равен домену CDN. Без разводчика биндимся на публичный порт сами:
-      // контейнер в network_mode: host. При включённом IPv6 — на '::', с
+      // С nginx публичный порт слушает он и отдаёт сюда все соединения.
+      // Без nginx биндимся на публичный порт сами: контейнер в
+      // network_mode: host. При включённом IPv6 — на '::', с
       // bindv6only=0 такой сокет принимает и IPv4-подключения.
       listen: this.behindProxy
         ? '127.0.0.1'
@@ -898,15 +896,15 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       }, 2000);
     });
 
-    const cdn = this.domain
-      ? `ws-cdn на localhost:${this.internalWsPort} (за nginx, ${this.domain}:${this.realityPort})`
-      : 'ws-cdn выключен (XRAY_DOMAIN не задан)';
+    const tunnel = this.domain
+      ? `ws-tunnel на localhost:${this.internalWsPort} (за nginx, ${this.domain}:${this.realityPort})`
+      : 'ws-tunnel выключен (XRAY_DOMAIN не задан)';
     const reality = this.behindProxy
-      ? `reality-direct на localhost:${this.internalRealityPort} (за nginx:${this.realityPort}, SNI-роутинг)`
+      ? `reality-direct на localhost:${this.internalRealityPort} (за nginx:${this.realityPort})`
       : `reality-direct на :${this.realityPort} напрямую`;
 
     this.logger.log(
-      `xray запущен (pid=${proc.pid}): ${cdn}, ${reality}, IPv6 ${
+      `xray запущен (pid=${proc.pid}): ${tunnel}, ${reality}, IPv6 ${
         this.ipv6Enabled ? 'включён' : 'выключен'
       }`,
     );

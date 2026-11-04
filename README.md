@@ -71,7 +71,7 @@ sudo sysctl --system
 
 ```bash
 sudo ufw allow 22/tcp      # не заблокируйте себе SSH
-sudo ufw allow 443/tcp     # nginx: Reality + CDN-канал
+sudo ufw allow 443/tcp     # nginx: Reality
 sudo ufw allow 51821/udp
 sudo ufw enable
 ```
@@ -91,30 +91,17 @@ TCP 443 остаётся для nginx и Xray.
 `AWG_MTU=1280` подходит для IPv6. `AWG_TCP_MSS=0` отключает дополнительное
 ограничение MSS; обычный clamp к MTU маршрута остаётся включён.
 
-### 4. Сертификат Cloudflare
-
-Нужен только для CDN-канала (`XRAY_DOMAIN`). Файлы из Cloudflare → SSL/TLS →
-Origin Server кладутся в смонтированный том `./configs`:
-
-```bash
-sudo install -m 600 origin.pem ./configs/cloudflare-cert.pem
-sudo install -m 600 origin.key ./configs/cloudflare-key.pem
-```
-
-Без них контейнер не стартует — это осознанно: молча отдавать клиентам 5xx хуже,
-чем упасть на старте с понятной ошибкой.
-
-### 5. `.env`
+### 4. `.env`
 
 ```bash
 cp .env.example .env
 ```
 
 Минимум, без которого не поедет: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS`,
-`WG_HOST` (IP сервера). Для второго канала — `XRAY_DOMAIN`. Для оплаты —
-`YOOKASSA_*`.
+`WG_HOST` (IP сервера). Для второго канала — `XRAY_DOMAIN` с адресом
+zrok-шары. Для оплаты — `YOOKASSA_*`.
 
-### 6. Сборка и запуск
+### 5. Сборка и запуск
 
 ```bash
 docker compose -p vpn-bot build
@@ -123,20 +110,20 @@ docker compose -p vpn-bot up -d
 
 Миграции БД применяются сами при старте, отдельной команды не нужно.
 
-### 7. Проверка
+### 6. Проверка
 
 ```bash
 docker compose -p vpn-bot logs --tail=80 vpn-bot
-sudo ss -tulnp | grep -E ':(443|8443|51821|3000)'
+sudo ss -tulnp | grep -E ':(443|51821|3000|8080|8444|8880|8881)'
 ```
 
 В логах должны быть три строки: интерфейс `awg0` поднят, `xray запущен (pid=…)`
-с упоминанием `reality-direct на localhost:8444 (за nginx:443, SNI-роутинг)` и
+с упоминанием `reality-direct на localhost:8444 (за nginx:443)` и
 `Xray синхронизирован: N клиент(ов)`. В `ss` — `nginx` на 443, `amneziawg-go` на
-51821, `node` на 3000; портов 8444/8445/8880/8881 наружу быть не должно (только
-`127.0.0.1`).
+51821, `node` на 3000; порты 8080/8444/8880/8881 слушают только `127.0.0.1`
+и наружу не публикуются.
 
-Снаружи — проверки из раздела «Настройка CDN-канала».
+Снаружи — проверки из раздела «Настройка туннельного канала».
 
 ### Обновление
 
@@ -277,10 +264,11 @@ self-steal, если он включён, нужно положить в это�
 `XrayService` держит процесс `xray` рядом с `awg0` и даёт до двух независимых
 путей обхода:
 
-1. **Reality** — прямой TCP на IP сервера, без CDN. Работает там, где режут
-   Cloudflare, но не защищён от блокировки по IP.
-2. **VLESS+WS+TLS за Cloudflare CDN** — клиент не видит реальный IP сервера,
-   но канал зависит от доступности самого Cloudflare. Опционален: поднимается,
+1. **Reality** — прямой TCP на IP сервера, без туннеля. Работает там, где
+   недоступен zrok, но не защищён от блокировки по IP.
+2. **VLESS+WS+TLS через туннель zrok** — клиент видит адрес `*.shares.zrok.io`,
+   а не IP сервера. Бесплатный план zrok даёт 5 ГБ в сутки на аккаунт; при
+   превышении шары отключаются до спада трафика. Канал опционален: поднимается,
    только если задан `XRAY_DOMAIN`.
 
 Оба канала уезжают клиенту в одной ссылке-подписке (`/sub/:vlessUuid`), и
@@ -288,36 +276,37 @@ self-steal, если он включён, нужно положить в это�
 Формат ответа выбирается по User-Agent: sing-box-клиентам — JSON, остальным —
 base64 со ссылками (`src/subscription`).
 
-### Порты и SNI-разводчик
+### Порты и HTTP-роутер
 
-Контейнер работает в `network_mode: host`, а оба канала должны жить на одном
-стандартном 443. Поэтому публичный порт слушает **nginx** внутри образа: он
-читает SNI из ClientHello (`stream` + `ssl_preread`, без расшифровки) и решает,
-куда отдать соединение.
+Контейнер работает в `network_mode: host`. Публичный 443 слушает **nginx**
+внутри образа и отдаёт всё в Reality; TLS для туннеля терминирует край zrok,
+поэтому второй публичный порт не нужен. На локальном порту nginx держит
+HTTP-роутер, куда zrok проксирует запросы после расшифровки.
 
 ```
-                     :443  nginx (stream, ssl_preread)
-                             │
-       SNI = XRAY_DOMAIN ────┤──── всё остальное (SNI маски, зонды, мусор)
-                             │                  │
-              127.0.0.1:8445 │                  │ 127.0.0.1:8444
-         nginx TLS (Origin CA)                  Xray reality-direct
-                 │                                     │
-        /sub/ → NestJS:3000                    чужой ⇒ проксируется
-        /     → NestJS:3000                    на realitySettings.dest
-        иначе → Xray ws-cdn:8880
+        :443  nginx (stream)
+                   │
+                   │ 127.0.0.1:8444
+            Xray reality-direct
+            чужой SNI ⇒ проксируется
+            на realitySettings.dest
+
+zrok edge (TLS) ──► 127.0.0.1:8080  nginx (http)
+                              │
+                 /sub/ ───────┤──── / ──► NestJS:3000
+                 иначе ───────┴───────► Xray ws-tunnel:8880
 ```
 
-Разводчик поднимается **только при заданном `XRAY_DOMAIN`** — без домена
-разводить нечего, и тогда Reality слушает публичный порт сам, а nginx не
-запускается вовсе (см. `docker/docker-entrypoint.sh` и `XrayService.behindProxy`).
-Эти два условия обязаны совпадать: если Xray ждёт PROXY protocol, а nginx его не
-шлёт (или наоборот), хендшейк не состоится вообще.
+nginx и туннельный инбаунд поднимаются **только при заданном `XRAY_DOMAIN`**.
+Без домена публиковать подписку негде, Reality слушает публичный порт сам, а
+nginx не запускается вовсе (см. `docker/docker-entrypoint.sh` и
+`XrayService.behindProxy`). Условия обязаны совпадать: если Xray ждёт PROXY
+protocol, а nginx его не шлёт (или наоборот), хендшейк не состоится вообще.
 
 | Порт | Кто слушает | Наружу |
 |---|---|---|
 | `XRAY_REALITY_PORT` (443/tcp) | nginx (или Xray, если домена нет) | да, открыть в фаерволе |
-| `NGINX_INTERNAL_TLS_PORT` (8445) | nginx, `127.0.0.1` | нет |
+| `NGINX_INTERNAL_TUNNEL_PORT` (8080) | nginx, `127.0.0.1` | нет, сюда ходит только zrok |
 | `XRAY_INTERNAL_REALITY_PORT` (8444) | Xray, `127.0.0.1` | нет |
 | `XRAY_INTERNAL_WS_PORT` (8880) | Xray, `127.0.0.1` | нет |
 | `XRAY_STATS_API_PORT` (8881) | Xray, `127.0.0.1` | нет |
@@ -328,72 +317,68 @@ base64 со ссылками (`src/subscription`).
 при старте.
 
 ```bash
-sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality + CDN)
+sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality)
 ```
 
 `/peers` и `/metrics/` наружу намеренно не проксируются: они закрыты ключами, но
-публиковать внутреннее API через CDN незачем — с хоста оно и так доступно на
+публиковать внутреннее API через туннель незачем — с хоста оно и так доступно на
 `localhost:3000`.
 
-### Настройка CDN-канала (Cloudflare)
+### Настройка туннельного канала (zrok)
 
 Нужно один раз, и только если хотите второй канал плюс ссылку-подписку.
 
-1. Домен делегирован на Cloudflare (NS меняются у регистратора).
-2. DNS-запись: `A` на IP сервера, **Proxied** (оранжевое облако). Серое облако
-   бессмысленно — тогда клиент видит ваш IP и обхода блокировки по IP нет.
-   AAAA не нужна: Cloudflare сам отдаёт клиентам IPv6, а до origin ходит по IPv4.
-3. **SSL/TLS → Full (strict)**. При Flexible Cloudflare пойдёт на origin по HTTP,
-   и TLS-сервер разводчика его не примет.
-4. **SSL/TLS → Origin Server → Create Certificate**, файлы положить в
-   `configs/cloudflare-cert.pem` и `configs/cloudflare-key.pem` (том `./configs`
-   уже смонтирован). Без них контейнер не стартует — это лучше, чем молча
-   отдавать клиентам 5xx.
-5. **Network → WebSockets: On.** Без этого VLESS+WS не работает вообще.
-6. **Security → Bots → Bot Fight Mode: Off** — режет нестандартный трафик.
-7. В `.env`: `XRAY_DOMAIN=<домен>`. Общий публичный порт — `XRAY_REALITY_PORT`.
-8. Для переноса DNS вслед за `PUBLIC_IPV4`: `CF_API_TOKEN` с DNS:Edit для зоны,
-   `CF_ZONE_ID` и `CF_DNS_RECORDS=<CDN-домен>,<прямой-домен>`.
-   Синхронизация включает прокси для `XRAY_DOMAIN`, отключает для `WG_HOST`
-   и `XRAY_REALITY_SNI`. IP существующей CDN A-записи сохраняется: перенос CDN
-   на другой адрес выполняется вручную в Cloudflare. Если CDN A-записи нет,
-   она создаётся с `PUBLIC_IPV4`. Остальные A-записи обновляются на `PUBLIC_IPV4`.
-   Остальным существующим записям сохраняется их режим;
-   новые записи без известной роли создаются как DNS only. Один домен
-   нельзя одновременно использовать для CDN и прямого VPN: такая запись
-   попадёт в ошибки стартового отчёта без изменения DNS.
+1. Завести бесплатный аккаунт zrok и выполнить `zrok2 enable <token>` — команда
+   создаёт окружение и конфиг агента на VPS.
+2. Имя шары задаётся префиксом `-n public:<имя>`; на free-плане имя
+   резервируется за аккаунтом. Адрес получится `<имя>.shares.zrok.io`; свой
+   домен требует платного плана.
+3. Запустить шару на локальный HTTP-роутер nginx:
 
-CDN-ветка nginx принимает соединения только с IPv4-сетей Cloudflare из
-`docker/cloudflare-ipv4.conf`. Проверяется адрес TCP-соединения, а не HTTP-заголовки.
-Прямое обращение к VPS с CDN-SNI идёт в Reality, как и остальные прямые соединения.
-Это не аутентификация конкретной зоны Cloudflare. При обновлении списка
-[сетей Cloudflare](https://www.cloudflare.com/ips-v4) обновите файл и пересоберите образ.
+   ```bash
+   zrok2 share public --headless -n public:vpnrelay localhost:8080
+   ```
 
-Cloudflare не скрывает IP, если на него указывает прямой домен Reality/AWG.
-Кроме того, доступ к самой сети Cloudflare может ограничиваться оператором.
-Порядок переноса и диагностика обоих случаев: [VPS migration](docs/vps-migration.md).
+   Для постоянной работы оформить это systemd-юнитом. Агент должен работать на
+   том же хосте, что и контейнер: он ходит в `127.0.0.1:8080`.
+4. В `.env`: `XRAY_DOMAIN=vpnrelay.shares.zrok.io` и
+   `NGINX_INTERNAL_TUNNEL_PORT=8080`. `XRAY_REALITY_PORT` остаётся 443.
+5. TLS терминирует край zrok — отдельный сертификат не нужен.
+
+zrok не скрывает IP, если на него указывает прямой домен Reality/AWG. Лимит
+бесплатного плана — 5 ГБ/сутки на аккаунт (rolling 24 ч): при превышении шары
+отключаются до спада трафика. Оператор zrok видит объём трафика и SNI. Порядок
+переноса и диагностика: [VPS migration](docs/vps-migration.md).
+
+Для переноса прямых A-записей вслед за `PUBLIC_IPV4` можно задать
+`CF_API_TOKEN` с DNS:Edit для зоны, `CF_ZONE_ID` и `CF_DNS_RECORDS`. `WG_HOST` и
+`XRAY_REALITY_SNI` поддерживаются как DNS only; остальным существующим записям
+сохраняется их режим, новые создаются как DNS only. Домена zrok в Cloudflare нет,
+поэтому `XRAY_DOMAIN` в синхронизации не участвует.
 
 Проверка после деплоя:
 
 ```bash
-# Разводчик отвечает на домене (не 5xx от Cloudflare)
-curl -sI https://<домен> -o /dev/null -w '%{http_code}\n'
+# Туннель отвечает на своём домене
+curl -sI "https://$XRAY_DOMAIN/" -o /dev/null -w '%{http_code}\n'
 
-# Reality на том же порту принимает чужой SNI и притворяется сайтом-маской
+# Reality на публичном порту принимает чужой SNI и притворяется сайтом-маской
 echo | openssl s_client -connect <IP>:443 -servername "$XRAY_REALITY_SNI" 2>/dev/null \
   | openssl x509 -noout -subject
 ```
 
 Первый запрос должен дать код приложения (не 502/525), второй — сертификат
-маскировочного сайта, а не ваш.
+маскировочного сайта, а не ваш. Interstitial-страница zrok показывается только
+браузерному User-Agent, поэтому VLESS-клиенту она не мешает.
 
 ### Self-steal для Reality
 
 Если на мобильном Reality не подключается (ТСПУ режет SNI чужого сайта на IP
-хостера), сайтом-маской делается свой поддомен. Нужен заданный `XRAY_DOMAIN`.
+хостера), сайтом-маской делается свой поддомен. Нужен заданный `XRAY_DOMAIN`:
+без него nginx не запускается.
 
-1. DNS: `A` поддомена (например `r.<домен>`) на IP сервера, **DNS only** (серое
-   облако) — сертификат должен отдавать наш IP, а не Cloudflare.
+1. DNS: `A` поддомена (например `r.<домен>`) на IP сервера, **DNS only** — без
+   проксирования: сертификат должен отдавать наш IP.
 2. Сертификат Let's Encrypt через DNS-01 (порта 80 в схеме нет), файлы — в
    `configs/steal-cert.pem` и `configs/steal-key.pem`. После продления:
    `docker exec vpn-tgbot nginx -s reload`.

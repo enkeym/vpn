@@ -78,7 +78,7 @@ export class StartupReportService implements OnApplicationBootstrap {
 
     lines.push(
       `${mark(awg.isEnabled())} AmneziaWG`,
-      `${mark(xray.isEnabled())} Xray (CDN: ${xray.isCdnEnabled() ? 'да' : 'нет'})`,
+      `${mark(xray.isEnabled())} Xray (туннель: ${xray.isTunnelEnabled() ? 'да' : 'нет'})`,
     );
 
     return lines.join('\n');

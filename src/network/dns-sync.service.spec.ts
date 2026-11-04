@@ -69,8 +69,7 @@ describe('DnsSyncService', () => {
       AWG_WAN_IFACE: 'eth0',
       CF_API_TOKEN: 'test-token',
       CF_ZONE_ID: 'test-zone',
-      CF_DNS_RECORDS: 'cdn.example.test,r.example.test',
-      XRAY_DOMAIN: 'cdn.example.test',
+      CF_DNS_RECORDS: 'r.example.test,cover.example.test',
       WG_HOST: 'r.example.test',
       XRAY_REALITY_SNI: 'cover.example.test',
     });
@@ -83,31 +82,15 @@ describe('DnsSyncService', () => {
         new URL(url instanceof Request ? url.url : url).searchParams.get(
           'name',
         ) ?? '';
-      const type =
-        new URL(url instanceof Request ? url.url : url).searchParams.get(
-          'type',
-        ) ?? '';
       return Promise.resolve(
         new Response(
           JSON.stringify({
             success: true,
             result:
               options?.method === 'GET'
-                ? (
-                    records[`${type}:${name}`] ??
-                    (type
-                      ? type === 'A'
-                        ? records[name]
-                        : undefined
-                      : (records[name] ??
-                        ['A', 'AAAA', 'CNAME'].flatMap(
-                          (recordType) =>
-                            records[`${recordType}:${name}`] ?? [],
-                        ))) ??
-                    []
-                  ).map((record) => ({
+                ? (records[name] ?? []).map((record) => ({
                     ...record,
-                    type: record.type ?? (type || 'A'),
+                    type: record.type ?? 'A',
                   }))
                 : {},
           }),
@@ -123,12 +106,12 @@ describe('DnsSyncService', () => {
     jest.restoreAllMocks();
   });
 
-  it('preserves the CDN IP while enabling proxy and migrating direct VPN records', async () => {
-    records['cdn.example.test'] = [
-      { id: 'cdn', content: '192.0.2.1', proxied: false },
-    ];
+  it('updates direct VPN records to the current IP as DNS-only', async () => {
     records['r.example.test'] = [
       { id: 'direct', content: '192.0.2.1', proxied: true },
+    ];
+    records['cover.example.test'] = [
+      { id: 'cover', content: '192.0.2.1', proxied: true },
     ];
     await createService();
 
@@ -138,11 +121,59 @@ describe('DnsSyncService', () => {
     expect(writes()).toEqual([
       {
         type: 'A',
-        name: 'cdn.example.test',
-        content: '192.0.2.1',
+        name: 'r.example.test',
+        content: ip,
+        ttl: 1,
+        proxied: false,
+      },
+      {
+        type: 'A',
+        name: 'cover.example.test',
+        content: ip,
+        ttl: 1,
+        proxied: false,
+      },
+    ]);
+  });
+
+  it('preserves existing proxy modes for unrelated records and creates missing ones DNS-only', async () => {
+    records['old.example.test'] = [
+      { id: 'old', content: '192.0.2.1', proxied: true },
+    ];
+    await createService({
+      CF_DNS_RECORDS: 'old.example.test,new.example.test',
+    });
+
+    await service.ensureSynced();
+
+    expect(writes()).toEqual([
+      {
+        type: 'A',
+        name: 'old.example.test',
+        content: ip,
         ttl: 1,
         proxied: true,
       },
+      {
+        type: 'A',
+        name: 'new.example.test',
+        content: ip,
+        ttl: 1,
+        proxied: false,
+      },
+    ]);
+  });
+
+  it('normalizes names before comparing with direct roles', async () => {
+    await createService({
+      CF_DNS_RECORDS: 'R.example.test.',
+      WG_HOST: ' r.example.test. ',
+    });
+
+    const result = await service.ensureSynced();
+
+    expect(result.ok).toEqual(['r.example.test']);
+    expect(writes()).toEqual([
       {
         type: 'A',
         name: 'r.example.test',
@@ -153,139 +184,11 @@ describe('DnsSyncService', () => {
     ]);
   });
 
-  it('does not rewrite an already proxied CDN record on a separate IP', async () => {
-    records['cdn.example.test'] = [
-      { id: 'cdn', content: '192.0.2.20', proxied: true },
-    ];
-    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
-
-    await service.onApplicationBootstrap();
-    const result = await service.ensureSynced();
-
-    expect(result.ok).toEqual(['cdn.example.test']);
-    expect(result.failed).toEqual([]);
-    expect(writes()).toEqual([]);
-  });
-
-  it('proxies every CDN A and AAAA record while preserving their addresses', async () => {
-    records['A:cdn.example.test'] = [
-      { id: 'cdn-a-1', content: '192.0.2.20', proxied: false },
-      { id: 'cdn-a-2', content: '192.0.2.21', proxied: false },
-    ];
-    records['AAAA:cdn.example.test'] = [
-      {
-        id: 'cdn-aaaa',
-        type: 'AAAA',
-        content: '2001:db8::20',
-        proxied: false,
-      },
-    ];
-    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
-
-    const result = await service.ensureSynced();
-
-    expect(result.failed).toEqual([]);
-    expect(writes()).toEqual([
-      {
-        type: 'A',
-        name: 'cdn.example.test',
-        content: '192.0.2.20',
-        ttl: 1,
-        proxied: true,
-      },
-      {
-        type: 'A',
-        name: 'cdn.example.test',
-        content: '192.0.2.21',
-        ttl: 1,
-        proxied: true,
-      },
-      {
-        type: 'AAAA',
-        name: 'cdn.example.test',
-        content: '2001:db8::20',
-        ttl: 1,
-        proxied: true,
-      },
-    ]);
-  });
-
-  it('proxies a CDN CNAME target without replacing it with the server IP', async () => {
-    records['CNAME:cdn.example.test'] = [
-      {
-        id: 'cdn-cname',
-        type: 'CNAME',
-        content: 'origin.example.test',
-        proxied: false,
-      },
-    ];
-    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
-
-    const result = await service.ensureSynced();
-
-    expect(result.failed).toEqual([]);
-    expect(writes()).toEqual([
-      {
-        type: 'CNAME',
-        name: 'cdn.example.test',
-        content: 'origin.example.test',
-        ttl: 1,
-        proxied: true,
-      },
-    ]);
-  });
-
-  it('creates a missing CDN record on the current server with proxy enabled', async () => {
-    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
-
-    const result = await service.ensureSynced();
-
-    expect(result.ok).toEqual(['cdn.example.test']);
-    expect(result.failed).toEqual([]);
-    expect(writes()).toEqual([
-      {
-        type: 'A',
-        name: 'cdn.example.test',
-        content: ip,
-        ttl: 1,
-        proxied: true,
-      },
-    ]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringMatching(/\/dns_records$/),
-      expect.objectContaining({ method: 'POST' }),
-    );
-  });
-
-  it('preserves existing unrelated proxy modes and uses the default only for new records', async () => {
-    records['old.example.test'] = [
-      { id: 'old', content: '192.0.2.1', proxied: true },
-    ];
-    await createService({
-      CF_DNS_RECORDS: 'old.example.test,new.example.test',
-    });
-
-    await service.ensureSynced();
-
-    expect(writes().map(({ proxied }) => proxied)).toEqual([true, false]);
-  });
-
-  it('normalizes names and refuses conflicting CDN and direct roles before API writes', async () => {
-    await createService({
-      CF_DNS_RECORDS: 'CDN.example.test.',
-      WG_HOST: ' cdn.example.test. ',
-    });
-
-    const result = await service.ensureSynced();
-
-    expect(result.failed).toHaveLength(1);
-    expect(result.failed[0]).toContain('cdn.example.test');
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('does not rewrite unchanged records and shares concurrent sync requests', async () => {
-    records['cdn.example.test'] = [{ id: 'cdn', content: ip, proxied: true }];
     records['r.example.test'] = [{ id: 'direct', content: ip, proxied: false }];
+    records['cover.example.test'] = [
+      { id: 'cover', content: ip, proxied: false },
+    ];
     await createService();
 
     const results = await Promise.all([
@@ -325,11 +228,11 @@ describe('DnsSyncService', () => {
     const result = await service.ensureSynced();
 
     expect(result.failed).toEqual([
-      'cdn.example.test: Cloudflare 403: access denied',
+      'r.example.test: Cloudflare 403: access denied',
     ]);
-    expect(result.ok).toEqual(['r.example.test']);
+    expect(result.ok).toEqual(['cover.example.test']);
     expect(writes()).toEqual([
-      expect.objectContaining({ name: 'r.example.test', proxied: false }),
+      expect.objectContaining({ name: 'cover.example.test', proxied: false }),
     ]);
   });
 });

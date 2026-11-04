@@ -3,10 +3,10 @@ set -e
 
 STEAL_PORT="$XRAY_INTERNAL_STEAL_PORT"
 
-# nginx нужен только ради CDN-канала: он слушает публичный порт и по SNI
-# разводит трафик — домен уходит на свой TLS-сервер (дальше NestJS и VLESS+WS),
-# всё остальное в Reality. Без XRAY_DOMAIN разводить нечего: Reality тогда
-# слушает публичный порт сам (см. XrayService.behindProxy), и nginx не нужен.
+# nginx слушает публичный порт и отдаёт его в Reality, а на localhost держит
+# HTTP-роутер для zrok: туннель терминирует TLS и проксирует сюда /sub и WS.
+# Без XRAY_DOMAIN туннеля нет: Reality слушает публичный порт сам (см.
+# XrayService.behindProxy), и nginx не нужен.
 if [ -z "$XRAY_DOMAIN" ]; then
   # Сайт-маску self-steal отдаёт nginx: без него Reality-dest — пустой порт, и
   # ни один хендшейк Reality не пройдёт. Лучше не стартовать вовсе.
@@ -16,16 +16,6 @@ if [ -z "$XRAY_DOMAIN" ]; then
   fi
   echo "XRAY_DOMAIN не задан — nginx не запускается, Reality слушает публичный порт напрямую"
   exec node dist/src/main.js
-fi
-
-CERT=/app/configs/cloudflare-cert.pem
-KEY=/app/configs/cloudflare-key.pem
-
-# Падаем сразу, а не после старта Nest: без сертификата nginx не поднимется, и
-# CDN-канал молча не заработал бы — Cloudflare отдавал бы клиентам 5xx.
-if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
-  echo "Нет сертификата Cloudflare Origin CA: положите $CERT и $KEY" >&2
-  exit 1
 fi
 
 if [ -n "$STEAL_PORT" ]; then
@@ -49,9 +39,8 @@ fi
 PUBLIC_PORT="${XRAY_REALITY_PORT:-443}"
 
 sed -e "$STEAL_SED" \
-    -e "s/__XRAY_DOMAIN__/${XRAY_DOMAIN}/g" \
     -e "s/__PUBLIC_PORT__/${PUBLIC_PORT}/g" \
-    -e "s/__TLS_PORT__/${NGINX_INTERNAL_TLS_PORT:-8445}/g" \
+    -e "s/__TUNNEL_PORT__/${NGINX_INTERNAL_TUNNEL_PORT:-8080}/g" \
     -e "s/__REALITY_PORT__/${XRAY_INTERNAL_REALITY_PORT:-8444}/g" \
     -e "s/__WS_PORT__/${XRAY_INTERNAL_WS_PORT:-8880}/g" \
     -e "s/__APP_PORT__/${PORT:-3000}/g" \

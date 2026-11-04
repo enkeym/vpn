@@ -52,8 +52,9 @@ services:
     # Второй канал (VLESS через Xray) слушает здесь же, на хосте:
     #  • XRAY_REALITY_PORT (443/tcp) — публичный, открыть в фаерволе. TLS на
     #    нестандартном порту DPI режет в первую очередь, поэтому именно 443;
+    #  • NGINX_INTERNAL_TUNNEL_PORT (8080) — HTTP-роутер nginx для zrok;
     #  • XRAY_INTERNAL_WS_PORT (8880) и XRAY_STATS_API_PORT (8881) — только
-    #    127.0.0.1, наружу их не публикуем: WS отдаёт хостовой reverse-proxy.
+    #    127.0.0.1, наружу их не публикуем.
     # Раскладка и конфиг прокси — в README, раздел «Второй канал: VLESS (Xray)».
 
     env_file:

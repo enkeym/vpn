@@ -106,23 +106,23 @@ describe('XrayService health and proxy recovery', () => {
 
   it('uses one public port for both channel links and subscription parameters', () => {
     const uuid = 'test-client';
-    const cdn = new URL(service.buildClientLink('test', uuid));
+    const tunnel = new URL(service.buildClientLink('test', uuid));
     const direct = new URL(service.buildRealityClientLink('test', uuid));
 
-    expect(cdn.hostname).toBe('vpn.example.test');
+    expect(tunnel.hostname).toBe('vpn.example.test');
     expect(direct.hostname).toBe('direct.example.test');
-    expect(cdn.port).toBe('2053');
-    expect(direct.port).toBe(cdn.port);
+    expect(tunnel.port).toBe('2053');
+    expect(direct.port).toBe(tunnel.port);
     expect(service.getPublicParams()).toEqual(
       expect.objectContaining({
         host: direct.hostname,
-        domain: cdn.hostname,
-        realityPort: Number(cdn.port),
+        domain: tunnel.hostname,
+        realityPort: Number(tunnel.port),
       }),
     );
   });
 
-  it('exports only Cloudflare with the actual TLS hostname', () => {
+  it('exports only the tunnel with the actual TLS hostname', () => {
     const subscription = module.get(SubscriptionService);
     const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
 
@@ -144,7 +144,7 @@ describe('XrayService health and proxy recovery', () => {
     expect(link.searchParams.get('sni')).toBe('vpn.example.test');
     expect(link.searchParams.get('fp')).toBe('chrome');
     expect(decodeURIComponent(link.hash.slice(1))).toBe(
-      `${peer.name} · Cloudflare · TLS vpn.example.test`,
+      `${peer.name} · zrok · TLS vpn.example.test`,
     );
   });
 
@@ -161,7 +161,7 @@ describe('XrayService health and proxy recovery', () => {
         outbounds: expect.arrayContaining([
           expect.objectContaining({
             type: 'vless',
-            tag: 'Cloudflare · TLS vpn.example.test',
+            tag: 'zrok · TLS vpn.example.test',
             domain_resolver: {
               server: 'dns-bootstrap',
               strategy: 'prefer_ipv4',
@@ -175,7 +175,7 @@ describe('XrayService health and proxy recovery', () => {
           }),
           expect.objectContaining({
             tag: 'auto',
-            outbounds: ['Cloudflare · TLS vpn.example.test'],
+            outbounds: ['zrok · TLS vpn.example.test'],
           }),
         ]),
         dns: expect.objectContaining({

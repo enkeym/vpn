@@ -115,11 +115,10 @@ RUN apk add --no-cache \
     sudo \
     # awg-quick — bash-скрипт
     bash \
-    # nginx — SNI-разводчик публичного порта между Reality и CDN-каналом,
-    # он же терминирует TLS сертификатом Cloudflare Origin CA.
+    # nginx — публичный порт Reality и HTTP-роутер для туннеля zrok.
     # Запускается только при заданном XRAY_DOMAIN (см. docker-entrypoint.sh).
     nginx \
-    # stream + ssl_preread в Alpine отдельным пакетом — без него разводки по SNI нет.
+    # stream в Alpine отдельным пакетом: без него нет listener'а, отдающего 443 в Reality.
     nginx-mod-stream \
     # Для healthcheck
     wget \
@@ -155,7 +154,6 @@ COPY scripts/db-backup.cjs ./scripts/db-backup.cjs
 # nginx: шаблон конфига (домен и порты подставляет entrypoint из .env) и сам
 # entrypoint, который поднимает nginx перед стартом NestJS.
 COPY docker/nginx.conf /etc/nginx/nginx.conf.template
-COPY docker/cloudflare-ipv4.conf /etc/nginx/cloudflare-ipv4.conf
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
@@ -169,8 +167,8 @@ LABEL version="1.0"
 # Порты. EXPOSE в network_mode: host носит справочный характер — контейнер и
 # так слушает порты хоста, открывать их нужно в фаерволе VPS (см. README).
 EXPOSE 51821/udp
-# XRAY_REALITY_PORT: с заданным XRAY_DOMAIN его слушает nginx и разводит по SNI
-# между Reality и CDN-каналом, без домена — сам Xray.
+# XRAY_REALITY_PORT: с заданным XRAY_DOMAIN его слушает nginx и отдаёт в Reality,
+# без домена — сам Xray.
 EXPOSE 443/tcp
 EXPOSE 3000
 

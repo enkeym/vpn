@@ -20,7 +20,7 @@ export interface IDnsSyncStatus {
 
 interface ICfDnsRecord {
   id: string;
-  type: 'A' | 'AAAA' | 'CNAME';
+  type: 'A';
   content: string;
   proxied: boolean;
 }
@@ -47,7 +47,6 @@ export class DnsSyncService implements OnApplicationBootstrap {
   private readonly token: string;
   private readonly zoneId: string;
   private readonly records: string[];
-  private readonly cdnName: string;
   private readonly directNames: Set<string>;
 
   private synced: Promise<IDnsSyncStatus> | null = null;
@@ -63,7 +62,6 @@ export class DnsSyncService implements OnApplicationBootstrap {
       .split(',')
       .map(normalizeDnsName)
       .filter(Boolean);
-    this.cdnName = normalizeDnsName(config.get<string>('XRAY_DOMAIN', ''));
     this.directNames = new Set(
       [
         config.get<string>('WG_HOST', ''),
@@ -129,45 +127,7 @@ export class DnsSyncService implements OnApplicationBootstrap {
   }
 
   private async upsert(name: string, ip: string): Promise<void> {
-    const isCdn = name === this.cdnName;
     const isDirect = this.directNames.has(name);
-    if (isCdn && isDirect) {
-      throw new Error(
-        'Один домен задан для CDN и прямого VPN: разделите XRAY_DOMAIN и прямые адреса',
-      );
-    }
-    if (isCdn) {
-      const existing = await this.cf<ICfDnsRecord[]>(
-        'GET',
-        `/dns_records?name=${encodeURIComponent(name)}`,
-      );
-      const proxyable = existing.filter(({ type }) =>
-        ['A', 'AAAA', 'CNAME'].includes(type),
-      );
-      if (proxyable.length === 0) {
-        await this.cf('POST', '/dns_records', {
-          type: 'A',
-          name,
-          content: ip,
-          ttl: 1,
-          proxied: true,
-        });
-        this.logger.log(`DNS ${name} → ${ip}`);
-        return;
-      }
-      for (const record of proxyable) {
-        if (record.proxied) continue;
-        await this.cf('PUT', `/dns_records/${record.id}`, {
-          type: record.type,
-          name,
-          content: record.content,
-          ttl: 1,
-          proxied: true,
-        });
-        this.logger.log(`DNS ${name} ${record.type} proxy enabled`);
-      }
-      return;
-    }
     const existing = await this.cf<ICfDnsRecord[]>(
       'GET',
       `/dns_records?type=A&name=${encodeURIComponent(name)}`,
