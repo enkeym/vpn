@@ -57,8 +57,8 @@ FROM golang:1.25-alpine AS awg-build
 # AWG_GO_REF — коммит «feat: amneziawg 3.0» (24.07.2026).
 # AWG_TOOLS_REF — ветка feat/awg3: только она разбирает HeaderProtectionKey,
 # ContentPaddingAddition, S3/S4 и тайминги — в master этих ключей ещё нет.
-ARG AWG_GO_REF=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
-ARG AWG_TOOLS_REF=05434cab7d91bbbc607d18ec5fade91f4b83774c
+ARG AWG_GO_REF=b5928efb6ca19f0153958460c3d141f04abc5c2e
+ARG AWG_TOOLS_REF=ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
 
 RUN apk add --no-cache git build-base bash linux-headers
 

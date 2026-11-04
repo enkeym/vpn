@@ -601,6 +601,8 @@ export class AwgService implements OnModuleInit {
       'rejectAfterTime',
       'keepaliveTimeout',
       'maxHandshakeAttempts',
+      'randomTrailers',
+      'disableCookies',
     ] as const) {
       const value = awg3FromEnv[field];
       if (value && config.awg3[field] !== value) {
@@ -608,6 +610,23 @@ export class AwgService implements OnModuleInit {
         awg3Changed = true;
       }
     }
+    if (this.headerProtection && !config.awg3.headerProtectionKey) {
+      config.awg3.headerProtectionKey =
+        awg3FromEnv.headerProtectionKey ?? generateHeaderProtectionKey();
+      awg3Changed = true;
+    } else if (!this.headerProtection && config.awg3.headerProtectionKey) {
+      delete config.awg3.headerProtectionKey;
+      awg3Changed = true;
+    }
+    const obfuscationFromEnv = readObfuscationFromEnv();
+    if (
+      obfuscationFromEnv &&
+      JSON.stringify(config.obfuscation) !== JSON.stringify(obfuscationFromEnv)
+    ) {
+      config.obfuscation = obfuscationFromEnv;
+      awg3Changed = true;
+    }
+    assertValidObfuscation(config.obfuscation, config.awg3);
     if (awg3Changed) restartRequired = true;
 
     // У пиров, записанных до появления IPv6, в AllowedIPs нет v6-адреса —

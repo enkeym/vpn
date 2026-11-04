@@ -165,6 +165,16 @@ describe('AwgService client configuration', () => {
     process.env.AWG_KEEPALIVE_TIMEOUT = '7-13';
     process.env.AWG_MAX_HANDSHAKE_ATTEMPTS = '15-20';
     process.env.AWG_PERSISTENT_KEEPALIVE = '25-35';
+    process.env.AWG_HEADER_PROTECTION = 'true';
+    process.env.AWG_RANDOM_TRAILERS = 'on';
+    process.env.AWG_DISABLE_COOKIES = 'on';
+    process.env.AWG_JC = '4';
+    process.env.AWG_JMIN = '10';
+    process.env.AWG_JMAX = '80';
+    for (const key of ['S1', 'S2', 'S3', 'S4'])
+      process.env[`AWG_${key}`] = '32';
+    for (const [index, key] of ['H1', 'H2', 'H3', 'H4'].entries())
+      process.env[`AWG_${key}`] = String(index + 1);
 
     const service = await createService();
     const client = await service.buildClientConfig({
@@ -180,11 +190,16 @@ describe('AwgService client configuration', () => {
       'RejectAfterTime = 150-180',
       'KeepaliveTimeout = 7-13',
       'MaxHandshakeAttempts = 15-20',
+      'RandomTrailers = on',
+      'DisableCookies = on',
+      'H1 = 1',
+      'S4 = 32',
     ]) {
       expect(stored).toContain(line);
       expect(client).toContain(line);
     }
     expect(client).toContain('PersistentKeepalive = 25-35');
+    expect(client).toMatch(/HeaderProtectionKey = [A-Za-z0-9+/]{43}=/);
   });
 
   it.each([

@@ -66,6 +66,8 @@ export interface IAwg3Options {
   rejectAfterTime?: string;
   keepaliveTimeout?: string;
   maxHandshakeAttempts?: string;
+  randomTrailers?: string;
+  disableCookies?: string;
 }
 
 /** Поле ↔ ключ в конфиге ↔ переменная .env. Порядок задаёт порядок строк конфига */
@@ -105,6 +107,16 @@ const AWG3_FIELDS: readonly {
     conf: 'MaxHandshakeAttempts',
     env: 'AWG_MAX_HANDSHAKE_ATTEMPTS',
   },
+  {
+    field: 'randomTrailers',
+    conf: 'RandomTrailers',
+    env: 'AWG_RANDOM_TRAILERS',
+  },
+  {
+    field: 'disableCookies',
+    conf: 'DisableCookies',
+    env: 'AWG_DISABLE_COOKIES',
+  },
 ] as const;
 
 export interface IAwgServerPeer {
@@ -139,7 +151,7 @@ const SIGNATURE_SIZE_MAX = 1132;
 /** Разница размеров init- и response-пакетов WireGuard */
 const HANDSHAKE_SIZE_DELTA = 56;
 /** Header protection берёт S1..S4 как nonce шифра — короче 8 байт он не работает */
-const HEADER_PROTECTION_MIN_SIGNATURE = 8;
+const HEADER_PROTECTION_MIN_SIGNATURE = 12;
 /** S4 добивает КАЖДЫЙ транспортный пакет, поэтому потолок куда ниже S1..S3 */
 const TRANSPORT_SIGNATURE_MAX = 64;
 /** HeaderProtectionKey — обычный 32-байтный ключ в base64, как PrivateKey */
@@ -309,10 +321,36 @@ export function assertValidObfuscation(
     }
   }
 
+  for (const field of ['randomTrailers', 'disableCookies'] as const) {
+    const value = awg3[field];
+    if (value !== undefined && value !== 'on' && value !== 'off') {
+      throw new Error(`${field} должен быть on или off`);
+    }
+  }
+
+  if (awg3.randomTrailers === 'on') {
+    if (new Set([o.s1, o.s2, o.s3, o.s4]).size !== 1) {
+      throw new Error(
+        'При RandomTrailers=on параметры AWG_S1..AWG_S4 должны совпадать',
+      );
+    }
+    if ([o.h1, o.h2, o.h3, o.h4].join(',') !== '1,2,3,4') {
+      throw new Error(
+        'При RandomTrailers=on параметры AWG_H1..AWG_H4 должны быть 1,2,3,4',
+      );
+    }
+  }
+
   const ranges = [o.h1, o.h2, o.h3, o.h4].map(parseHeaderRange);
-  if (ranges.some(({ from, to }) => from < HEADER_MIN || to > HEADER_MAX)) {
+  const standardHeaders = [o.h1, o.h2, o.h3, o.h4].join(',') === '1,2,3,4';
+  if (
+    ranges.some(
+      ({ from, to }) =>
+        from < (standardHeaders ? 1 : HEADER_MIN) || to > HEADER_MAX,
+    )
+  ) {
     throw new Error(
-      `AWG_H1..AWG_H4 должны укладываться в ${HEADER_MIN}..${HEADER_MAX}`,
+      `AWG_H1..AWG_H4 должны укладываться в ${HEADER_MIN}..${HEADER_MAX} либо быть 1,2,3,4`,
     );
   }
 
