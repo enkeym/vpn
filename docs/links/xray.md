@@ -44,7 +44,8 @@ paths:
   контейнера, рестарт не нужен. На этот порт ходит только Reality с `xver: 0`,
   поэтому `listen` без `proxy_protocol`.
 - DNS-роли в `src/network/dns-sync.service.ts:upsert`: `XRAY_DOMAIN` требует
-  Proxied; `WG_HOST`, `XRAY_REALITY_SNI`
+  Proxied и сохраняет IP существующей A-записи; отсутствующая создаётся
+  с `PUBLIC_IPV4`. Остальные A-записи обновляются на `PUBLIC_IPV4`; `WG_HOST`, `XRAY_REALITY_SNI`
   требуют DNS only. Конфликт ролей отклоняется до обращения к API. Для остальных
   существующих записей сохраняется режим, новые создаются как DNS only.
 - `docker/cloudflare-ipv4.conf` — публикуемые IPv4-сети Cloudflare для `geo` в

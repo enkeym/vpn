@@ -1,5 +1,5 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { Bot } from 'grammy';
+import { Bot, Context } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { MainHandler } from '../handlers/main.handler';
 import { PeerCreateHandler } from '../handlers/peer-create.handler';
@@ -163,45 +163,53 @@ export class UserCommandsRegistrar {
 
     // Действия с конкретным пиром
     bot.callbackQuery(/^manage_peer:(.+)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      await ctx.answerCallbackQuery();
       await this.peerManageHandler.showPeerDetails(ctx, peerName, admin);
     });
 
     // Пауза/Старт
     bot.callbackQuery(/^toggle_peer:(.+)$/, async (ctx) => {
       // Сразу отвечаем, т.к. операция может занять время
-      await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      await ctx.answerCallbackQuery();
       await this.peerManageHandler.togglePeer(ctx, peerName, admin);
     });
 
     // Удаление пира
     bot.callbackQuery(/^delete_peer:(.+)$/, async (ctx) => {
       // Сразу отвечаем, т.к. операция может занять время
-      await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      await ctx.answerCallbackQuery();
       await this.peerDeleteHandler.deletePeer(ctx, peerName, admin);
     });
 
     // Продление конфига — переход в меню оплаты
     bot.callbackQuery(/^extend_peer:(.+)$/, async (ctx) => {
+      const peerName = ctx.match[1];
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerCreateHandler.showPaymentPlansForExtend(ctx, ctx.match[1]);
+      await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
     });
 
     // Возврат к тарифам при продлении
     bot.callbackQuery(/^extend_pay_plans:(.+)$/, async (ctx) => {
-      if (ctx.from) {
+      const peerName = ctx.match[1];
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (ctx.from)
         this.invoiceService.stopInvoicePaymentPollingForUser(
           String(ctx.from.id),
         );
-      }
       await ctx.answerCallbackQuery();
-      await this.peerCreateHandler.showPaymentPlansForExtend(ctx, ctx.match[1]);
+      await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
     });
 
     // Выбор тарифа при продлении — сразу счёт ЮKassa
@@ -211,6 +219,8 @@ export class UserCommandsRegistrar {
         if (!ctx.from) return;
         const days = Number(ctx.match[1]) as PaidDuration;
         const peerName = ctx.match[2];
+        const admin = isAdmin(String(ctx.from.id));
+        if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
         try {
           await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
           await this.invoiceService.presentExtendInvoice(ctx, days, peerName);
@@ -232,6 +242,8 @@ export class UserCommandsRegistrar {
         if (!ctx.from) return;
         const durationDays = Number(ctx.match[1]) as PaidDuration;
         const peerName = ctx.match[2];
+        const admin = isAdmin(String(ctx.from.id));
+        if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
         try {
           await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
           await this.invoiceService.presentExtendInvoice(
@@ -257,8 +269,11 @@ export class UserCommandsRegistrar {
     // === Автопродление ===
 
     bot.callbackQuery(/^autopay_menu:(.+)$/, async (ctx) => {
+      const peerName = ctx.match[1];
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
       await ctx.answerCallbackQuery();
-      await this.autopayHandler.showAutopayMenu(ctx, ctx.match[1]);
+      await this.autopayHandler.showAutopayMenu(ctx, peerName);
     });
 
     bot.callbackQuery(
@@ -266,6 +281,8 @@ export class UserCommandsRegistrar {
       async (ctx) => {
         const peerName = ctx.match[1];
         const days = Number(ctx.match[2]) as PaidDuration;
+        const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+        if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
         await this.autopayHandler.enableAutopay(ctx, peerName, days);
       },
     );
@@ -288,8 +305,11 @@ export class UserCommandsRegistrar {
     // Замена конфига (раз в день)
     bot.callbackQuery(/^replace_peer:(.+)$/, async (ctx) => {
       // Сразу отвечаем, т.к. операция может занять время
+      const peerName = ctx.match[1];
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.replacePeer(ctx, ctx.match[1]);
+      await this.peerManageHandler.replacePeer(ctx, peerName);
     });
 
     // Возврат с сообщения QR/файла: карточка конфига осталась выше — закрываем
@@ -302,15 +322,18 @@ export class UserCommandsRegistrar {
 
     // Старые сообщения с документами до перехода на `close_media`
     bot.callbackQuery(/^goto_peer:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.showPeerDetailsReply(ctx);
     });
 
     // После замены конфига — родитель удалён, нужен новый reply с деталями
     bot.callbackQuery(/^goto_peer_after_replace:(.+)$/, async (ctx) => {
-      await ctx.answerCallbackQuery();
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      await ctx.answerCallbackQuery();
       await this.peerManageHandler.showPeerDetailsReplyAfterReplace(
         ctx,
         peerName,
@@ -320,12 +343,16 @@ export class UserCommandsRegistrar {
 
     // Показать QR-код конфига
     bot.callbackQuery(/^show_qr:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.showQrCode(ctx, ctx.match[1]);
     });
 
     // Получить файл конфига
     bot.callbackQuery(/^get_config_file:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
     });
@@ -335,21 +362,29 @@ export class UserCommandsRegistrar {
     // карточки, поэтому одни и те же обработчики обслуживают свои конфиги,
     // «Семью» и карточку клиента у админа.
     bot.callbackQuery(/^vless_menu:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.showVlessMenu(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_qr:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.showVlessQrCode(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_qr_sb:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.showVlessSingBoxQrCode(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_json:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.sendVlessJsonFile(ctx, ctx.match[1]);
     });
@@ -369,11 +404,18 @@ export class UserCommandsRegistrar {
 
     // Отмена редактирования описания своего конфига
     bot.callbackQuery(/^cancel_edit_description:(.+)$/, async (ctx) => {
+      if (!ctx.from || !isAdmin(String(ctx.from.id))) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа',
+          show_alert: true,
+        });
+        return;
+      }
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.cancelEditDescription(
         ctx,
         ctx.match[1],
-        true,
+        isAdmin(String(ctx.from.id)),
       );
     });
 
@@ -414,5 +456,26 @@ export class UserCommandsRegistrar {
       await ctx.answerCallbackQuery();
       await this.mainHandler.sendHiddifySettings(ctx);
     });
+  }
+
+  private async ensurePeerAccess(
+    ctx: Context,
+    peerName: string,
+    admin: boolean,
+  ): Promise<boolean> {
+    if (admin) return true;
+    if (ctx.from) {
+      const peer = await this.peersService
+        .findPeer(peerName)
+        .catch(() => undefined);
+      if (peer?.telegramId === String(ctx.from.id)) return true;
+    }
+    await ctx
+      .answerCallbackQuery({
+        text: 'Нет доступа к этому конфигу',
+        show_alert: true,
+      })
+      .catch(() => {});
+    return false;
   }
 }

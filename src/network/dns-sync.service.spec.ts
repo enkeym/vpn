@@ -31,7 +31,7 @@ describe('DnsSyncService', () => {
   let service: DnsSyncService;
   let records: Record<
     string,
-    { id: string; content: string; proxied: boolean }[]
+    { id: string; type?: string; content: string; proxied: boolean }[]
   >;
 
   async function createService(settings: Record<string, string> = {}) {
@@ -55,6 +55,7 @@ describe('DnsSyncService', () => {
       .map(
         ([, options]) =>
           JSON.parse(typeof options?.body === 'string' ? options.body : '') as {
+            type: string;
             name: string;
             content: string;
             proxied: boolean;
@@ -82,11 +83,33 @@ describe('DnsSyncService', () => {
         new URL(url instanceof Request ? url.url : url).searchParams.get(
           'name',
         ) ?? '';
+      const type =
+        new URL(url instanceof Request ? url.url : url).searchParams.get(
+          'type',
+        ) ?? '';
       return Promise.resolve(
         new Response(
           JSON.stringify({
             success: true,
-            result: options?.method === 'GET' ? (records[name] ?? []) : {},
+            result:
+              options?.method === 'GET'
+                ? (
+                    records[`${type}:${name}`] ??
+                    (type
+                      ? type === 'A'
+                        ? records[name]
+                        : undefined
+                      : (records[name] ??
+                        ['A', 'AAAA', 'CNAME'].flatMap(
+                          (recordType) =>
+                            records[`${recordType}:${name}`] ?? [],
+                        ))) ??
+                    []
+                  ).map((record) => ({
+                    ...record,
+                    type: record.type ?? (type || 'A'),
+                  }))
+                : {},
           }),
         ),
       );
@@ -100,7 +123,7 @@ describe('DnsSyncService', () => {
     jest.restoreAllMocks();
   });
 
-  it('keeps CDN proxied and direct VPN records DNS-only in one migration', async () => {
+  it('preserves the CDN IP while enabling proxy and migrating direct VPN records', async () => {
     records['cdn.example.test'] = [
       { id: 'cdn', content: '192.0.2.1', proxied: false },
     ];
@@ -116,7 +139,7 @@ describe('DnsSyncService', () => {
       {
         type: 'A',
         name: 'cdn.example.test',
-        content: ip,
+        content: '192.0.2.1',
         ttl: 1,
         proxied: true,
       },
@@ -128,6 +151,110 @@ describe('DnsSyncService', () => {
         proxied: false,
       },
     ]);
+  });
+
+  it('does not rewrite an already proxied CDN record on a separate IP', async () => {
+    records['cdn.example.test'] = [
+      { id: 'cdn', content: '192.0.2.20', proxied: true },
+    ];
+    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
+
+    await service.onApplicationBootstrap();
+    const result = await service.ensureSynced();
+
+    expect(result.ok).toEqual(['cdn.example.test']);
+    expect(result.failed).toEqual([]);
+    expect(writes()).toEqual([]);
+  });
+
+  it('proxies every CDN A and AAAA record while preserving their addresses', async () => {
+    records['A:cdn.example.test'] = [
+      { id: 'cdn-a-1', content: '192.0.2.20', proxied: false },
+      { id: 'cdn-a-2', content: '192.0.2.21', proxied: false },
+    ];
+    records['AAAA:cdn.example.test'] = [
+      {
+        id: 'cdn-aaaa',
+        type: 'AAAA',
+        content: '2001:db8::20',
+        proxied: false,
+      },
+    ];
+    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
+
+    const result = await service.ensureSynced();
+
+    expect(result.failed).toEqual([]);
+    expect(writes()).toEqual([
+      {
+        type: 'A',
+        name: 'cdn.example.test',
+        content: '192.0.2.20',
+        ttl: 1,
+        proxied: true,
+      },
+      {
+        type: 'A',
+        name: 'cdn.example.test',
+        content: '192.0.2.21',
+        ttl: 1,
+        proxied: true,
+      },
+      {
+        type: 'AAAA',
+        name: 'cdn.example.test',
+        content: '2001:db8::20',
+        ttl: 1,
+        proxied: true,
+      },
+    ]);
+  });
+
+  it('proxies a CDN CNAME target without replacing it with the server IP', async () => {
+    records['CNAME:cdn.example.test'] = [
+      {
+        id: 'cdn-cname',
+        type: 'CNAME',
+        content: 'origin.example.test',
+        proxied: false,
+      },
+    ];
+    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
+
+    const result = await service.ensureSynced();
+
+    expect(result.failed).toEqual([]);
+    expect(writes()).toEqual([
+      {
+        type: 'CNAME',
+        name: 'cdn.example.test',
+        content: 'origin.example.test',
+        ttl: 1,
+        proxied: true,
+      },
+    ]);
+  });
+
+  it('creates a missing CDN record on the current server with proxy enabled', async () => {
+    await createService({ CF_DNS_RECORDS: 'cdn.example.test' });
+
+    const result = await service.ensureSynced();
+
+    expect(result.ok).toEqual(['cdn.example.test']);
+    expect(result.failed).toEqual([]);
+    expect(writes()).toEqual([
+      {
+        type: 'A',
+        name: 'cdn.example.test',
+        content: ip,
+        ttl: 1,
+        proxied: true,
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/dns_records$/),
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('preserves existing unrelated proxy modes and uses the default only for new records', async () => {

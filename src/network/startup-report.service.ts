@@ -69,7 +69,7 @@ export class StartupReportService implements OnApplicationBootstrap {
       lines.push('❌ DNS Cloudflare: адрес не применён, записи не тронуты');
     } else {
       lines.push(
-        `${mark(dns.failed.length === 0)} DNS → \`${dns.ip}\`: ${dns.ok.length} ок` +
+        `${mark(dns.failed.length === 0)} DNS Cloudflare: ${dns.ok.length} ок` +
           (dns.failed.length > 0
             ? `, ошибки:\n\`${dns.failed.join('\n')}\``
             : ''),

@@ -20,6 +20,7 @@ export interface IDnsSyncStatus {
 
 interface ICfDnsRecord {
   id: string;
+  type: 'A' | 'AAAA' | 'CNAME';
   content: string;
   proxied: boolean;
 }
@@ -135,35 +136,66 @@ export class DnsSyncService implements OnApplicationBootstrap {
         'Один домен задан для CDN и прямого VPN: разделите XRAY_DOMAIN и прямые адреса',
       );
     }
+    if (isCdn) {
+      const existing = await this.cf<ICfDnsRecord[]>(
+        'GET',
+        `/dns_records?name=${encodeURIComponent(name)}`,
+      );
+      const proxyable = existing.filter(({ type }) =>
+        ['A', 'AAAA', 'CNAME'].includes(type),
+      );
+      if (proxyable.length === 0) {
+        await this.cf('POST', '/dns_records', {
+          type: 'A',
+          name,
+          content: ip,
+          ttl: 1,
+          proxied: true,
+        });
+        this.logger.log(`DNS ${name} → ${ip}`);
+        return;
+      }
+      for (const record of proxyable) {
+        if (record.proxied) continue;
+        await this.cf('PUT', `/dns_records/${record.id}`, {
+          type: record.type,
+          name,
+          content: record.content,
+          ttl: 1,
+          proxied: true,
+        });
+        this.logger.log(`DNS ${name} ${record.type} proxy enabled`);
+      }
+      return;
+    }
     const existing = await this.cf<ICfDnsRecord[]>(
       'GET',
       `/dns_records?type=A&name=${encodeURIComponent(name)}`,
     );
-
-    const current = existing[0];
-    const proxied = isCdn
-      ? true
-      : isDirect
-        ? false
-        : (current?.proxied ?? false);
-    if (current && current.content === ip && current.proxied === proxied) {
-      return;
-    }
-
-    const body = {
-      type: 'A',
-      name,
-      content: ip,
-      ttl: 1,
-      proxied,
-    };
-
-    if (current) {
-      await this.cf('PUT', `/dns_records/${current.id}`, body);
+    if (existing.length === 0) {
+      await this.cf('POST', '/dns_records', {
+        type: 'A',
+        name,
+        content: ip,
+        ttl: 1,
+        proxied: false,
+      });
+      this.logger.log(`DNS ${name} → ${ip}`);
     } else {
-      await this.cf('POST', '/dns_records', body);
+      for (const record of existing) {
+        const content = ip;
+        const proxied = !isDirect && record.proxied;
+        if (record.content === content && record.proxied === proxied) continue;
+        await this.cf('PUT', `/dns_records/${record.id}`, {
+          type: 'A',
+          name,
+          content,
+          ttl: 1,
+          proxied,
+        });
+        this.logger.log(`DNS ${name} → ${content}`);
+      }
     }
-    this.logger.log(`DNS ${name} → ${ip}`);
   }
 
   private async cf<T>(
