@@ -192,28 +192,13 @@ export class MainHandler {
 
   /** Список платформ для AmneziaVPN (конфиг .conf). */
   async showAwgInstructions(ctx: Context) {
-    if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-      return this.showVlessInstructions(ctx);
-    }
     await safeEditMessageText(ctx, BotUi.instructionsAwgTitle, {
       reply_markup: BotUi.instructionsAwgKeyboard(),
       parse_mode: 'Markdown',
     });
   }
 
-  /** Список платформ для VLESS (ссылка-подписка и прямые ссылки). */
-  async showVlessInstructions(ctx: Context) {
-    await safeEditMessageText(ctx, BotUi.instructionsVlessTitle, {
-      reply_markup: BotUi.instructionsVlessKeyboard(),
-      parse_mode: 'Markdown',
-      link_preview_options: { is_disabled: true },
-    });
-  }
-
   async showInstruction(ctx: Context, platform: string) {
-    if (!ctx.from || !this.isAdmin(String(ctx.from.id))) {
-      return this.showVlessInstruction(ctx, platform);
-    }
     const instructions: Record<string, string> = {
       android: BotUi.instructionAndroid,
       ios: BotUi.instructionIos,

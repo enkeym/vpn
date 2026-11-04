@@ -13,21 +13,21 @@ import { UserCommandsRegistrar } from './user-commands.registrar';
 describe('UserCommandsRegistrar peer callback ownership', () => {
   const callbacks = new Map<string, unknown>();
   const findPeer = jest.fn();
-  const showVlessQrCode = jest.fn();
+  const showQrCode = jest.fn();
   const togglePeer = jest.fn();
   let registrar: UserCommandsRegistrar;
 
   beforeEach(() => {
     callbacks.clear();
     findPeer.mockReset().mockResolvedValue({ telegramId: '200' });
-    showVlessQrCode.mockReset();
+    showQrCode.mockReset();
     togglePeer.mockReset();
 
     registrar = new UserCommandsRegistrar(
       {} as MainHandler,
       {} as PeerCreateHandler,
       {
-        showVlessQrCode,
+        showQrCode,
         togglePeer,
       } as unknown as PeerManageHandler,
       {} as PeerDeleteHandler,
@@ -66,7 +66,7 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
     await (handler as (context: Context) => Promise<unknown>)(ctx);
   }
 
-  it('denies a foreign peer VLESS QR callback before returning its data', async () => {
+  it('denies a foreign peer legacy QR callback before returning its data', async () => {
     const { ctx, answerCallbackQuery } = context(300, [
       'vless_qr:peer-a',
       'peer-a',
@@ -75,7 +75,7 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
     await invoke(/^vless_qr:(.+)$/, ctx);
 
     expect(findPeer).toHaveBeenCalledWith('peer-a');
-    expect(showVlessQrCode).not.toHaveBeenCalled();
+    expect(showQrCode).not.toHaveBeenCalled();
     expect(answerCallbackQuery).toHaveBeenCalledWith({
       text: 'Нет доступа к этому конфигу',
       show_alert: true,
@@ -101,13 +101,13 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
     const { ctx: ownerContext } = context(200, ['vless_qr:peer-a', 'peer-a']);
     await invoke(/^vless_qr:(.+)$/, ownerContext);
 
-    expect(showVlessQrCode).toHaveBeenCalledWith(ownerContext, 'peer-a');
+    expect(showQrCode).toHaveBeenCalledWith(ownerContext, 'peer-a');
 
     findPeer.mockClear();
     const { ctx: adminContext } = context(100, ['vless_qr:peer-a', 'peer-a']);
     await invoke(/^vless_qr:(.+)$/, adminContext);
 
     expect(findPeer).not.toHaveBeenCalled();
-    expect(showVlessQrCode).toHaveBeenCalledWith(adminContext, 'peer-a');
+    expect(showQrCode).toHaveBeenCalledWith(adminContext, 'peer-a');
   });
 });

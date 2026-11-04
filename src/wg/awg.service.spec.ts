@@ -112,6 +112,30 @@ describe('AwgService client configuration', () => {
     jest.clearAllMocks();
   });
 
+  it('exports IPv4-only routes with the configured port and DNS', async () => {
+    process.env.AWG_ADDRESS6 = '';
+    process.env.AWG_ALLOWED_IPS = '0.0.0.0/0';
+    process.env.AWG_PORT = '5667';
+    process.env.AWG_DNS = '100.64.0.1, 8.8.4.4';
+    const service = await createService();
+
+    const config = await service.buildClientConfig({
+      privateKey: Buffer.alloc(32, 8).toString('base64'),
+      presharedKey: Buffer.alloc(32, 9).toString('base64'),
+      ip: '10.9.0.3',
+    });
+    const server = parseAwgConfig(serverConfigText());
+
+    expect(config).toContain('Address = 10.9.0.3/32\n');
+    expect(config).toContain('DNS = 100.64.0.1, 8.8.4.4\n');
+    expect(config).toContain('Endpoint = vpn.example.test:5667\n');
+    expect(config).toContain('AllowedIPs = 0.0.0.0/0\n');
+    expect(config).not.toContain('::/0');
+    expect(server.listenPort).toBe(5667);
+    expect(server.postUp.join('\n')).toContain('iptables');
+    expect(server.postUp.join('\n')).not.toContain('ip6tables');
+  });
+
   it.each([
     {
       mtu: 1200,

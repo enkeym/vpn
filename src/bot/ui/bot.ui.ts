@@ -582,14 +582,7 @@ export const BotUi = {
     return keyboard;
   },
 
-  // vlessAvailable — поднят Xray (PeersService.isXrayAvailable). Передаётся
-  // снаружи, а не читается из env здесь: доступность канала — состояние
-  // сервиса, и UI не должен решать это за него.
-  peerDetailsKeyboard: (
-    peer: TPeer,
-    isAdmin: boolean = false,
-    vlessAvailable: boolean = false,
-  ) => {
+  peerDetailsKeyboard: (peer: TPeer, isAdmin: boolean = false) => {
     const expired = isExpired(peer);
 
     // Клавиатура собирается рядами, пустые ряды отсеиваются на сборке:
@@ -597,14 +590,10 @@ export const BotUi = {
     // и в клавиатуре легко появляется пустая строка.
     const rows: IKeyboardButton[][] = [];
 
-    // Второй канал (VLESS через Xray) — отдельным подменю: внутри ссылка-
-    // подписка, прямые ссылки и QR под разные клиенты. Держать это всё в
-    // карточке нельзя — она перестала бы читаться.
-    if (vlessAvailable) {
-      rows.push([
-        { text: '🌐 VLESS / подписка', data: `vless_menu:${peer.name}` },
-      ]);
-    }
+    rows.push([
+      { text: '📷 QR AmneziaWG', data: `show_qr:${peer.name}` },
+      { text: '📄 Файл AmneziaWG', data: `get_config_file:${peer.name}` },
+    ]);
 
     // Кнопка «Продлить» — если конфиг истёк или на паузе
     if (peer.paused || expired) {
@@ -983,9 +972,8 @@ export const BotUi = {
       .row()
       .text('📅 Изменить срок', `f_cd:${peer.name}:${mId}`)
       .row()
-      // Подменю VLESS общее для всех веток: оно отвечает новым сообщением
-      // поверх карточки, поэтому memberId/telegramId в callback не нужен.
-      .text('🌐 VLESS / подписка', `vless_menu:${peer.name}`)
+      .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
+      .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
       .row()
       .text('🗑 Удалить', `f_dp:${peer.name}:${mId}`)
       .row()
@@ -1345,7 +1333,8 @@ export const BotUi = {
         `admin_change_duration:${peer.name}:${telegramId}`,
       )
       .row()
-      .text('🌐 VLESS / подписка', `vless_menu:${peer.name}`)
+      .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
+      .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
       .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
       .row()
@@ -1389,21 +1378,15 @@ export const BotUi = {
 
   // === Инструкции: выбор способа подключения ===
 
-  /**
-   * Первый экран инструкции — выбор протокола, а не платформы. Способа два, и
-   * шаги у них разные вплоть до приложения, поэтому сводить их в один текст
-   * нельзя: сообщение не влезло бы в лимит Telegram и запутало бы читателя.
-   */
   instructionsMenuTitle:
     '📖 *Инструкция по подключению*\n\n' +
-    '🌐 *VLESS через туннель zrok* — ссылка-подписка для Hiddify, NekoBox, Happ, v2rayNG и других клиентов.\n\n' +
-    'Подключение идёт через внешний туннель, без прямого IP сервера в ссылке.\n\n' +
+    '🛡 *AmneziaWG* — откройте конфиг в AmneziaVPN или отсканируйте QR-код.\n\n' +
     '💬 _Не получается? Поддержка:_ @CharlieWaldo',
 
   instructionsMenuKeyboard: () => {
     const keyboard = new InlineKeyboard();
     return keyboard
-      .text('🌐 VLESS / подписка', 'instructions_vless')
+      .text('🛡 AmneziaWG', 'instructions_awg')
       .row()
       .text('« Назад в меню', 'main_menu');
   },

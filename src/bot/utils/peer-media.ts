@@ -6,29 +6,25 @@ import { BotUi } from '../ui/bot.ui';
 export async function sendCreatedPeerMessage(
   api: Api,
   chatId: string | number,
-  peersService: PeersService,
+  _peersService: PeersService,
   peer: TPeer,
   config: string,
   caption: string,
-  isAdmin: boolean,
+  _isAdmin: boolean,
   keyboard = BotUi.configDeliveredKeyboard(peer.name),
 ) {
   const options = {
     parse_mode: 'Markdown' as const,
     reply_markup: keyboard,
   };
-  if (isAdmin && config) {
+  if (config) {
     return api.sendDocument(
       chatId,
       new InputFile(Buffer.from(config), `${peer.name}.conf`),
       { ...options, caption },
     );
   }
-  const text = await peersService.getPeerVlessText(peer.name);
-  return api.sendMessage(chatId, `${caption}\n\n${text}`, {
-    ...options,
-    link_preview_options: { is_disabled: true },
-  });
+  throw new Error('Конфиг AmneziaWG недоступен');
 }
 
 /**

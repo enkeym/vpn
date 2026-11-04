@@ -84,11 +84,7 @@ export class PeerManageHandler {
       const peer = await this.peersService.findPeer(peerName);
 
       await safeEditMessageText(ctx, BotUi.peerDetailsText(peer, isAdmin), {
-        reply_markup: BotUi.peerDetailsKeyboard(
-          peer,
-          isAdmin,
-          this.peersService.isXrayAvailable(),
-        ),
+        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
         parse_mode: 'Markdown',
       });
     } catch {
@@ -120,11 +116,7 @@ export class PeerManageHandler {
       await ctx.deleteMessage().catch(() => {});
 
       await ctx.reply(BotUi.peerDetailsText(peer, isAdmin), {
-        reply_markup: BotUi.peerDetailsKeyboard(
-          peer,
-          isAdmin,
-          this.peersService.isXrayAvailable(),
-        ),
+        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
         parse_mode: 'Markdown',
       });
     } catch {
@@ -262,18 +254,12 @@ export class PeerManageHandler {
   // === Показать QR-код конфига ===
 
   async showQrCode(ctx: Context, peerName: string) {
-    if (!ctx.from || !this.mainHandler.isAdmin(String(ctx.from.id))) {
-      return this.showVlessQrCode(ctx, peerName);
-    }
     await sendPeerQrCodeMessage(ctx, this.peersService, peerName, this.logger);
   }
 
   // === Получить файл конфига ===
 
   async sendConfigFile(ctx: Context, peerName: string) {
-    if (!ctx.from || !this.mainHandler.isAdmin(String(ctx.from.id))) {
-      return this.showVlessMenu(ctx, peerName);
-    }
     await sendPeerConfigFileMessage(
       ctx,
       this.peersService,

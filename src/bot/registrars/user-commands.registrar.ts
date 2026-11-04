@@ -357,36 +357,32 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
     });
 
-    // === Второй канал: VLESS (Xray) ===
-    // Колбэки без memberId/telegramId — ответ приходит новым сообщением поверх
-    // карточки, поэтому одни и те же обработчики обслуживают свои конфиги,
-    // «Семью» и карточку клиента у админа.
     bot.callbackQuery(/^vless_menu:(.+)$/, async (ctx) => {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showVlessMenu(ctx, ctx.match[1]);
+      await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_qr:(.+)$/, async (ctx) => {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showVlessQrCode(ctx, ctx.match[1]);
+      await this.peerManageHandler.showQrCode(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_qr_sb:(.+)$/, async (ctx) => {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showVlessSingBoxQrCode(ctx, ctx.match[1]);
+      await this.peerManageHandler.showQrCode(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_json:(.+)$/, async (ctx) => {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.sendVlessJsonFile(ctx, ctx.match[1]);
+      await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
     });
 
     // Редактирование описания своего конфига (только для админов)
@@ -435,7 +431,7 @@ export class UserCommandsRegistrar {
 
     bot.callbackQuery('instructions_vless', async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.mainHandler.showVlessInstructions(ctx);
+      await this.mainHandler.showAwgInstructions(ctx);
     });
 
     // Показать инструкцию для конкретной платформы (AmneziaVPN)
@@ -444,17 +440,14 @@ export class UserCommandsRegistrar {
       await this.mainHandler.showInstruction(ctx, ctx.match[1]);
     });
 
-    // То же самое для VLESS — отдельный префикс, чтобы старые кнопки
-    // instruction:* в уже отправленных сообщениях продолжали работать.
     bot.callbackQuery(/^instruction_vless:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.mainHandler.showVlessInstruction(ctx, ctx.match[1]);
+      await this.mainHandler.showInstruction(ctx, ctx.match[1]);
     });
 
-    // Готовые настройки Hiddify (файл + текст для буфера)
     bot.callbackQuery('send_hiddify_settings', async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.mainHandler.sendHiddifySettings(ctx);
+      await this.mainHandler.showAwgInstructions(ctx);
     });
   }
 
