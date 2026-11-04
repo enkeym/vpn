@@ -91,15 +91,14 @@ TCP 443 остаётся для nginx и Xray.
 `AWG_MTU=1280` подходит для IPv6. `AWG_TCP_MSS=0` отключает дополнительное
 ограничение MSS; обычный clamp к MTU маршрута остаётся включён.
 
-### 4. Сертификат CDN-домена
+### 4. Сертификат Cloudflare
 
-Нужен только для CDN-канала (`XRAY_DOMAIN`). Подойдёт публичный сертификат
-домена (Let's Encrypt через `certbot`), файлы кладутся в смонтированный том
-`./configs`:
+Нужен только для CDN-канала (`XRAY_DOMAIN`). Файлы из Cloudflare → SSL/TLS →
+Origin Server кладутся в смонтированный том `./configs`:
 
 ```bash
-sudo install -m 600 origin.pem ./configs/cdn-cert.pem
-sudo install -m 600 origin.key ./configs/cdn-key.pem
+sudo install -m 600 origin.pem ./configs/cloudflare-cert.pem
+sudo install -m 600 origin.key ./configs/cloudflare-key.pem
 ```
 
 Без них контейнер не стартует — это осознанно: молча отдавать клиентам 5xx хуже,
@@ -336,54 +335,48 @@ sudo ufw allow 443/tcp    # XRAY_REALITY_PORT — nginx (Reality + CDN)
 публиковать внутреннее API через CDN незачем — с хоста оно и так доступно на
 `localhost:3000`.
 
-### Настройка CDN-канала (Render)
+### Настройка CDN-канала (Cloudflare)
 
 Нужно один раз, и только если хотите второй канал плюс ссылку-подписку.
-Вход — бесплатный веб-сервис Render (nginx-релей): клиент подключается к общему
-адресу платформы, поэтому IP сервера не попадает ни в DNS, ни в трафик клиента.
-Cloudflare, Gcore и DDoS-Guard не используются: первый нестабилен из российских
-сетей, второй закрыт для регистрации из РФ, третий стоит от $100 в месяц.
 
-Релей собирается из `docker/render-relay` по [`render.yaml`](render.yaml).
-Он принимает HTTP и WebSocket и проксирует их на origin по HTTPS с SNI
-`XRAY_DOMAIN`; собственных ключей не хранит.
+1. Домен делегирован на Cloudflare (NS меняются у регистратора).
+2. DNS-запись: `A` на IP сервера, **Proxied** (оранжевое облако). Серое облако
+   бессмысленно — тогда клиент видит ваш IP и обхода блокировки по IP нет.
+   AAAA не нужна: Cloudflare сам отдаёт клиентам IPv6, а до origin ходит по IPv4.
+3. **SSL/TLS → Full (strict)**. При Flexible Cloudflare пойдёт на origin по HTTP,
+   и TLS-сервер разводчика его не примет.
+4. **SSL/TLS → Origin Server → Create Certificate**, файлы положить в
+   `configs/cloudflare-cert.pem` и `configs/cloudflare-key.pem` (том `./configs`
+   уже смонтирован). Без них контейнер не стартует — это лучше, чем молча
+   отдавать клиентам 5xx.
+5. **Network → WebSockets: On.** Без этого VLESS+WS не работает вообще.
+6. **Security → Bots → Bot Fight Mode: Off** — режет нестандартный трафик.
+7. В `.env`: `XRAY_DOMAIN=<домен>`. Общий публичный порт — `XRAY_REALITY_PORT`.
+8. Для переноса DNS вслед за `PUBLIC_IPV4`: `CF_API_TOKEN` с DNS:Edit для зоны,
+   `CF_ZONE_ID` и `CF_DNS_RECORDS=<CDN-домен>,<прямой-домен>`.
+   Синхронизация включает прокси для `XRAY_DOMAIN`, отключает для `WG_HOST`
+   и `XRAY_REALITY_SNI`. IP существующей CDN A-записи сохраняется: перенос CDN
+   на другой адрес выполняется вручную в Cloudflare. Если CDN A-записи нет,
+   она создаётся с `PUBLIC_IPV4`. Остальные A-записи обновляются на `PUBLIC_IPV4`.
+   Остальным существующим записям сохраняется их режим;
+   новые записи без известной роли создаются как DNS only. Один домен
+   нельзя одновременно использовать для CDN и прямого VPN: такая запись
+   попадёт в ошибки стартового отчёта без изменения DNS.
 
-1. Аккаунт на [render.com](https://render.com) → **New → Blueprint** → выбрать
-   этот репозиторий. Render прочитает `render.yaml` и спросит две переменные:
-   `ORIGIN_ADDR` — `PUBLIC_IPV4`, `ORIGIN_SNI` — `XRAY_DOMAIN`. В git они не
-   попадают (`sync: false`), репозиторий публичный.
-2. Дождаться деплоя: сервис слушает `PORT` (Render задаёт `10000`) и отвечает
-   на `/__health`.
-3. **Custom Domains** сервиса → добавить `XRAY_DOMAIN`.
-4. В DNS-зоне добавить `CNAME` `XRAY_DOMAIN` → `<сервис>.onrender.com`,
-   **DNS only** (серое облако). Proxied вернул бы Cloudflare в цепочку.
-   Render выпустит сертификат на домен сам — это и есть TLS-сегмент клиента.
-5. Сертификат origin — публичный Let's Encrypt на `XRAY_DOMAIN`
-   (`configs/cdn-cert.pem` и `configs/cdn-key.pem`, том `./configs` уже
-   смонтирован). Cloudflare Origin CA релей не примет.
-   Без файлов контейнер не стартует — это лучше, чем молча отдавать 5xx.
-6. В `.env`: `XRAY_DOMAIN=<домен>`. Общий публичный порт — `XRAY_REALITY_PORT`.
-7. Для переноса прямых A-записей вслед за `PUBLIC_IPV4` остаются
-   `CF_API_TOKEN` с DNS:Edit для зоны, `CF_ZONE_ID` и
-   `CF_DNS_RECORDS=<прямой-домен>,<Reality-SNI>`. **CDN-домен в
-   `CF_DNS_RECORDS` не включать**: синхронизация вернула бы ему `A` на
-   `PUBLIC_IPV4` и раскрыла origin. Запись CDN ведётся вручную как `CNAME`
-   на Render. `WG_HOST` и `XRAY_REALITY_SNI` синхронизация держит как DNS only.
-   Один домен нельзя одновременно использовать для CDN и прямого VPN: такая
-   запись попадёт в ошибки стартового отчёта без изменения DNS.
-
-Разводчик на origin выбирает ветку только по SNI и источник не проверяет:
-у бесплатного Render адреса исходящих общие и меняются, список сетей сломался бы
-молча, а канал и так закрыт UUID клиента и случайным WS-путём.
+CDN-ветка nginx принимает соединения только с IPv4-сетей Cloudflare из
+`docker/cloudflare-ipv4.conf`. Проверяется адрес TCP-соединения, а не HTTP-заголовки.
 Прямое обращение к VPS с CDN-SNI идёт в Reality, как и остальные прямые соединения.
+Это не аутентификация конкретной зоны Cloudflare. При обновлении списка
+[сетей Cloudflare](https://www.cloudflare.com/ips-v4) обновите файл и пересоберите образ.
 
-Релей не скрывает IP, если на него указывает прямой домен Reality/AWG.
-Порядок переноса и диагностика: [VPS migration](docs/vps-migration.md).
+Cloudflare не скрывает IP, если на него указывает прямой домен Reality/AWG.
+Кроме того, доступ к самой сети Cloudflare может ограничиваться оператором.
+Порядок переноса и диагностика обоих случаев: [VPS migration](docs/vps-migration.md).
 
 Проверка после деплоя:
 
 ```bash
-# Разводчик отвечает на домене (не 5xx от CDN)
+# Разводчик отвечает на домене (не 5xx от Cloudflare)
 curl -sI https://<домен> -o /dev/null -w '%{http_code}\n'
 
 # Reality на том же порту принимает чужой SNI и притворяется сайтом-маской

@@ -18,13 +18,13 @@ if [ -z "$XRAY_DOMAIN" ]; then
   exec node dist/src/main.js
 fi
 
-CERT=/app/configs/cdn-cert.pem
-KEY=/app/configs/cdn-key.pem
+CERT=/app/configs/cloudflare-cert.pem
+KEY=/app/configs/cloudflare-key.pem
 
 # Падаем сразу, а не после старта Nest: без сертификата nginx не поднимется, и
-# CDN-канал молча не заработал бы — CDN отдавал бы клиентам 5xx.
+# CDN-канал молча не заработал бы — Cloudflare отдавал бы клиентам 5xx.
 if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
-  echo "Нет сертификата CDN-домена: положите $CERT и $KEY" >&2
+  echo "Нет сертификата Cloudflare Origin CA: положите $CERT и $KEY" >&2
   exit 1
 fi
 

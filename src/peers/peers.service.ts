@@ -1761,7 +1761,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
     return (
       `🔗 *Ссылка-подписка* — для приложений с поддержкой VLESS. ` +
-      `Подключение через CDN (WebSocket + TLS):\n\`${subscriptionUrl}\`\n\n` +
+      `Подключение через Cloudflare (WebSocket + TLS):\n\`${subscriptionUrl}\`\n\n` +
       `*Если подписка не добавляется* — импортируйте ссылку VLESS:\n` +
       linksBlock
     );
