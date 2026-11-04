@@ -116,7 +116,7 @@ describe('AwgService client configuration', () => {
     process.env.AWG_ADDRESS6 = '';
     process.env.AWG_ALLOWED_IPS = '0.0.0.0/0';
     process.env.AWG_PORT = '5667';
-    process.env.AWG_DNS = '100.64.0.1, 8.8.4.4';
+    process.env.AWG_DNS = '149.112.112.112, 8.8.4.4';
     const service = await createService();
 
     const config = await service.buildClientConfig({
@@ -127,13 +127,64 @@ describe('AwgService client configuration', () => {
     const server = parseAwgConfig(serverConfigText());
 
     expect(config).toContain('Address = 10.9.0.3/32\n');
-    expect(config).toContain('DNS = 100.64.0.1, 8.8.4.4\n');
+    expect(config).toContain('DNS = 149.112.112.112, 8.8.4.4\n');
     expect(config).toContain('Endpoint = vpn.example.test:5667\n');
     expect(config).toContain('AllowedIPs = 0.0.0.0/0\n');
     expect(config).not.toContain('::/0');
     expect(server.listenPort).toBe(5667);
     expect(server.postUp.join('\n')).toContain('iptables');
     expect(server.postUp.join('\n')).not.toContain('ip6tables');
+  });
+
+  it('applies timing and padding ranges to an existing server configuration', async () => {
+    await createService();
+    let stored = serverConfigText();
+    await module?.close();
+    jest.clearAllMocks();
+    jest.mocked(existsSync).mockReturnValue(true);
+    jest
+      .mocked(readFile)
+      .mockImplementation((file) =>
+        Promise.resolve(
+          typeof file === 'string' && file.includes('/proc/') ? '0' : stored,
+        ),
+      );
+    jest.mocked(writeFile).mockImplementation((file, data) => {
+      if (
+        typeof file === 'string' &&
+        file.endsWith('/configs/awg0.conf') &&
+        typeof data === 'string'
+      )
+        stored = data;
+      return Promise.resolve();
+    });
+    process.env.AWG_CONTENT_PADDING = '10-100';
+    process.env.AWG_REKEY_AFTER_TIME = '100-120';
+    process.env.AWG_REKEY_TIMEOUT = '3-8';
+    process.env.AWG_REJECT_AFTER_TIME = '150-180';
+    process.env.AWG_KEEPALIVE_TIMEOUT = '7-13';
+    process.env.AWG_MAX_HANDSHAKE_ATTEMPTS = '15-20';
+    process.env.AWG_PERSISTENT_KEEPALIVE = '25-35';
+
+    const service = await createService();
+    const client = await service.buildClientConfig({
+      privateKey: Buffer.alloc(32, 8).toString('base64'),
+      presharedKey: Buffer.alloc(32, 9).toString('base64'),
+      ip: '10.9.0.3',
+    });
+
+    for (const line of [
+      'ContentPaddingAddition = 10-100',
+      'RekeyAfterTime = 100-120',
+      'RekeyTimeout = 3-8',
+      'RejectAfterTime = 150-180',
+      'KeepaliveTimeout = 7-13',
+      'MaxHandshakeAttempts = 15-20',
+    ]) {
+      expect(stored).toContain(line);
+      expect(client).toContain(line);
+    }
+    expect(client).toContain('PersistentKeepalive = 25-35');
   });
 
   it.each([

@@ -592,6 +592,24 @@ export class AwgService implements OnModuleInit {
       restartRequired = true;
     }
 
+    const awg3FromEnv = readAwg3FromEnv();
+    let awg3Changed = false;
+    for (const field of [
+      'contentPaddingAddition',
+      'rekeyAfterTime',
+      'rekeyTimeout',
+      'rejectAfterTime',
+      'keepaliveTimeout',
+      'maxHandshakeAttempts',
+    ] as const) {
+      const value = awg3FromEnv[field];
+      if (value && config.awg3[field] !== value) {
+        config.awg3[field] = value;
+        awg3Changed = true;
+      }
+    }
+    if (awg3Changed) restartRequired = true;
+
     // У пиров, записанных до появления IPv6, в AllowedIPs нет v6-адреса —
     // обратный трафик к ним не маршрутизируется. Это применяется через
     // syncconf, перезапуск интерфейса для них не нужен.
