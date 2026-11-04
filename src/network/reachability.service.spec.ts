@@ -33,7 +33,7 @@ describe('ReachabilityService', () => {
     jest.restoreAllMocks();
   });
 
-  it('reports failed probes without claiming an IP ban and announces recovery once', async () => {
+  it('reports repeated regional TCP failures only when a control node connects', async () => {
     Object.assign(process.env, {
       PUBLIC_IPV4: '192.0.2.10',
       AWG_WAN_IFACE: 'eth0',
@@ -82,21 +82,49 @@ describe('ReachabilityService', () => {
 
     await service.check();
     expect(send).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'node=de1.node.check-host.net&node=ch1.node.check-host.net',
+      ),
+      expect.any(Object),
+    );
     results = {
       'ru1.node.check-host.net': [{ error: 'Connection timed out' }],
       'ru2.node.check-host.net': [{ error: 'Connection timed out' }],
     };
     await service.check();
+    expect(send).not.toHaveBeenCalled();
+    results = {
+      ...results,
+      'de1.node.check-host.net': [{ error: 'Connection timed out' }],
+      'ch1.node.check-host.net': [{ error: 'Connection timed out' }],
+    };
+    await service.check();
+    expect(send).not.toHaveBeenCalled();
+    results = {
+      ...results,
+      'de1.node.check-host.net': [{ time: 0.01 }],
+    };
+    results['ru2.node.check-host.net'] = [];
+    await service.check();
+    expect(send).not.toHaveBeenCalled();
+    results['ru2.node.check-host.net'] = [{ error: 'Connection timed out' }];
+    await service.check();
+    expect(send).not.toHaveBeenCalled();
     await service.check();
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenLastCalledWith(
       '123',
-      expect.stringContaining('Это не доказывает блокировку IP'),
+      expect.stringContaining('блокировка IP не доказана'),
       { parse_mode: 'Markdown' },
     );
-    expect(send.mock.calls[0][1]).toContain('forwarding, NAT и DNS');
-    expect(send.mock.calls[0][1]).not.toContain('смените PUBLIC_IPV4');
+    expect(send.mock.calls[0][1]).toContain(
+      'контрольный узел за пределами РФ подключился',
+    );
+    expect(send.mock.calls[0][1]).toContain(
+      'check-host.net/check-report/probe',
+    );
 
     results = {
       'ru1.node.check-host.net': null,

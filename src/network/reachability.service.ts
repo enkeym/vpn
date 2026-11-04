@@ -4,14 +4,14 @@ import { NotificationService } from '../notification/notification.service';
 import { HostNetworkService } from './host-network.service';
 
 const CHECK_HOST_API = 'https://check-host.net';
-// Москва: если IP в бане у российских операторов, клиенты из РФ не дойдут
-const CHECK_NODES = ['ru1.node.check-host.net', 'ru2.node.check-host.net'];
+const RUSSIAN_NODES = ['ru1.node.check-host.net', 'ru2.node.check-host.net'];
+const CONTROL_NODES = ['de1.node.check-host.net', 'ch1.node.check-host.net'];
 const REQUEST_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 3_000;
 const POLL_ATTEMPTS = 6;
 const DEFAULT_PORT = 443;
 
-type TReachability = 'ok' | 'blocked';
+type TReachability = 'ok' | 'regional';
 
 interface ICheckStartResponse {
   ok?: number;
@@ -21,15 +21,6 @@ interface ICheckStartResponse {
 /** Результат узла: null — ещё не готов; [{ time }] — подключились; [{ error }] — нет */
 type TCheckResult = Record<string, unknown>;
 
-/**
- * Раз в час проверяет TCP-доступность PUBLIC_IPV4:XRAY_REALITY_PORT с российских узлов
- * check-host.net и пишет админу только при смене состояния. Так бан IP виден
- * сразу, а не по жалобам клиентов; после смены PUBLIC_IPV4 состояние
- * пересчитывается с нуля при перезапуске.
- *
- * Сбой самого check-host.net или неполный ответ состояние не меняют: «не знаю»
- * не должно превращаться ни в ложную тревогу, ни в ложный отбой.
- */
 @Injectable()
 export class ReachabilityService {
   private readonly logger = new Logger(ReachabilityService.name);
@@ -37,6 +28,7 @@ export class ReachabilityService {
   private readonly port = Number(process.env.XRAY_REALITY_PORT) || DEFAULT_PORT;
 
   private state: TReachability | null = null;
+  private regionalFailures = 0;
 
   constructor(
     private readonly hostNetwork: HostNetworkService,
@@ -48,26 +40,36 @@ export class ReachabilityService {
     // Без PUBLIC_IPV4 проверять нечего: адрес хоста сервис не знает
     if (!ip) return;
 
-    const current = await this.probe(ip);
-    if (!current) return;
+    const result = await this.probe(ip);
+    const current = result?.status;
+    if (!current) {
+      this.regionalFailures = 0;
+      return;
+    }
+
+    this.regionalFailures =
+      current === 'regional' ? this.regionalFailures + 1 : 0;
+    if (current === 'regional' && this.regionalFailures < 2) return;
 
     const previous = this.state;
     this.state = current;
 
-    // Первый «ок» после старта — не событие: стартовый отчёт уже был
     if (previous === current || (previous === null && current === 'ok')) return;
 
     const message =
-      current === 'blocked'
-        ? `🚫 \`${ip}:${this.port}\` недоступен с двух узлов check-host.net в Москве. Это не доказывает блокировку IP. Проверьте listener, firewall провайдера и маршрутизацию. Если VPN подключается без интернета — проверьте forwarding, NAT и DNS. Сравните доступность из другой страны перед сменой IP.`
-        : `✅ \`${ip}:${this.port}\` снова доступен из Москвы.`;
+      current === 'regional'
+        ? `⚠️ TCP \`${ip}:${this.port}\`: два узла в Москве не подключились в двух последовательных проверках, но контрольный узел за пределами РФ подключился. Возможна региональная недоступность этого порта; блокировка IP не доказана. Проверка: ${result?.reportUrl ?? CHECK_HOST_API}`
+        : `✅ TCP \`${ip}:${this.port}\` снова доступен из Москвы.`;
     await this.notification.notifyAdmins(message);
   }
 
-  /** null — результата нет (сбой API, узлы не успели ответить) */
-  private async probe(ip: string): Promise<TReachability | null> {
+  private async probe(
+    ip: string,
+  ): Promise<{ status: TReachability; reportUrl?: string } | null> {
     try {
-      const nodes = CHECK_NODES.map((node) => `node=${node}`).join('&');
+      const nodes = [...RUSSIAN_NODES, ...CONTROL_NODES]
+        .map((node) => `node=${node}`)
+        .join('&');
       const start = await this.get<ICheckStartResponse>(
         `/check-tcp?host=${encodeURIComponent(`${ip}:${this.port}`)}&${nodes}`,
       );
@@ -79,7 +81,12 @@ export class ReachabilityService {
           `/check-result/${encodeURIComponent(start.request_id)}`,
         );
         const verdict = this.judge(results);
-        if (verdict) return verdict;
+        if (verdict) {
+          return {
+            status: verdict,
+            reportUrl: `${CHECK_HOST_API}/check-report/${encodeURIComponent(start.request_id)}`,
+          };
+        }
       }
       return null;
     } catch (error) {
@@ -90,12 +97,27 @@ export class ReachabilityService {
     }
   }
 
-  /** ok — хоть один узел подключился; blocked — все ответили и никто не подключился */
   private judge(results: TCheckResult): TReachability | null {
-    const answers = CHECK_NODES.map((node) => results[node]);
-    // Подключившийся узел уже даёт ответ — ждать остальных незачем
-    if (answers.some((answer) => this.connected(answer))) return 'ok';
-    return answers.every((answer) => answer != null) ? 'blocked' : null;
+    const russianAnswers = RUSSIAN_NODES.map((node) => results[node]);
+    const controlAnswers = CONTROL_NODES.map((node) => results[node]);
+    if (russianAnswers.some((answer) => this.connected(answer))) return 'ok';
+    return russianAnswers.every((answer) => this.failed(answer)) &&
+      controlAnswers.some((answer) => this.connected(answer))
+      ? 'regional'
+      : null;
+  }
+
+  private failed(answer: unknown): boolean {
+    return (
+      Array.isArray(answer) &&
+      answer.some(
+        (entry) =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          typeof (entry as { error?: unknown }).error === 'string',
+      ) &&
+      !this.connected(answer)
+    );
   }
 
   private connected(answer: unknown): boolean {

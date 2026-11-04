@@ -27,7 +27,8 @@ function normalizeCsv(rawValue: string | undefined, fallback: string): string {
 
 /** AllowedIPs клиентского конфига: значение из .env либо дефолт туннеля */
 export function readAllowedIps(rawValue: string | undefined): string {
-  return normalizeCsv(rawValue, AWG_DEFAULT_ALLOWED_IPS);
+  const allowedIps = normalizeCsv(rawValue, AWG_DEFAULT_ALLOWED_IPS);
+  return allowedIps === '0.0.0.0/0' ? AWG_DEFAULT_ALLOWED_IPS : allowedIps;
 }
 
 /** DNS-серверы клиентского конфига. Только IPv4: у туннеля нет IPv6-маршрута */
