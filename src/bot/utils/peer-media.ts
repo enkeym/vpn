@@ -57,13 +57,7 @@ export async function sendPeerQrCodeMessage(
       parse_mode: 'Markdown' as const,
       reply_markup: BotUi.closeMediaKeyboard(),
     };
-    // Ширина PNG лежит в IHDR (байты 16–19). Telegram пережимает фото до
-    // ~1280 px, и плотный QR (длинный I1) размывается — такой шлём файлом
-    const pngWidth = qrBuffer.readUInt32BE(16);
-    const message =
-      pngWidth > 1280
-        ? await ctx.replyWithDocument(file, options)
-        : await ctx.replyWithPhoto(file, options);
+    const message = await ctx.replyWithDocument(file, options);
     logger.log(
       `QR ${peerName}: генерация ${generatedAt - startedAt}мс, ` +
         `отправка в Telegram ${Date.now() - generatedAt}мс`,
