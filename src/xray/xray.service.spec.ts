@@ -122,7 +122,7 @@ describe('XrayService health and proxy recovery', () => {
     );
   });
 
-  it('exports only Cloudflare with the actual TLS hostname', () => {
+  it('exports only the CDN channel with the actual TLS hostname', () => {
     const subscription = module.get(SubscriptionService);
     const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
 
@@ -144,7 +144,7 @@ describe('XrayService health and proxy recovery', () => {
     expect(link.searchParams.get('sni')).toBe('vpn.example.test');
     expect(link.searchParams.get('fp')).toBe('chrome');
     expect(decodeURIComponent(link.hash.slice(1))).toBe(
-      `${peer.name} · Cloudflare · TLS vpn.example.test`,
+      `${peer.name} · CDN · TLS vpn.example.test`,
     );
   });
 
@@ -161,7 +161,7 @@ describe('XrayService health and proxy recovery', () => {
         outbounds: expect.arrayContaining([
           expect.objectContaining({
             type: 'vless',
-            tag: 'Cloudflare · TLS vpn.example.test',
+            tag: 'CDN · TLS vpn.example.test',
             domain_resolver: {
               server: 'dns-bootstrap',
               strategy: 'prefer_ipv4',
@@ -175,7 +175,7 @@ describe('XrayService health and proxy recovery', () => {
           }),
           expect.objectContaining({
             tag: 'auto',
-            outbounds: ['Cloudflare · TLS vpn.example.test'],
+            outbounds: ['CDN · TLS vpn.example.test'],
           }),
         ]),
         dns: expect.objectContaining({

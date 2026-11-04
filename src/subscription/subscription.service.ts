@@ -75,7 +75,7 @@ export class SubscriptionService {
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
-    const cdnTag = `Cloudflare · TLS ${xray.domain}`;
+    const cdnTag = `CDN · TLS ${xray.domain}`;
 
     const outbounds: Record<string, unknown>[] = [];
     const channelTags: string[] = [];

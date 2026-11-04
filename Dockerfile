@@ -116,7 +116,7 @@ RUN apk add --no-cache \
     # awg-quick — bash-скрипт
     bash \
     # nginx — SNI-разводчик публичного порта между Reality и CDN-каналом,
-    # он же терминирует TLS сертификатом Cloudflare Origin CA.
+    # он же терминирует TLS сертификатом CDN-домена.
     # Запускается только при заданном XRAY_DOMAIN (см. docker-entrypoint.sh).
     nginx \
     # stream + ssl_preread в Alpine отдельным пакетом — без него разводки по SNI нет.
@@ -155,7 +155,6 @@ COPY scripts/db-backup.cjs ./scripts/db-backup.cjs
 # nginx: шаблон конфига (домен и порты подставляет entrypoint из .env) и сам
 # entrypoint, который поднимает nginx перед стартом NestJS.
 COPY docker/nginx.conf /etc/nginx/nginx.conf.template
-COPY docker/cloudflare-ipv4.conf /etc/nginx/cloudflare-ipv4.conf
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 

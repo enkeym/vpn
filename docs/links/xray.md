@@ -45,12 +45,15 @@ paths:
   поэтому `listen` без `proxy_protocol`.
 - DNS-роли в `src/network/dns-sync.service.ts:upsert`: `XRAY_DOMAIN` требует
   Proxied и сохраняет IP существующей A-записи; отсутствующая создаётся
-  с `PUBLIC_IPV4`. Остальные A-записи обновляются на `PUBLIC_IPV4`; `WG_HOST`, `XRAY_REALITY_SNI`
-  требуют DNS only. Конфликт ролей отклоняется до обращения к API. Для остальных
-  существующих записей сохраняется режим, новые создаются как DNS only.
-- `docker/cloudflare-ipv4.conf` — публикуемые IPv4-сети Cloudflare для `geo` в
-  `docker/nginx.conf`; `Dockerfile` копирует список в образ. CDN-SNI попадает в
-  TLS-ветку только с адресов списка, остальные соединения идут в Reality.
+  с `PUBLIC_IPV4`. Поэтому CDN-домен в `CF_DNS_RECORDS` не входит — его
+  `CNAME` на релей ведётся вручную. Остальные A-записи обновляются на `PUBLIC_IPV4`;
+  `WG_HOST`, `XRAY_REALITY_SNI` требуют DNS only. Конфликт ролей отклоняется до
+  обращения к API. Для остальных существующих записей сохраняется режим, новые
+  создаются как DNS only.
+- `docker/render-relay` — nginx-релей для бесплатного Render (`render.yaml`):
+  принимает HTTP+WS и проксирует на origin по HTTPS с SNI `XRAY_DOMAIN`.
+  Разводчик `docker/nginx.conf` выбирает ветку по SNI, источник не проверяет:
+  аутентификация — UUID клиента и случайный WS-путь.
 - `HTTP_HOST` в `src/main.ts:bootstrap` по умолчанию loopback; upstream приложения
   в `docker/nginx.conf` и healthcheck в `docker-compose.yml` используют loopback.
   Другой bind-адрес требует сохранить доступ с хоста и закрыть публичный порт приложения.

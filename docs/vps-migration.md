@@ -5,29 +5,29 @@
 listener, firewall, ошибка маршрутизации или фильтрация. Check-host проверяет TCP,
 но не рукопожатие Reality и не передачу данных внутри VPN.
 
-## Что даёт Cloudflare
+## Что даёт CDN
 
-Обычный прокси Cloudflare обслуживает HTTP(S), включая WebSocket. Он не переносит
+Обычный прокси CDN обслуживает HTTP(S), включая WebSocket. Он не переносит
 AmneziaWG UDP или прямой Reality TCP: для них нужны DNS only либо IP в клиенте.
-См. [ограничения проксирования](https://developers.cloudflare.com/dns/proxy-status/limitations/)
-и [поддержку WebSocket](https://developers.cloudflare.com/network/websockets/).
 
 Проксируемый CDN-домен и прямой VPN-домен на одном VPS не скрывают общий IP:
 его раскрывает DNS only запись. Для разделения нужен отдельный адрес/сервер
 входа; смена IP выхода не меняет доступность входа. Дополнительный вход и маршрут
-к серверу выхода нужно проверять отдельно. См. [раскрытие origin](https://developers.cloudflare.com/dns/manage-dns-records/troubleshooting/exposed-ip-address/).
+к серверу выхода нужно проверять отдельно.
 
-Cloudflare сообщала об ограничениях доступа из российских сетей с июня 2025 года,
-включая обрывы после первых 16 КБ. Поэтому WS через CDN нельзя считать гарантированным
-резервом прямого VPN. Это описание известных ограничений, а не диагноз текущего сбоя.
-[Отчёт Cloudflare](https://blog.cloudflare.com/russian-internet-users-are-unable-to-access-the-open-internet/).
+Используется бесплатный веб-сервис Render как релей: клиент подключается к общему
+адресу платформы, IP сервера не попадает ни в DNS, ни в трафик клиента. WebSocket
+поддерживается штатно, лимит соединения не режется таймаутом платформы.
+Cloudflare не используется из-за ограничений доступа из российских сетей с июня
+2025 года и обрывов после первых килобайт; Gcore закрыт для регистрации из РФ;
+DDoS-Guard не используется из-за цены от $100/мес за домен. Поэтому WS через релей
+остаётся резервом, который проверяется отдельно от прямого VPN.
 
-В этой конфигурации CDN-SNI допускается к Origin CA только с IPv4-сетей Cloudflare
-из `docker/cloudflare-ipv4.conf`; остальные подключения поступают в Reality.
-Это ограничение источника, а не аутентификация конкретной зоны Cloudflare.
-Список сверяется с [официальным](https://www.cloudflare.com/ips-v4), после изменения
-нужна пересборка образа. IPv6-listener для origin отсутствует; AAAA origin не добавлять
-без отдельной настройки IPv6. IPv6 для посетителей на стороне CDN этому не мешает.
+В этой конфигурации разводчик на origin выбирает ветку по SNI и источник не
+проверяет: адреса исходящих у бесплатного Render общие и могут меняться, а канал
+закрыт UUID клиента и случайным WS-путём. IPv6-listener для origin отсутствует;
+AAAA origin не добавлять без отдельной настройки IPv6. IPv6 для посетителей на
+стороне релея этому не мешает.
 
 ## Подготовка и перенос
 
@@ -38,23 +38,25 @@ Cloudflare сообщала об ограничениях доступа из р
    Проверить `.env`: новый `PUBLIC_IPV4` должен быть назначен провайдером этому VPS;
    `AWG_WAN_IFACE` должен соответствовать его внешнему интерфейсу. Старый IP нельзя
    просто навесить на произвольный VPS. Проверить лимит CPU в compose.
-3. Задать `CF_DNS_RECORDS` только для переносимых A-записей. `XRAY_DOMAIN` будет
-   Proxied, но IP существующей CDN A-записи сохраняется: при переносе CDN
-   изменить его вручную в Cloudflare. Отсутствующая CDN A-запись создаётся
-   с `PUBLIC_IPV4`. Остальные A-записи обновляются на `PUBLIC_IPV4`;
+3. Задать `CF_DNS_RECORDS` только для переносимых прямых A-записей. CDN-домен
+   (`XRAY_DOMAIN`) в список не включать: его `CNAME` на Render ведётся вручную,
+   иначе синхронизация вернула бы `A` на `PUBLIC_IPV4` и раскрыла origin.
+   Остальные A-записи обновляются на `PUBLIC_IPV4`;
    `WG_HOST` и собственный Reality SNI — DNS only. Имена
    разных ролей должны отличаться. Для остальных существующих записей режим
    сохраняется; новые записи без роли создаются как DNS only.
-4. До старта проверить сертификат и ключ в `configs/cloudflare-cert.pem` и
-   `configs/cloudflare-key.pem`, их соответствие `XRAY_DOMAIN`. Для self-steal
+4. До старта проверить сертификат и ключ в `configs/cdn-cert.pem` и
+   `configs/cdn-key.pem`, их соответствие `XRAY_DOMAIN` (публичный Let's Encrypt,
+   не Cloudflare Origin CA). Для self-steal
    также перенести действующие `steal-cert.pem`/`steal-key.pem` и продление DNS-01.
-5. В Cloudflare оставить Full (strict), включённый WebSockets, DNS-роли как выше.
-   Не включать интерактивные challenge для подписок и WS. Добавить Cache Rule
-   Bypass cache для CDN-hostname и пути, начинающегося с `/sub/`. Origin CA не заменяет
-   публичный сертификат self-steal. См. [Full (strict)](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/).
+5. Развернуть релей: **New → Blueprint** → этот репозиторий, заполнить
+   `ORIGIN_ADDR` (`PUBLIC_IPV4`) и `ORIGIN_SNI` (`XRAY_DOMAIN`). Добавить
+   `XRAY_DOMAIN` в Custom Domains сервиса, а в DNS-зоне — `CNAME` на
+   `<сервис>.onrender.com` в режиме DNS only. Сертификат на домен Render
+   выпускает сам; публичный сертификат origin он не заменяет.
 6. Выполнить `sudo make bootstrap`, проверить firewall провайдера: TCP-порт Reality
    (обычно 443), UDP `AWG_PORT`, административный SSH. Нельзя разрешать весь TCP 443
-   только Cloudflare: прямой Reality использует этот же порт.
+   только Render: прямой Reality использует этот же порт.
 7. Выполнить `make up`. Старт автоматически применяет PUBLIC_IPV4/SNAT и обновляет
    перечисленные A-записи, кроме IP существующей CDN-записи. Поэтому это момент
    переключения прямого VPN; два экземпляра
@@ -89,8 +91,8 @@ certbot renew --dry-run --run-deploy-hooks --no-random-sleep-on-renew
 
 Dry run использует тестовый сервер Let's Encrypt. Его недоступность не проверяет
 работоспособность боевого продления; детали ошибки находятся в
-`/var/log/letsencrypt/letsencrypt.log`. Cloudflare Origin CA — отдельная пара
-`cloudflare-cert.pem`/`cloudflare-key.pem`, certbot её не продлевает.
+`/var/log/letsencrypt/letsencrypt.log`. `cdn-cert.pem`/`cdn-key.pem` — публичный
+сертификат CDN-домена, продлевается тем же certbot (см. hook), а не Origin CA.
 
 ## Автодеплой GitHub Actions
 
