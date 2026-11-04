@@ -59,6 +59,13 @@ export class SubscriptionService {
   }
 
   buildSingBoxConfig(peer: TSubscriptionPeer): Record<string, unknown> {
+    return this.buildSubscriptionConfig(peer, false);
+  }
+
+  private buildSubscriptionConfig(
+    peer: TSubscriptionPeer,
+    includeDnsReferences: boolean,
+  ): Record<string, unknown> {
     if (!peer.vlessUuid) {
       throw new InternalServerErrorException(
         `У конфига ${peer.name} отсутствует vlessUuid`,
@@ -85,10 +92,14 @@ export class SubscriptionService {
     outbounds.push({
       type: 'vless',
       tag: tunnelTag,
-      domain_resolver: {
-        server: DNS_BOOTSTRAP_TAG,
-        strategy: domainStrategy,
-      },
+      ...(includeDnsReferences
+        ? {
+            domain_resolver: {
+              server: DNS_BOOTSTRAP_TAG,
+              strategy: domainStrategy,
+            },
+          }
+        : {}),
       server: xray.domain,
       server_port: xray.realityPort,
       uuid: peer.vlessUuid,
@@ -200,7 +211,9 @@ export class SubscriptionService {
         // xray.domain и т.п.) больше не берётся неявно из dns.final — нужна
         // явная ссылка на тег DNS-сервера, иначе deprecation-предупреждение
         // (удалят в 1.14). Используем тот же сервер, что и dns.final.
-        default_domain_resolver: DNS_REMOTE_TAG,
+        ...(includeDnsReferences
+          ? { default_domain_resolver: DNS_REMOTE_TAG }
+          : {}),
       },
     };
   }
@@ -212,7 +225,7 @@ export class SubscriptionService {
    * inbounds поверх тех же outbounds+route.
    */
   buildFullSingBoxConfig(peer: TSubscriptionPeer): Record<string, unknown> {
-    const base = this.buildSingBoxConfig(peer);
+    const base = this.buildSubscriptionConfig(peer, true);
     const ipv6 = this.xrayService.getPublicParams().ipv6;
 
     return {

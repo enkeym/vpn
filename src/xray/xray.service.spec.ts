@@ -162,10 +162,6 @@ describe('XrayService health and proxy recovery', () => {
           expect.objectContaining({
             type: 'vless',
             tag: 'zrok · TLS vpn.example.test',
-            domain_resolver: {
-              server: 'dns-bootstrap',
-              strategy: 'prefer_ipv4',
-            },
             server: 'vpn.example.test',
             transport: {
               type: 'ws',
@@ -190,6 +186,29 @@ describe('XrayService health and proxy recovery', () => {
     expect(JSON.stringify(config)).not.toContain('reality-direct');
     expect(JSON.stringify(config)).not.toContain('direct.example.test');
     expect(JSON.stringify(config)).not.toContain('"type":"direct"');
+
+    const tunnel = (config.outbounds as Record<string, unknown>[]).find(
+      (outbound) => outbound.type === 'vless',
+    );
+    expect(tunnel).not.toHaveProperty('domain_resolver');
+    expect(config.route).not.toHaveProperty('default_domain_resolver');
+
+    const withoutDns = { ...config };
+    delete withoutDns.dns;
+    expect(JSON.stringify(withoutDns)).not.toContain('dns-bootstrap');
+    expect(JSON.stringify(withoutDns)).not.toContain('dns-remote');
+
+    const full = subscription.buildFullSingBoxConfig({
+      name: 'Тест',
+      vlessUuid: 'test-client',
+    });
+    const fullTunnel = (full.outbounds as Record<string, unknown>[]).find(
+      (outbound) => outbound.type === 'vless',
+    );
+    expect(fullTunnel).toMatchObject({
+      domain_resolver: { server: 'dns-bootstrap', strategy: 'prefer_ipv4' },
+    });
+    expect(full.route).toMatchObject({ default_domain_resolver: 'dns-remote' });
   });
 
   it('checks the public listener and both internal channels', async () => {
