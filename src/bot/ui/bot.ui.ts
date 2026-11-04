@@ -596,12 +596,6 @@ export const BotUi = {
     // при построении цепочкой .row() набор кнопок зависит от состояния конфига
     // и в клавиатуре легко появляется пустая строка.
     const rows: IKeyboardButton[][] = [];
-    if (isAdmin) {
-      rows.push([
-        { text: '📷 QR — AmneziaVPN', data: `show_qr:${peer.name}` },
-        { text: '📄 Файл .conf', data: `get_config_file:${peer.name}` },
-      ]);
-    }
 
     // Второй канал (VLESS через Xray) — отдельным подменю: внутри ссылка-
     // подписка, прямые ссылки и QR под разные клиенты. Держать это всё в
@@ -1351,9 +1345,6 @@ export const BotUi = {
         `admin_change_duration:${peer.name}:${telegramId}`,
       )
       .row()
-      .text('📷 QR — AmneziaVPN', `admin_qr:${peer.name}:${telegramId}`)
-      .text('📄 Файл .conf', `admin_get_file:${peer.name}:${telegramId}`)
-      .row()
       .text('🌐 VLESS / подписка', `vless_menu:${peer.name}`)
       .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
@@ -1409,11 +1400,8 @@ export const BotUi = {
     'Подключение идёт через CDN, без автоматического перехода на прямой IP сервера.\n\n' +
     '💬 _Не получается? Поддержка:_ @CharlieWaldo',
 
-  instructionsMenuKeyboard: (isAdmin = false) => {
+  instructionsMenuKeyboard: () => {
     const keyboard = new InlineKeyboard();
-    if (isAdmin) {
-      keyboard.text('🛡 AmneziaVPN (.conf)', 'instructions_awg').row();
-    }
     return keyboard
       .text('🌐 VLESS / подписка', 'instructions_vless')
       .row()

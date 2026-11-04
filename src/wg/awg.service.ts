@@ -737,11 +737,13 @@ export class AwgService implements OnModuleInit {
   async generateClientCredentials(
     usedIps: Set<string>,
   ): Promise<ITunnelCredentials> {
-    const config = await this.getConfig();
-    const prefix = getSubnetPrefix(config.address);
+    const address = this.isEnabled()
+      ? (await this.getConfig()).address
+      : this.interfaceAddress;
+    const prefix = getSubnetPrefix(address);
 
     // Адрес самого интерфейса занят сервером
-    usedIps.add(getIpv4Address(config.address));
+    usedIps.add(getIpv4Address(address));
 
     return await generateKeys(getNextFreeIp(usedIps, prefix));
   }

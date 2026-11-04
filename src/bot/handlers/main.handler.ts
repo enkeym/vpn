@@ -185,9 +185,7 @@ export class MainHandler {
 
   async showInstructions(ctx: Context) {
     await safeEditMessageText(ctx, BotUi.instructionsMenuTitle, {
-      reply_markup: BotUi.instructionsMenuKeyboard(
-        !!ctx.from && this.isAdmin(String(ctx.from.id)),
-      ),
+      reply_markup: BotUi.instructionsMenuKeyboard(),
       parse_mode: 'Markdown',
     });
   }

@@ -17,7 +17,7 @@ export async function sendCreatedPeerMessage(
     parse_mode: 'Markdown' as const,
     reply_markup: keyboard,
   };
-  if (isAdmin) {
+  if (isAdmin && config) {
     return api.sendDocument(
       chatId,
       new InputFile(Buffer.from(config), `${peer.name}.conf`),

@@ -23,16 +23,22 @@ describe('BotUi connection visibility', () => {
     );
   });
 
-  it('preserves AWG controls for administrators', () => {
+  it('hides AWG controls from administrators and client cards', () => {
     const serialized = JSON.stringify(
       BotUi.peerDetailsKeyboard(peer, true, true),
     );
 
-    expect(serialized).toContain('show_qr:test-peer');
-    expect(serialized).toContain('get_config_file:test-peer');
-    expect(JSON.stringify(BotUi.instructionsMenuKeyboard(true))).toContain(
+    expect(serialized).not.toContain('show_qr:');
+    expect(serialized).not.toContain('get_config_file:');
+    expect(JSON.stringify(BotUi.instructionsMenuKeyboard())).not.toContain(
       'instructions_awg',
     );
+    const clientKeyboard = JSON.stringify(
+      BotUi.clientPeerDetailsKeyboard(peer, '123'),
+    );
+    expect(clientKeyboard).not.toContain('admin_qr:');
+    expect(clientKeyboard).not.toContain('admin_get_file:');
+    expect(clientKeyboard).toContain('vless_menu:test-peer');
   });
 
   it('does not reveal AWG when VLESS is unavailable', () => {

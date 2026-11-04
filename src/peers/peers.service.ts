@@ -48,6 +48,7 @@ const TRIAL_EXPIRED_DELETE_AFTER_DAYS = 7;
 const PAID_EXPIRED_DELETE_AFTER_DAYS = 30;
 const MANUAL_PAUSED_DELETE_AFTER_DAYS = 90;
 const ACTIVE_PAID_INACTIVITY_NOTIFY_AFTER_DAYS = 30;
+const VPN_UNAVAILABLE_MESSAGE = 'VPN сейчас недоступен. Попробуйте позже.';
 
 function calculateExpiresAt(durationDays: SubscriptionDuration): Date {
   const now = new Date();
@@ -243,6 +244,12 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     return this.xrayService.isEnabled();
   }
 
+  private assertVpnAvailable(): void {
+    if (!this.tunnel.isEnabled() && !this.isXrayAvailable()) {
+      throw new BadRequestException(VPN_UNAVAILABLE_MESSAGE);
+    }
+  }
+
   /**
    * Есть ли URL подписки. Требует домена (XRAY_DOMAIN): без него /sub негде
    * опубликовать, и клиентам остаются только прямые vless://-ссылки — кнопки
@@ -319,8 +326,13 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    * ошибки наружу не пробрасываем — сбой второго канала не должен ронять ни
    * старт бота, ни создание/удаление пира: AmneziaWG при этом остаётся живым.
    */
-  private async syncXrayWithDb(): Promise<void> {
-    if (!this.xrayService.isEnabled()) return;
+  private async syncXrayWithDb(required = false): Promise<void> {
+    if (!this.xrayService.isEnabled()) {
+      if (required) {
+        throw new BadRequestException(VPN_UNAVAILABLE_MESSAGE);
+      }
+      return;
+    }
 
     try {
       const activePeers = await this.db.query.peers.findMany({
@@ -337,6 +349,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
       await this.xrayService.syncClients(clients);
     } catch (error) {
+      if (required) throw error;
       this.logger.error(
         `Ошибка синхронизации Xray с БД: ${
           error instanceof Error ? error.message : error
@@ -504,12 +517,8 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
       const tunnel = this.tunnel;
 
-      // Без поднятого awg0 ключи сгенерируются, но конфиг некуда применить
-      if (!tunnel.isEnabled()) {
-        throw new BadRequestException(
-          'VPN сейчас недоступен: туннель AmneziaWG не поднят. Попробуйте позже.',
-        );
-      }
+      this.assertVpnAvailable();
+      const awgEnabled = tunnel.isEnabled();
 
       const usedIps = await this.getUsedIps();
       const credentials = await tunnel.generateClientCredentials(usedIps);
@@ -547,10 +556,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       this.addIpToCache(credentials.ip);
 
       try {
-        const config = await tunnel.createClientConfig(
-          newPeer.name,
-          credentials,
-        );
+        const config = awgEnabled
+          ? await tunnel.createClientConfig(newPeer.name, credentials)
+          : '';
+
+        await this.syncXrayWithDb(!awgEnabled);
 
         // Инвалидируем кеши
         this.invalidateUserPeersCache(dto.telegramId);
@@ -566,10 +576,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
             String(dto.telegramId),
           );
         }
-
-        // Добавляем нового клиента в Xray (ошибки гасятся внутри: конфиг уже
-        // создан и работает по AmneziaWG, сбой второго канала его не отменяет).
-        await this.syncXrayWithDb();
 
         return { peer: newPeer, config };
       } catch (error) {
@@ -1564,6 +1570,9 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
       const tunnel = this.tunnel;
 
+      this.assertVpnAvailable();
+      const awgEnabled = tunnel.isEnabled();
+
       // Генерируем новые ключи. Старый IP освобождаем: замена старого пира на
       // нового идёт одной записью конфига, поэтому переиспользовать адрес
       // безопасно — состояния с двумя пирами на одном IP не возникает.
@@ -1612,14 +1621,16 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
       // самой записи конфига, поэтому сбой оставляет рабочим прежний конфиг,
       // а не выключает клиента до следующего старта приложения
       try {
-        const config = await tunnel.replaceClientConfig(
-          peerName,
-          oldPeer.publicKey,
-          credentials,
-        );
+        const config = awgEnabled
+          ? await tunnel.replaceClientConfig(
+              peerName,
+              oldPeer.publicKey,
+              credentials,
+            )
+          : '';
 
         // Старый uuid выкидывается из Xray, новый добавляется — одним вызовом.
-        await this.syncXrayWithDb();
+        await this.syncXrayWithDb(!awgEnabled);
 
         this.logger.log(`Конфиг ${peerName} успешно заменён`);
         return { peer: updatedPeer, config };

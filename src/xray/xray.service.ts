@@ -174,7 +174,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   /** Последний запрошенный набор — применяется одним перезапуском после дебаунса. */
   private pendingClients: IXrayClient[] | null = null;
   private reloadTimer: NodeJS.Timeout | null = null;
-  private reloadWaiters: Array<() => void> = [];
+  private reloadWaiters: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }> = [];
 
   constructor(
     private readonly hostNetwork: HostNetworkService,
@@ -325,16 +328,21 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     // Коалесцируем всплеск изменений в один перезапуск. Ожидающие вызовы
     // разбудятся после фактического применения.
     this.pendingClients = clients;
-    await new Promise<void>((resolve) => {
-      this.reloadWaiters.push(resolve);
+    await new Promise<void>((resolve, reject) => {
+      this.reloadWaiters.push({ resolve, reject });
       if (this.reloadTimer) return;
       this.reloadTimer = setTimeout(() => {
         this.reloadTimer = null;
         const waiters = this.reloadWaiters;
         this.reloadWaiters = [];
-        void this.applyReload().finally(() => {
-          for (const wake of waiters) wake();
-        });
+        void this.applyReload().then(
+          () => {
+            for (const waiter of waiters) waiter.resolve();
+          },
+          (error: unknown) => {
+            for (const waiter of waiters) waiter.reject(error);
+          },
+        );
       }, RELOAD_DEBOUNCE_MS);
     });
   }

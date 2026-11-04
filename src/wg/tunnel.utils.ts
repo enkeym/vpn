@@ -1,8 +1,11 @@
 import { spawn } from 'child_process';
-import { BadRequestException } from '@nestjs/common';
+import { generateKeyPair, randomBytes } from 'node:crypto';
+import { promisify } from 'node:util';
 import type { ITunnelCredentials } from './tunnel.types';
 
 export const WG_KEY_REGEX = /^[A-Za-z0-9+/]{42,43}={0,2}$/;
+const WG_KEY_BYTES = 32;
+const generateKeyPairAsync = promisify(generateKeyPair);
 
 /**
  * AllowedIPs для awg0 — ровно «0.0.0.0/0, ::/0», с пробелом после запятой. Это
@@ -157,15 +160,15 @@ export async function derivePublicKey(privateKey: string): Promise<string> {
 
 /** Пара ключей + preshared-ключ для клиента */
 export async function generateKeys(ip: string): Promise<ITunnelCredentials> {
-  const privateKey = await generatePrivateKey();
-  const [publicKey, presharedKey] = await Promise.all([
-    derivePublicKey(privateKey),
-    runAwg(['genpsk']),
-  ]);
-
-  if (!publicKey || !privateKey || !presharedKey) {
-    throw new BadRequestException('Не удалось сгенерировать ключи клиента');
-  }
-
+  const keys = await generateKeyPairAsync('x25519');
+  const privateKey = keys.privateKey
+    .export({ format: 'der', type: 'pkcs8' })
+    .subarray(-WG_KEY_BYTES)
+    .toString('base64');
+  const publicKey = keys.publicKey
+    .export({ format: 'der', type: 'spki' })
+    .subarray(-WG_KEY_BYTES)
+    .toString('base64');
+  const presharedKey = randomBytes(WG_KEY_BYTES).toString('base64');
   return { publicKey, privateKey, presharedKey, ip };
 }
