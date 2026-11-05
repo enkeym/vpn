@@ -33,7 +33,7 @@ describe('ReachabilityService', () => {
     jest.restoreAllMocks();
   });
 
-  it('reports repeated regional TCP failures only when a control node connects', async () => {
+  it('reports repeated regional and widespread TCP failures separately', async () => {
     Object.assign(process.env, {
       PUBLIC_IPV4: '192.0.2.10',
       AWG_WAN_IFACE: 'eth0',
@@ -142,5 +142,25 @@ describe('ReachabilityService', () => {
       expect.stringContaining('снова доступен'),
       { parse_mode: 'Markdown' },
     );
+
+    results = {
+      'ru1.node.check-host.net': [{ error: 'Connection timed out' }],
+      'ru2.node.check-host.net': [{ error: 'Connection timed out' }],
+      'de1.node.check-host.net': [{ error: 'Connection timed out' }],
+      'ch1.node.check-host.net': [{ error: 'Connection timed out' }],
+    };
+    await service.check();
+    expect(send).toHaveBeenCalledTimes(2);
+    await service.check();
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls[2][1]).toContain('все четыре узла');
+    expect(send.mock.calls[2][1]).toContain('причина неизвестна');
+
+    results['de1.node.check-host.net'] = [{ time: 0.01 }];
+    await service.check();
+    expect(send).toHaveBeenCalledTimes(3);
+    await service.check();
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.calls[3][1]).toContain('региональная недоступность');
   });
 });

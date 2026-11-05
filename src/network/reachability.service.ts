@@ -11,7 +11,7 @@ const POLL_INTERVAL_MS = 3_000;
 const POLL_ATTEMPTS = 6;
 const DEFAULT_PORT = 443;
 
-type TReachability = 'ok' | 'regional';
+type TReachability = 'ok' | 'regional' | 'unreachable';
 
 interface ICheckStartResponse {
   ok?: number;
@@ -28,7 +28,8 @@ export class ReachabilityService {
   private readonly port = Number(process.env.XRAY_REALITY_PORT) || DEFAULT_PORT;
 
   private state: TReachability | null = null;
-  private regionalFailures = 0;
+  private failureStatus: Exclude<TReachability, 'ok'> | null = null;
+  private failureCount = 0;
 
   constructor(
     private readonly hostNetwork: HostNetworkService,
@@ -43,13 +44,20 @@ export class ReachabilityService {
     const result = await this.probe(ip);
     const current = result?.status;
     if (!current) {
-      this.regionalFailures = 0;
+      this.failureStatus = null;
+      this.failureCount = 0;
       return;
     }
 
-    this.regionalFailures =
-      current === 'regional' ? this.regionalFailures + 1 : 0;
-    if (current === 'regional' && this.regionalFailures < 2) return;
+    if (current === 'ok') {
+      this.failureStatus = null;
+      this.failureCount = 0;
+    } else {
+      this.failureCount =
+        this.failureStatus === current ? this.failureCount + 1 : 1;
+      this.failureStatus = current;
+      if (this.failureCount < 2) return;
+    }
 
     const previous = this.state;
     this.state = current;
@@ -59,7 +67,9 @@ export class ReachabilityService {
     const message =
       current === 'regional'
         ? `⚠️ TCP \`${ip}:${this.port}\`: два узла в Москве не подключились в двух последовательных проверках, но контрольный узел за пределами РФ подключился. Возможна региональная недоступность этого порта; блокировка IP не доказана. Проверка: ${result?.reportUrl ?? CHECK_HOST_API}`
-        : `✅ TCP \`${ip}:${this.port}\` снова доступен из Москвы.`;
+        : current === 'unreachable'
+          ? `🚨 TCP \`${ip}:${this.port}\`: все четыре узла check-host.net не подключились в двух последовательных проверках. Порт недоступен с проверенных узлов; причина неизвестна. Проверьте listener, firewall и сеть сервера. Проверка: ${result?.reportUrl ?? CHECK_HOST_API}`
+          : `✅ TCP \`${ip}:${this.port}\` снова доступен из Москвы.`;
     await this.notification.notifyAdmins(message);
   }
 
@@ -101,10 +111,12 @@ export class ReachabilityService {
     const russianAnswers = RUSSIAN_NODES.map((node) => results[node]);
     const controlAnswers = CONTROL_NODES.map((node) => results[node]);
     if (russianAnswers.some((answer) => this.connected(answer))) return 'ok';
-    return russianAnswers.every((answer) => this.failed(answer)) &&
-      controlAnswers.some((answer) => this.connected(answer))
-      ? 'regional'
-      : null;
+    if (!russianAnswers.every((answer) => this.failed(answer))) return null;
+    if (controlAnswers.some((answer) => this.connected(answer)))
+      return 'regional';
+    if (controlAnswers.every((answer) => this.failed(answer)))
+      return 'unreachable';
+    return null;
   }
 
   private failed(answer: unknown): boolean {
