@@ -582,7 +582,11 @@ export const BotUi = {
     return keyboard;
   },
 
-  peerDetailsKeyboard: (peer: TPeer, isAdmin: boolean = false) => {
+  peerDetailsKeyboard: (
+    peer: TPeer,
+    isAdmin: boolean = false,
+    canManageOwn = false,
+  ) => {
     const expired = isExpired(peer);
 
     // Клавиатура собирается рядами, пустые ряды отсеиваются на сборке:
@@ -617,7 +621,7 @@ export const BotUi = {
       });
     }
 
-    if (isAdmin) {
+    if (isAdmin || canManageOwn) {
       manageRow.push({
         text: peer.description
           ? '📝 Изменить описание'
@@ -634,7 +638,7 @@ export const BotUi = {
       ]);
     }
 
-    if (isAdmin) {
+    if (isAdmin || canManageOwn) {
       rows.push([{ text: 'Удалить', data: `delete_peer:${peer.name}` }]);
     }
 
@@ -769,7 +773,11 @@ export const BotUi = {
     `📂 *Ваши конфигурации (${count})*\n\n` +
     '_Нажмите на конфиг — откроется управление и данные подключения_',
 
-  peerDetailsText: (peer: TPeer, isAdmin: boolean = false) => {
+  peerDetailsText: (
+    peer: TPeer,
+    isAdmin: boolean = false,
+    canManageOwn = false,
+  ) => {
     const expired = isExpired(peer);
     let status: string;
 
@@ -802,7 +810,7 @@ export const BotUi = {
     }
 
     // Описание видят только админы
-    if (isAdmin && peer.description) {
+    if ((isAdmin || canManageOwn) && peer.description) {
       text += `\n\n📝 *Описание:*\n${escapeMarkdown(peer.description)}`;
     }
 
@@ -847,6 +855,13 @@ export const BotUi = {
     '⚠️ *Нельзя добавить себя*\n\n' +
     'Вы администратор группы. Добавьте другого пользователя: ID или пересланное сообщение *не от вас*.',
 
+  cannotAddAdmin:
+    '⚠️ *Нельзя добавить администратора*\n\n' +
+    'У администраторов уже есть полный доступ. В группу «Семья» добавляйте обычных пользователей.',
+
+  adminConfigReadOnly:
+    '🔒 Конфиги другого администратора доступны только для просмотра',
+
   forwardHiddenUser:
     '⚠️ *Не удалось определить ID*\n\n' +
     'У отправителя скрыт профиль при пересылке. Попросите его написать боту или отправьте числовой ID.',
@@ -867,7 +882,11 @@ export const BotUi = {
   backToFamilyKeyboard: () =>
     new InlineKeyboard().text('« К группе', 'family_menu'),
 
-  memberDetailsText: (member: TFamilyMember, configsCount: number) => {
+  memberDetailsText: (
+    member: TFamilyMember,
+    configsCount: number,
+    readOnly = false,
+  ) => {
     const lines: string[] = [`👤 *Информация о члене группы*\n`];
 
     const displayName = getMemberDisplayName(member, true);
@@ -883,15 +902,25 @@ export const BotUi = {
       }`,
     );
 
+    if (readOnly) {
+      lines.push('', BotUi.adminConfigReadOnly);
+    }
+
     return lines.join('\n');
   },
 
-  memberDetailsKeyboard: (member: TFamilyMember, peers: TPeer[]) => {
+  memberDetailsKeyboard: (
+    member: TFamilyMember,
+    peers: TPeer[],
+    readOnly = false,
+  ) => {
     const keyboard = new InlineKeyboard();
     const mId = member.id.slice(0, 8);
 
-    // Кнопка создания конфига
-    keyboard.text('➕ Добавить конфиг', `f_cc:${mId}`).row();
+    if (!readOnly) {
+      // Кнопка создания конфига
+      keyboard.text('➕ Добавить конфиг', `f_cc:${mId}`).row();
+    }
 
     // Кнопка редактирования имени
     keyboard.text('✏️ Изменить имя', `f_en:${mId}`).row();
@@ -924,7 +953,7 @@ export const BotUi = {
     return keyboard;
   },
 
-  memberPeerDetailsText: (peer: TPeer) => {
+  memberPeerDetailsText: (peer: TPeer, readOnly = false) => {
     const expired = isExpired(peer);
     let status: string;
 
@@ -949,14 +978,30 @@ export const BotUi = {
       text += `\n\n📝 *Описание:*\n${escapeMarkdown(peer.description)}`;
     }
 
+    if (readOnly) {
+      text += `\n\n${BotUi.adminConfigReadOnly}`;
+    }
+
     return text;
   },
 
-  memberPeerDetailsKeyboard: (peer: TPeer, memberId: string) => {
+  memberPeerDetailsKeyboard: (
+    peer: TPeer,
+    memberId: string,
+    readOnly = false,
+  ) => {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
     // Сокращаем memberId для callback_data (первые 8 символов UUID достаточно уникальны)
     const mId = memberId.slice(0, 8);
+
+    if (readOnly) {
+      return keyboard
+        .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
+        .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
+        .row()
+        .text('« К конфигам', `f_mc:${mId}`);
+    }
 
     // Кнопка включить/пауза
     if (!expired) {
@@ -1186,6 +1231,7 @@ export const BotUi = {
     configsCount: number,
     isBlocked: boolean,
     hasUsedDiscount: boolean,
+    readOnly = false,
   ) => {
     const blockedText = isBlocked ? '\n🚫 *Статус: ЗАБЛОКИРОВАН*' : '';
     const discountText = hasUsedDiscount
@@ -1196,7 +1242,8 @@ export const BotUi = {
       `🆔 Telegram ID: \`${telegramId}\`\n` +
       `📂 Конфигов: ${configsCount}` +
       discountText +
-      blockedText
+      blockedText +
+      (readOnly ? `\n\n${BotUi.adminConfigReadOnly}` : '')
     );
   },
 
@@ -1205,30 +1252,40 @@ export const BotUi = {
     peers: TPeer[],
     isBlocked: boolean,
     hasUsedDiscount: boolean,
+    readOnly = false,
   ) => {
     const keyboard = new InlineKeyboard();
 
-    // Кнопка создания конфига
-    keyboard.text('➕ Добавить конфиг', `admin_cc:${telegramId}`).row();
+    if (!readOnly) {
+      // Кнопка создания конфига
+      keyboard.text('➕ Добавить конфиг', `admin_cc:${telegramId}`).row();
+    }
 
     if (peers.length > 0) {
       keyboard.text('📂 Конфиги', `admin_client_configs:${telegramId}`).row();
-      keyboard
-        .text('🗑 Удалить все конфиги', `admin_delete_all_peers:${telegramId}`)
-        .row();
+      if (!readOnly) {
+        keyboard
+          .text(
+            '🗑 Удалить все конфиги',
+            `admin_delete_all_peers:${telegramId}`,
+          )
+          .row();
+      }
     }
 
-    if (hasUsedDiscount) {
+    if (hasUsedDiscount && !readOnly) {
       keyboard
         .text('🎁 Сбросить скидку', `admin_reset_discount:${telegramId}`)
         .row();
     }
 
     // Кнопка блокировки/разблокировки
-    if (isBlocked) {
-      keyboard.text('✅ Разблокировать', `admin_unblock:${telegramId}`).row();
-    } else {
-      keyboard.text('🚫 Заблокировать', `admin_block:${telegramId}`).row();
+    if (!readOnly) {
+      if (isBlocked) {
+        keyboard.text('✅ Разблокировать', `admin_unblock:${telegramId}`).row();
+      } else {
+        keyboard.text('🚫 Заблокировать', `admin_block:${telegramId}`).row();
+      }
     }
 
     keyboard
@@ -1278,7 +1335,7 @@ export const BotUi = {
     return keyboard;
   },
 
-  clientPeerDetailsText: (peer: TPeer) => {
+  clientPeerDetailsText: (peer: TPeer, readOnly = false) => {
     const expired = isExpired(peer);
     let status: string;
 
@@ -1303,12 +1360,28 @@ export const BotUi = {
       text += `\n\n📝 *Описание:*\n${escapeMarkdown(peer.description)}`;
     }
 
+    if (readOnly) {
+      text += `\n\n${BotUi.adminConfigReadOnly}`;
+    }
+
     return text;
   },
 
-  clientPeerDetailsKeyboard: (peer: TPeer, telegramId: string) => {
+  clientPeerDetailsKeyboard: (
+    peer: TPeer,
+    telegramId: string,
+    readOnly = false,
+  ) => {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
+
+    if (readOnly) {
+      return keyboard
+        .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
+        .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
+        .row()
+        .text('« К конфигам', `admin_client_configs:${telegramId}`);
+    }
 
     // Кнопка включить/пауза
     if (!expired) {

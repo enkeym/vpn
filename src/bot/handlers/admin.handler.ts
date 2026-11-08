@@ -17,6 +17,7 @@ import {
   editPromptMessage,
   safeEditMessageText,
 } from '../utils/safe-edit-message';
+import { canManagePeerConfig } from '../utils/peer-access';
 
 // Состояние ожидания ввода текста рассылки («Рупор»)
 // adminId -> { promptMessageId: number, chatId: number }
@@ -59,6 +60,29 @@ export class AdminHandler {
     @Inject(forwardRef(() => PaymentService))
     private readonly paymentService: PaymentService,
   ) {}
+
+  private canManageClient(ctx: Context, telegramId: string): boolean {
+    return canManagePeerConfig(
+      telegramId,
+      ctx.from ? String(ctx.from.id) : undefined,
+      true,
+      (id) => this.mainHandler.isAdmin(id),
+    );
+  }
+
+  private async rejectAdminClientMutation(
+    ctx: Context,
+    telegramId: string,
+  ): Promise<boolean> {
+    if (this.canManageClient(ctx, telegramId)) return false;
+    await ctx
+      .answerCallbackQuery({
+        text: BotUi.adminConfigReadOnly,
+        show_alert: true,
+      })
+      .catch(() => {});
+    return true;
+  }
 
   // === Панель администратора ===
 
@@ -463,6 +487,8 @@ export class AdminHandler {
       this.peersService.hasUsedFirstPurchaseDiscount(telegramId),
     ]);
 
+    const readOnly = !this.canManageClient(ctx, telegramId);
+
     await safeEditMessageText(
       ctx,
       BotUi.clientDetailsText(
@@ -470,6 +496,7 @@ export class AdminHandler {
         peers.length,
         isBlocked,
         hasUsedDiscount,
+        readOnly,
       ),
       {
         parse_mode: 'Markdown',
@@ -478,6 +505,7 @@ export class AdminHandler {
           peers,
           isBlocked,
           hasUsedDiscount,
+          readOnly,
         ),
       },
     );
@@ -486,6 +514,7 @@ export class AdminHandler {
   // === Сброс скидки на первую покупку ===
 
   async resetClientDiscount(ctx: Context, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       await this.peersService.resetPromoUsage(telegramId);
       this.logger.log(
@@ -508,6 +537,7 @@ export class AdminHandler {
   // === Удаление всех конфигов клиента ===
 
   async deleteAllClientPeers(ctx: Context, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       const peers = await this.peersService.getPeersByTelegramId(telegramId);
       if (peers.length === 0) {
@@ -557,6 +587,7 @@ export class AdminHandler {
 
   async blockClient(ctx: Context, telegramId: string) {
     if (!ctx.from) return;
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
 
     try {
       await this.blockedUsersService.blockUser(telegramId, String(ctx.from.id));
@@ -604,6 +635,7 @@ export class AdminHandler {
   }
 
   async unblockClient(ctx: Context, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       await this.blockedUsersService.unblockUser(telegramId);
       this.logger.log(`Клиент ${telegramId} разблокирован`);
@@ -658,10 +690,20 @@ export class AdminHandler {
       return;
     }
 
-    await safeEditMessageText(ctx, BotUi.clientPeerDetailsText(peer), {
-      reply_markup: BotUi.clientPeerDetailsKeyboard(peer, telegramId),
-      parse_mode: 'Markdown',
-    });
+    const readOnly = !this.canManageClient(ctx, peer.telegramId);
+
+    await safeEditMessageText(
+      ctx,
+      BotUi.clientPeerDetailsText(peer, readOnly),
+      {
+        reply_markup: BotUi.clientPeerDetailsKeyboard(
+          peer,
+          telegramId,
+          readOnly,
+        ),
+        parse_mode: 'Markdown',
+      },
+    );
   }
 
   // === QR-код и файл конфига клиента ===
@@ -680,6 +722,7 @@ export class AdminHandler {
   }
 
   async toggleClientPeer(ctx: Context, peerName: string, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       await this.peersService.updatedPeer(peerName);
       await this.showClientPeerDetails(ctx, peerName, telegramId);
@@ -697,6 +740,7 @@ export class AdminHandler {
   }
 
   async deleteClientPeer(ctx: Context, peerName: string, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       const peer = await this.peersService.findPeer(peerName);
 
@@ -726,6 +770,7 @@ export class AdminHandler {
   // === Изменение срока действия ===
 
   async showChangeDuration(ctx: Context, peerName: string, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     await safeEditMessageText(ctx, BotUi.changeDurationTitle, {
       parse_mode: 'Markdown',
       reply_markup: BotUi.clientChangeDurationKeyboard(peerName, telegramId),
@@ -738,6 +783,7 @@ export class AdminHandler {
     telegramId: string,
     duration: string,
   ) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       await this.peersService.findPeer(peerName);
 
@@ -794,6 +840,7 @@ export class AdminHandler {
     telegramId: string,
   ) {
     if (!ctx.chat) return;
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
 
     try {
       const peer = await this.peersService.findPeer(peerName);
@@ -835,6 +882,8 @@ export class AdminHandler {
 
     const { peerName, clientTelegramId } = state;
     this.setAwaitingClientDescriptionEdit(userId, null);
+
+    if (await this.rejectAdminClientMutation(ctx, clientTelegramId)) return;
 
     const input = ctx.message.text.trim();
 
@@ -915,6 +964,7 @@ export class AdminHandler {
   // === Создание конфига для клиента ===
 
   async showCreateConfigOptions(ctx: Context, telegramId: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     await safeEditMessageText(ctx, BotUi.clientCreateConfigTitle(telegramId), {
       parse_mode: 'Markdown',
       reply_markup: BotUi.clientCreateConfigKeyboard(telegramId),
@@ -922,6 +972,7 @@ export class AdminHandler {
   }
 
   async createClientConfig(ctx: Context, telegramId: string, duration: string) {
+    if (await this.rejectAdminClientMutation(ctx, telegramId)) return;
     try {
       // Показываем сообщение о создании
       await safeEditMessageText(ctx, '⏳ *Создаю конфигурацию...*', {

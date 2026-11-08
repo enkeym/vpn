@@ -17,6 +17,7 @@ import {
   type IPromptMessage,
   safeEditMessageText,
 } from '../utils/safe-edit-message';
+import { canManagePeerConfig } from '../utils/peer-access';
 
 // Состояние ожидания ввода для добавления члена группы
 // userId -> { promptMessageId: number, chatId: number }
@@ -201,8 +202,32 @@ export class FamilyHandler {
 
     const telegramId = resolved.telegramId;
 
+    if (telegramId === adminId) {
+      await this.rearmAddMemberPrompt(
+        ctx,
+        adminId,
+        state,
+        BotUi.cannotAddAdminSelf,
+      );
+      return;
+    }
+    if (this.mainHandler.isAdmin(telegramId)) {
+      await this.rearmAddMemberPrompt(
+        ctx,
+        adminId,
+        state,
+        BotUi.cannotAddAdmin,
+      );
+      return;
+    }
+
     try {
-      const member = await this.familyService.addMember(adminId, telegramId);
+      const member = await this.familyService.addMember(
+        adminId,
+        telegramId,
+        undefined,
+        (id) => this.mainHandler.isAdmin(id),
+      );
       await editPromptMessage(ctx, state, BotUi.memberAdded(member), {
         parse_mode: 'Markdown',
         reply_markup: BotUi.backToFamilyKeyboard(),
@@ -253,12 +278,14 @@ export class FamilyHandler {
       return;
     }
 
+    const readOnly = !this.canManageMemberPeers(ctx, member);
+
     await safeEditMessageText(
       ctx,
-      BotUi.memberDetailsText(member, peers.length),
+      BotUi.memberDetailsText(member, peers.length, readOnly),
       {
         parse_mode: 'Markdown',
-        reply_markup: BotUi.memberDetailsKeyboard(member, peers),
+        reply_markup: BotUi.memberDetailsKeyboard(member, peers, readOnly),
       },
     );
   }
@@ -315,6 +342,37 @@ export class FamilyHandler {
     return isOwner;
   }
 
+  private canManageMemberPeers(
+    ctx: Context,
+    member: { telegramId: string },
+  ): boolean {
+    return canManagePeerConfig(
+      member.telegramId,
+      ctx.from ? String(ctx.from.id) : undefined,
+      true,
+      (id) => this.mainHandler.isAdmin(id),
+    );
+  }
+
+  private async ensureMemberPeersManageable(
+    ctx: Context,
+    memberId: string,
+  ): Promise<boolean> {
+    try {
+      const member = await this.familyService.findMemberById(memberId);
+      if (this.canManageMemberPeers(ctx, member)) return true;
+    } catch {
+      return true;
+    }
+    await ctx
+      .answerCallbackQuery({
+        text: BotUi.adminConfigReadOnly,
+        show_alert: true,
+      })
+      .catch(() => {});
+    return false;
+  }
+
   async showMemberPeerDetails(
     ctx: Context,
     peerName: string,
@@ -337,10 +395,20 @@ export class FamilyHandler {
       return;
     }
 
-    await safeEditMessageText(ctx, BotUi.memberPeerDetailsText(peer), {
-      reply_markup: BotUi.memberPeerDetailsKeyboard(peer, member.id),
-      parse_mode: 'Markdown',
-    });
+    const readOnly = !this.canManageMemberPeers(ctx, member);
+
+    await safeEditMessageText(
+      ctx,
+      BotUi.memberPeerDetailsText(peer, readOnly),
+      {
+        reply_markup: BotUi.memberPeerDetailsKeyboard(
+          peer,
+          member.id,
+          readOnly,
+        ),
+        parse_mode: 'Markdown',
+      },
+    );
   }
 
   async showMemberQrCode(ctx: Context, peerName: string, memberId: string) {
@@ -360,6 +428,7 @@ export class FamilyHandler {
 
   async toggleMemberPeer(ctx: Context, peerName: string, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
 
     try {
       await this.peersService.updatedPeer(peerName);
@@ -379,6 +448,7 @@ export class FamilyHandler {
 
   async deleteMemberPeer(ctx: Context, peerName: string, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
 
     try {
       const peer = await this.peersService.findPeer(peerName);
@@ -412,23 +482,29 @@ export class FamilyHandler {
     try {
       const member = await this.familyService.findMemberById(memberId);
 
-      // Удаляем все конфиги члена группы
-      const peers = await this.peersService.getPeersByTelegramId(
-        member.telegramId,
-      );
+      if (this.mainHandler.isAdmin(member.telegramId)) {
+        this.logger.warn(
+          `Член группы ${member.telegramId} является администратором: конфиги сохранены, удалено только членство`,
+        );
+      } else {
+        // Удаляем все конфиги члена группы
+        const peers = await this.peersService.getPeersByTelegramId(
+          member.telegramId,
+        );
 
-      // Связанные сообщения удаляем в фоне (часть может быть старше 48 ч).
-      for (const peer of peers) {
-        void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
-          peer.configMessageId,
-          peer.qrMessageId,
-          peer.fileMessageId,
-        ]);
-      }
+        // Связанные сообщения удаляем в фоне (часть может быть старше 48 ч).
+        for (const peer of peers) {
+          void deletePeerRelatedMessages(ctx.api, peer.telegramId, [
+            peer.configMessageId,
+            peer.qrMessageId,
+            peer.fileMessageId,
+          ]);
+        }
 
-      // Батч-удаление: один DELETE в БД и один `wg syncconf` на все конфиги.
-      if (peers.length > 0) {
-        await this.peersService.deletePeersByNames(peers.map((p) => p.name));
+        // Батч-удаление: один DELETE в БД и один `wg syncconf` на все конфиги.
+        if (peers.length > 0) {
+          await this.peersService.deletePeersByNames(peers.map((p) => p.name));
+        }
       }
 
       await this.familyService.removeMemberById(memberId);
@@ -448,6 +524,7 @@ export class FamilyHandler {
 
   async showChangeDuration(ctx: Context, peerName: string, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
 
     try {
       const member = await this.familyService.findMemberById(memberId);
@@ -470,6 +547,7 @@ export class FamilyHandler {
     duration: string,
   ) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
 
     try {
       // Проверяем что пир существует
@@ -597,6 +675,7 @@ export class FamilyHandler {
     memberId: string,
   ) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
     if (!ctx.chat) return;
 
     try {
@@ -727,6 +806,7 @@ export class FamilyHandler {
 
   async showCreateConfigOptions(ctx: Context, memberId: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
 
     try {
       const member = await this.familyService.findMemberById(memberId);
@@ -750,6 +830,7 @@ export class FamilyHandler {
 
   async createMemberConfig(ctx: Context, memberId: string, duration: string) {
     if (!(await this.checkOwnership(ctx, memberId))) return;
+    if (!(await this.ensureMemberPeersManageable(ctx, memberId))) return;
 
     let member;
     try {

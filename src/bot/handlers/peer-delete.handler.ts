@@ -2,6 +2,7 @@ import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { Context } from 'grammy';
 import { PeersService } from 'src/peers/peers.service';
 import { PeerManageHandler } from './peer-manage.handler';
+import { MainHandler } from './main.handler';
 import { deletePeerRelatedMessages } from '../utils/delete-peer-messages';
 
 @Injectable()
@@ -11,6 +12,7 @@ export class PeerDeleteHandler {
   constructor(
     private readonly peersService: PeersService,
     private readonly peerManageHandler: PeerManageHandler,
+    private readonly mainHandler: MainHandler,
   ) {}
 
   async deletePeer(ctx: Context, peerName: string, isAdmin = false) {
@@ -19,6 +21,17 @@ export class PeerDeleteHandler {
 
       if (!isAdmin && ctx.from && String(ctx.from.id) !== peer.telegramId) {
         throw new ForbiddenException('Нет доступа к удалению чужого конфига');
+      }
+
+      if (
+        isAdmin &&
+        ctx.from &&
+        String(ctx.from.id) !== peer.telegramId &&
+        this.mainHandler.isAdmin(peer.telegramId)
+      ) {
+        throw new ForbiddenException(
+          'Нет доступа к удалению конфига администратора',
+        );
       }
 
       // Связанные сообщения удаляем в фоне (не блокируя отрисовку меню):

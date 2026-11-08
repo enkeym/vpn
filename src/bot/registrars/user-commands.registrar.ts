@@ -11,6 +11,7 @@ import { PaymentService } from 'src/payment/payment.service';
 import type { PaidDuration } from 'src/payment/pricing';
 import { AutopayHandler } from '../handlers/autopay.handler';
 import { closeMediaMessage } from '../utils/peer-media';
+import { canManagePeerConfig } from '../utils/peer-access';
 
 /**
  * Регистрация пользовательских команд и callback-кнопок:
@@ -175,7 +176,8 @@ export class UserCommandsRegistrar {
       // Сразу отвечаем, т.к. операция может занять время
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
+        return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.togglePeer(ctx, peerName, admin);
     });
@@ -185,7 +187,8 @@ export class UserCommandsRegistrar {
       // Сразу отвечаем, т.к. операция может занять время
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
+        return;
       await ctx.answerCallbackQuery();
       await this.peerDeleteHandler.deletePeer(ctx, peerName, admin);
     });
@@ -194,7 +197,8 @@ export class UserCommandsRegistrar {
     bot.callbackQuery(/^extend_peer:(.+)$/, async (ctx) => {
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
+        return;
       await ctx.answerCallbackQuery();
       await this.peerCreateHandler.showPaymentPlansForExtend(ctx, peerName);
     });
@@ -203,7 +207,8 @@ export class UserCommandsRegistrar {
     bot.callbackQuery(/^extend_pay_plans:(.+)$/, async (ctx) => {
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
+        return;
       if (ctx.from)
         this.invoiceService.stopInvoicePaymentPollingForUser(
           String(ctx.from.id),
@@ -220,7 +225,10 @@ export class UserCommandsRegistrar {
         const days = Number(ctx.match[1]) as PaidDuration;
         const peerName = ctx.match[2];
         const admin = isAdmin(String(ctx.from.id));
-        if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+        if (
+          !(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin))
+        )
+          return;
         try {
           await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
           await this.invoiceService.presentExtendInvoice(ctx, days, peerName);
@@ -243,7 +251,10 @@ export class UserCommandsRegistrar {
         const durationDays = Number(ctx.match[1]) as PaidDuration;
         const peerName = ctx.match[2];
         const admin = isAdmin(String(ctx.from.id));
-        if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+        if (
+          !(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin))
+        )
+          return;
         try {
           await ctx.answerCallbackQuery({ text: 'Готовлю счёт…' });
           await this.invoiceService.presentExtendInvoice(
@@ -271,7 +282,8 @@ export class UserCommandsRegistrar {
     bot.callbackQuery(/^autopay_menu:(.+)$/, async (ctx) => {
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
+        return;
       await ctx.answerCallbackQuery();
       await this.autopayHandler.showAutopayMenu(ctx, peerName);
     });
@@ -282,7 +294,10 @@ export class UserCommandsRegistrar {
         const peerName = ctx.match[1];
         const days = Number(ctx.match[2]) as PaidDuration;
         const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-        if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+        if (
+          !(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin))
+        )
+          return;
         await this.autopayHandler.enableAutopay(ctx, peerName, days);
       },
     );
@@ -307,7 +322,8 @@ export class UserCommandsRegistrar {
       // Сразу отвечаем, т.к. операция может занять время
       const peerName = ctx.match[1];
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
+        return;
       await ctx.answerCallbackQuery();
       await this.peerManageHandler.replacePeer(ctx, peerName);
     });
@@ -387,32 +403,25 @@ export class UserCommandsRegistrar {
 
     // Редактирование описания своего конфига (только для админов)
     bot.callbackQuery(/^edit_description:(.+)$/, async (ctx) => {
-      if (!ctx.from || !isAdmin(String(ctx.from.id))) {
-        await ctx.answerCallbackQuery({
-          text: 'Нет доступа',
-          show_alert: true,
-        });
+      const peerName = ctx.match[1];
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerMutationAccess(ctx, peerName, admin, isAdmin)))
         return;
-      }
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showEditDescriptionPrompt(ctx, ctx.match[1]);
+      await this.peerManageHandler.showEditDescriptionPrompt(
+        ctx,
+        peerName,
+        admin,
+      );
     });
 
     // Отмена редактирования описания своего конфига
     bot.callbackQuery(/^cancel_edit_description:(.+)$/, async (ctx) => {
-      if (!ctx.from || !isAdmin(String(ctx.from.id))) {
-        await ctx.answerCallbackQuery({
-          text: 'Нет доступа',
-          show_alert: true,
-        });
-        return;
-      }
+      const peerName = ctx.match[1];
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, peerName, admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.cancelEditDescription(
-        ctx,
-        ctx.match[1],
-        isAdmin(String(ctx.from.id)),
-      );
+      await this.peerManageHandler.cancelEditDescription(ctx, peerName, admin);
     });
 
     // === Инструкции ===
@@ -449,6 +458,37 @@ export class UserCommandsRegistrar {
       await ctx.answerCallbackQuery();
       await this.mainHandler.showAwgInstructions(ctx);
     });
+  }
+
+  private async ensurePeerMutationAccess(
+    ctx: Context,
+    peerName: string,
+    admin: boolean,
+    isAdmin: (userId: string) => boolean,
+  ): Promise<boolean> {
+    if (ctx.from) {
+      const peer = await this.peersService
+        .findPeer(peerName)
+        .catch(() => undefined);
+      if (
+        peer &&
+        canManagePeerConfig(
+          peer.telegramId,
+          String(ctx.from.id),
+          admin,
+          isAdmin,
+        )
+      ) {
+        return true;
+      }
+    }
+    await ctx
+      .answerCallbackQuery({
+        text: 'Нет доступа к этому конфигу',
+        show_alert: true,
+      })
+      .catch(() => {});
+    return false;
   }
 
   private async ensurePeerAccess(

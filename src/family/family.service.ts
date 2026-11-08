@@ -90,7 +90,15 @@ export class FamilyService implements OnModuleInit, OnModuleDestroy {
     addedBy: string,
     telegramId: string,
     displayName?: string,
+    isAdmin?: (telegramId: string) => boolean,
   ): Promise<TFamilyMember> {
+    if (telegramId === addedBy) {
+      throw new Error('Нельзя добавить себя в группу');
+    }
+    if (isAdmin?.(telegramId)) {
+      throw new Error('Администратора нельзя добавить в группу');
+    }
+
     // Проверяем, нет ли уже такого пользователя
     const existingById = await this.db.query.familyMembers.findFirst({
       where: eq(schema.familyMembers.telegramId, telegramId),

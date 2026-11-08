@@ -236,10 +236,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Если админ ожидает ввода описания своего конфига
-      if (
-        this.isAdmin(userId) &&
-        this.peerManageHandler.isAwaitingDescriptionEdit(userId)
-      ) {
+      if (this.peerManageHandler.isAwaitingDescriptionEdit(userId)) {
         await this.peerManageHandler.handleEditDescriptionInput(ctx);
         return;
       }

@@ -14,6 +14,8 @@ import {
 } from '../utils/peer-media';
 import { MainHandler } from './main.handler';
 import { SubscriptionService } from 'src/subscription/subscription.service';
+import type { TPeer } from 'src/peers/peers.service';
+import { canManagePeerConfig } from '../utils/peer-access';
 
 // Состояние ожидания ввода описания для своих конфигов
 // userId -> { peerName: string, promptMessageId: number, chatId: number }
@@ -82,11 +84,20 @@ export class PeerManageHandler {
   ) {
     try {
       const peer = await this.peersService.findPeer(peerName);
+      const canManage = this.canManagePeer(ctx, peer, isAdmin);
 
-      await safeEditMessageText(ctx, BotUi.peerDetailsText(peer, isAdmin), {
-        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
-        parse_mode: 'Markdown',
-      });
+      await safeEditMessageText(
+        ctx,
+        BotUi.peerDetailsText(peer, isAdmin && canManage, canManage),
+        {
+          reply_markup: BotUi.peerDetailsKeyboard(
+            peer,
+            isAdmin && canManage,
+            canManage,
+          ),
+          parse_mode: 'Markdown',
+        },
+      );
     } catch {
       await ctx.answerCallbackQuery({
         text: 'Конфиг не найден',
@@ -112,13 +123,21 @@ export class PeerManageHandler {
   ) {
     try {
       const peer = await this.peersService.findPeer(peerName);
+      const canManage = this.canManagePeer(ctx, peer, isAdmin);
 
       await ctx.deleteMessage().catch(() => {});
 
-      await ctx.reply(BotUi.peerDetailsText(peer, isAdmin), {
-        reply_markup: BotUi.peerDetailsKeyboard(peer, isAdmin),
-        parse_mode: 'Markdown',
-      });
+      await ctx.reply(
+        BotUi.peerDetailsText(peer, isAdmin && canManage, canManage),
+        {
+          reply_markup: BotUi.peerDetailsKeyboard(
+            peer,
+            isAdmin && canManage,
+            canManage,
+          ),
+          parse_mode: 'Markdown',
+        },
+      );
     } catch {
       await ctx.answerCallbackQuery({
         text: 'Конфиг не найден',
@@ -127,8 +146,26 @@ export class PeerManageHandler {
     }
   }
 
+  private canManagePeer(ctx: Context, peer: TPeer, isAdmin: boolean): boolean {
+    return canManagePeerConfig(
+      peer.telegramId,
+      ctx.from ? String(ctx.from.id) : undefined,
+      isAdmin,
+      (id) => this.mainHandler.isAdmin(id),
+    );
+  }
+
   async togglePeer(ctx: Context, peerName: string, isAdmin: boolean = false) {
     try {
+      const peer = await this.peersService.findPeer(peerName);
+      if (!this.canManagePeer(ctx, peer, isAdmin)) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа к этому конфигу',
+          show_alert: true,
+        });
+        return;
+      }
+
       await this.peersService.updatedPeer(peerName);
       await this.showPeerDetails(ctx, peerName, isAdmin);
     } catch (error) {
@@ -146,11 +183,22 @@ export class PeerManageHandler {
 
   // === Редактирование описания ===
 
-  async showEditDescriptionPrompt(ctx: Context, peerName: string) {
+  async showEditDescriptionPrompt(
+    ctx: Context,
+    peerName: string,
+    isAdmin: boolean = false,
+  ) {
     if (!ctx.chat || !ctx.from) return;
 
     try {
       const peer = await this.peersService.findPeer(peerName);
+      if (!this.canManagePeer(ctx, peer, isAdmin)) {
+        await ctx.answerCallbackQuery({
+          text: 'Нет доступа к этому конфигу',
+          show_alert: true,
+        });
+        return;
+      }
       const promptMessageId = await safeEditMessageText(
         ctx,
         BotUi.editDescriptionPrompt(peer),

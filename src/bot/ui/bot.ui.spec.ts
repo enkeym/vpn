@@ -35,4 +35,36 @@ describe('BotUi connection visibility', () => {
     expect(clientKeyboard).toContain('get_config_file:test-peer');
     expect(clientKeyboard).not.toContain('vless_menu:');
   });
+
+  it('keeps another administrator configs read-only in admin and family menus', () => {
+    const clientKeyboard = JSON.stringify(
+      BotUi.clientPeerDetailsKeyboard(peer, '123', true),
+    );
+    expect(clientKeyboard).toContain('show_qr:test-peer');
+    expect(clientKeyboard).toContain('get_config_file:test-peer');
+    expect(clientKeyboard).not.toContain('admin_delete_peer:');
+    expect(clientKeyboard).not.toContain('admin_toggle_peer:');
+    expect(clientKeyboard).not.toContain('admin_edit_description:');
+    expect(clientKeyboard).not.toContain('admin_change_duration:');
+
+    const memberKeyboard = JSON.stringify(
+      BotUi.memberPeerDetailsKeyboard(peer, 'member-id', true),
+    );
+    expect(memberKeyboard).toContain('show_qr:test-peer');
+    expect(memberKeyboard).toContain('get_config_file:test-peer');
+    expect(memberKeyboard).not.toContain('f_dp:');
+    expect(memberKeyboard).not.toContain('f_tp:');
+    expect(memberKeyboard).not.toContain('f_ed:');
+    expect(memberKeyboard).not.toContain('f_cd:');
+  });
+
+  it('offers delete and description editing to the config owner', () => {
+    const serialized = JSON.stringify(
+      BotUi.peerDetailsKeyboard(peer, false, true),
+    );
+
+    expect(serialized).toContain('delete_peer:test-peer');
+    expect(serialized).toContain('edit_description:test-peer');
+    expect(serialized).not.toContain('toggle_peer:test-peer');
+  });
 });

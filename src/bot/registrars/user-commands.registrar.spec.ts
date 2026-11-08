@@ -15,6 +15,8 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
   const findPeer = jest.fn();
   const showQrCode = jest.fn();
   const togglePeer = jest.fn();
+  const showEditDescriptionPrompt = jest.fn();
+  const deletePeer = jest.fn();
   let registrar: UserCommandsRegistrar;
 
   beforeEach(() => {
@@ -22,6 +24,8 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
     findPeer.mockReset().mockResolvedValue({ telegramId: '200' });
     showQrCode.mockReset();
     togglePeer.mockReset();
+    showEditDescriptionPrompt.mockReset();
+    deletePeer.mockReset();
 
     registrar = new UserCommandsRegistrar(
       {} as MainHandler,
@@ -29,8 +33,9 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
       {
         showQrCode,
         togglePeer,
+        showEditDescriptionPrompt,
       } as unknown as PeerManageHandler,
-      {} as PeerDeleteHandler,
+      { deletePeer } as unknown as PeerDeleteHandler,
       { findPeer } as unknown as PeersService,
       {} as InvoiceService,
       {} as MainMenuService,
@@ -44,7 +49,7 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
         callbacks.set(String(trigger), handler);
       },
     } as unknown as Bot;
-    registrar.register(bot, (userId) => userId === '100');
+    registrar.register(bot, (userId) => userId === '100' || userId === '101');
   });
 
   function context(userId: number, match: string[]) {
@@ -109,5 +114,50 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
 
     expect(findPeer).not.toHaveBeenCalled();
     expect(showQrCode).toHaveBeenCalledWith(adminContext, 'peer-a');
+  });
+
+  it('denies an administrator mutating another administrator config', async () => {
+    findPeer.mockResolvedValue({ telegramId: '100' });
+    const { ctx, answerCallbackQuery } = context(101, [
+      'toggle_peer:peer-a',
+      'peer-a',
+    ]);
+
+    await invoke(/^toggle_peer:(.+)$/, ctx);
+
+    expect(togglePeer).not.toHaveBeenCalled();
+    expect(answerCallbackQuery).toHaveBeenCalledWith({
+      text: 'Нет доступа к этому конфигу',
+      show_alert: true,
+    });
+  });
+
+  it('allows an administrator mutating a non-admin config', async () => {
+    const { ctx } = context(100, ['toggle_peer:peer-a', 'peer-a']);
+
+    await invoke(/^toggle_peer:(.+)$/, ctx);
+
+    expect(findPeer).toHaveBeenCalledWith('peer-a');
+    expect(togglePeer).toHaveBeenCalledWith(ctx, 'peer-a', true);
+  });
+
+  it('allows the config owner to edit its description', async () => {
+    const { ctx } = context(200, ['edit_description:peer-a', 'peer-a']);
+
+    await invoke(/^edit_description:(.+)$/, ctx);
+
+    expect(showEditDescriptionPrompt).toHaveBeenCalledWith(
+      ctx,
+      'peer-a',
+      false,
+    );
+  });
+
+  it('allows the config owner to delete own config', async () => {
+    const { ctx } = context(200, ['delete_peer:peer-a', 'peer-a']);
+
+    await invoke(/^delete_peer:(.+)$/, ctx);
+
+    expect(deletePeer).toHaveBeenCalledWith(ctx, 'peer-a', false);
   });
 });
