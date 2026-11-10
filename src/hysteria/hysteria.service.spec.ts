@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'node:child_process';
+import { unlink } from 'node:fs/promises';
 import { writeFile } from 'node:fs/promises';
 import axios from 'axios';
 import { HysteriaService } from './hysteria.service';
@@ -15,6 +16,7 @@ jest.mock('child_process', () => {
 jest.mock('fs/promises', () => ({
   readFile: jest.fn(),
   writeFile: jest.fn().mockResolvedValue(undefined),
+  unlink: jest.fn().mockResolvedValue(undefined),
 }));
 
 interface IHysteriaInternals {
@@ -128,6 +130,20 @@ describe('HysteriaService', () => {
     expect(writeFile).toHaveBeenLastCalledWith(
       expect.stringContaining('hysteria.yaml'),
       expect.stringContaining(`"Другой":`),
+    );
+  });
+
+  it('does not spawn without peers and drops the stale config', async () => {
+    jest.useFakeTimers();
+    const service = makeService(true);
+
+    const sync = service.syncClients([]);
+    await jest.advanceTimersByTimeAsync(2000);
+    await sync;
+
+    expect(jest.mocked(spawn)).not.toHaveBeenCalled();
+    expect(unlink).toHaveBeenCalledWith(
+      expect.stringContaining('hysteria.yaml'),
     );
   });
 

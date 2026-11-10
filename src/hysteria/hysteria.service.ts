@@ -8,7 +8,7 @@ import axios from 'axios';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { createHmac, randomBytes } from 'crypto';
 import { existsSync } from 'fs';
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, unlink, writeFile } from 'fs/promises';
 import * as path from 'path';
 import { Mutex } from 'async-mutex';
 
@@ -256,6 +256,15 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
     const signature = this.signatureOf(clients);
     if (signature === this.appliedSignature && this.currentProc) return;
 
+    // Демон не принимает пустой userpass, поэтому без активных пиров он не
+    // стартует, а старый конфиг удаляется вместе с паролями удалённых пиров.
+    if (clients.length === 0) {
+      await this.stopProcess();
+      await unlink(this.configPath).catch(() => undefined);
+      this.appliedSignature = signature;
+      return;
+    }
+
     await writeFile(this.configPath, this.buildConfig(clients));
 
     const wasRunning = Boolean(this.currentProc);
@@ -278,17 +287,13 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       '  type: userpass',
     ];
 
-    if (clients.length === 0) {
-      lines.push('  userpass: {}');
-    } else {
-      lines.push('  userpass:');
-      for (const client of clients) {
-        const password = this.getPassword(client.name);
-        if (!password) continue;
-        lines.push(
-          `    ${JSON.stringify(client.name)}: ${JSON.stringify(password)}`,
-        );
-      }
+    lines.push('  userpass:');
+    for (const client of clients) {
+      const password = this.getPassword(client.name);
+      if (!password) continue;
+      lines.push(
+        `    ${JSON.stringify(client.name)}: ${JSON.stringify(password)}`,
+      );
     }
 
     if (this.secrets && this.obfsEnabled) {
