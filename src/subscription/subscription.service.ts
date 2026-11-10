@@ -1,9 +1,7 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
-import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
+import { XrayService } from 'src/xray/xray.service';
 import type { IXrayPublicParams } from 'src/xray/xray.service';
-import { HysteriaService } from 'src/hysteria/hysteria.service';
-import type { IHysteriaPublicParams } from 'src/hysteria/hysteria.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 import type { TSubscriptionFormat } from './interfaces/subscription-format.interface';
 
@@ -17,16 +15,6 @@ const DNS_SERVER = '1.1.1.1';
 /** DNS Xray-профилей: резолвим прямо, без DoH-петли вокруг туннеля. */
 const XRAY_JSON_DNS_SERVERS = ['1.1.1.1', '1.0.0.1'];
 
-/**
- * Дробление ClientHello для TCP+Reality. Отдельный слой защиты «голого» TCP:
- * reality-хендшейк уходит несколькими короткими пакетами, а не одним.
- */
-const XRAY_FRAGMENT_SETTINGS = {
-  length: '10-20',
-  packets: 'tlshello',
-  interval: '0',
-};
-
 @Injectable()
 export class SubscriptionService {
   /**
@@ -39,10 +27,7 @@ export class SubscriptionService {
     '',
   );
 
-  constructor(
-    private readonly xrayService: XrayService,
-    private readonly hysteriaService: HysteriaService,
-  ) {}
+  constructor(private readonly xrayService: XrayService) {}
 
   /** Ссылка-подписка для импорта одним URL; null — SUB_PUBLIC_URL не задан. */
   buildSubscriptionUrl(
@@ -65,7 +50,7 @@ export class SubscriptionService {
     );
   }
 
-  /** Ссылки vless:// на все каналы пира — для ручного импорта и для base64. */
+  /** Ссылки vless:// на каналы пира — для ручного импорта и для base64. */
   buildShareLinks(peer: TSubscriptionPeer): string[] {
     if (!peer.vlessUuid) {
       throw new InternalServerErrorException(
@@ -73,17 +58,12 @@ export class SubscriptionService {
       );
     }
 
-    const links = this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
-    const hysteriaLink = this.hysteriaService.buildShareLink(peer.name);
-
-    return hysteriaLink ? [...links, hysteriaLink] : links;
+    return this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
   }
 
   /**
-   * Массив готовых Xray-конфигов (формат Happ/Streisand/V2Box): «⚡
-   * Авто-обход» с balancer'ом leastLoad по всем каналам плюс отдельный профиль
-   * на каждый канал. Один канал не прошёл DPI — пользователь переключает
-   * профиль вручную, не меняя подписку.
+   * Массив готовых Xray-конфигов (формат Happ/Streisand/V2Box): единственный
+   * канал CDN WS через Cloudflare Tunnel.
    */
   buildXrayConfigArray(
     peer: TSubscriptionPeer,
@@ -95,199 +75,29 @@ export class SubscriptionService {
     }
 
     const xray = this.xrayService.getPublicParams();
-    const uuid = peer.vlessUuid;
-
-    const tcpOutbound = this.buildXrayVlessOutbound(xray, uuid, 'tcp');
-    const grpcOutbound = this.buildXrayVlessOutbound(xray, uuid, 'grpc');
-    const xhttpOutbound = this.buildXrayVlessOutbound(xray, uuid, 'xhttp');
-    const wsOutbound = xray.wsHost
-      ? this.buildXrayWsOutbound(xray, uuid)
-      : null;
-
-    const fragmentOutbound = {
-      tag: 'fragment',
-      protocol: 'freedom',
-      settings: { fragment: XRAY_FRAGMENT_SETTINGS },
-    };
-    const directOutbound = { tag: 'direct', protocol: 'freedom' };
-    const blockOutbound = { tag: 'block', protocol: 'blackhole' };
-
-    const directRules = [
-      { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
-      { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
-    ];
-
-    const channelProfile = (
-      remarks: string,
-      outbound: Record<string, unknown>,
-      extraOutbounds: Record<string, unknown>[] = [],
-    ): Record<string, unknown> => ({
-      remarks,
-      dns: {
-        servers: XRAY_JSON_DNS_SERVERS,
-        queryStrategy: 'UseIP',
-      },
-      outbounds: [outbound, ...extraOutbounds, directOutbound, blockOutbound],
-      routing: {
-        domainStrategy: 'IPIfNonMatch',
-        rules: directRules,
-      },
-    });
-
-    // selector 'proxy' — префикс тегов proxy-tcp/proxy-grpc/proxy-xhttp:
-    // balancer сам исключает из выбора канал, который не отвечает.
-    const autoProfile: Record<string, unknown> = {
-      remarks: '⚡ Авто-обход',
-      dns: {
-        servers: XRAY_JSON_DNS_SERVERS,
-        queryStrategy: 'UseIP',
-      },
-      outbounds: [
-        tcpOutbound,
-        grpcOutbound,
-        xhttpOutbound,
-        ...(wsOutbound ? [wsOutbound] : []),
-        fragmentOutbound,
-        directOutbound,
-        blockOutbound,
-      ],
-      routing: {
-        domainStrategy: 'IPIfNonMatch',
-        rules: [
-          ...directRules,
-          {
-            type: 'field',
-            network: 'tcp,udp',
-            balancerTag: 'Super_Balancer',
-          },
-        ],
-        balancers: [
-          {
-            tag: 'Super_Balancer',
-            selector: ['proxy'],
-            fallbackTag: 'direct',
-            strategy: {
-              type: 'leastLoad',
-              settings: { maxRTT: '1s', expected: 2, tolerance: 0.01 },
-            },
-          },
-        ],
-      },
-      burstObservatory: {
-        subjectSelector: ['proxy'],
-        pingConfig: {
-          destination: 'https://www.gstatic.com/generate_204',
-          connectivity: 'https://www.gstatic.com/generate_204',
-          interval: '1m',
-          timeout: '3s',
-          sampling: 3,
-        },
-      },
-    };
+    const wsOutbound = this.buildXrayWsOutbound(xray, peer.vlessUuid);
 
     return [
-      autoProfile,
-      channelProfile('Reality gRPC', grpcOutbound),
-      channelProfile('Reality XHTTP', xhttpOutbound),
-      channelProfile('Reality TCP + fragment', tcpOutbound, [fragmentOutbound]),
-      ...(wsOutbound ? [channelProfile('CDN WS', wsOutbound)] : []),
-    ];
-  }
-
-  /**
-   * Один VLESS+Reality outbound. flow — только у TCP: XTLS Vision несовместим
-   * с gRPC/XHTTP, а fragment-диалер нужен лишь «голому» TCP.
-   */
-  private buildXrayVlessOutbound(
-    xray: IXrayPublicParams,
-    uuid: string,
-    channel: 'tcp' | 'grpc' | 'xhttp',
-  ): Record<string, unknown> {
-    const realitySettings = {
-      serverName: xray.realitySni,
-      publicKey: xray.realityPublicKey,
-      shortId: xray.realityShortId,
-      fingerprint: 'chrome',
-      spiderX: '/',
-    };
-
-    const user: Record<string, unknown> = {
-      id: uuid,
-      encryption: 'none',
-    };
-
-    if (channel === 'tcp') {
-      user.flow = XRAY_REALITY_FLOW;
-      return {
-        tag: 'proxy-tcp',
-        protocol: 'vless',
-        settings: {
-          vnext: [
-            {
-              address: xray.host,
-              port: xray.realityPort,
-              users: [user],
-            },
-          ],
+      {
+        remarks: 'CDN WS',
+        dns: {
+          servers: XRAY_JSON_DNS_SERVERS,
+          queryStrategy: 'UseIP',
         },
-        streamSettings: {
-          network: 'tcp',
-          security: 'reality',
-          realitySettings,
-          // Дробим ClientHello только у «голого» TCP — gRPC/XHTTP в этом не
-          // нуждаются, лишняя обработка им только мешает.
-          sockopt: { dialerProxy: 'fragment' },
-        },
-      };
-    }
-
-    if (channel === 'grpc') {
-      return {
-        tag: 'proxy-grpc',
-        protocol: 'vless',
-        settings: {
-          vnext: [
-            {
-              address: xray.host,
-              port: xray.grpcPort,
-              users: [user],
-            },
-          ],
-        },
-        streamSettings: {
-          network: 'grpc',
-          security: 'reality',
-          grpcSettings: {
-            serviceName: xray.grpcService,
-            multiMode: true,
-          },
-          realitySettings,
-        },
-      };
-    }
-
-    return {
-      tag: 'proxy-xhttp',
-      protocol: 'vless',
-      settings: {
-        vnext: [
-          {
-            address: xray.host,
-            port: xray.xhttpPort,
-            users: [user],
-          },
+        outbounds: [
+          wsOutbound,
+          { tag: 'direct', protocol: 'freedom' },
+          { tag: 'block', protocol: 'blackhole' },
         ],
-      },
-      streamSettings: {
-        network: 'xhttp',
-        security: 'reality',
-        xhttpSettings: {
-          path: xray.xhttpPath,
-          mode: xray.xhttpMode,
+        routing: {
+          domainStrategy: 'IPIfNonMatch',
+          rules: [
+            { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
+            { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
+          ],
         },
-        realitySettings,
       },
-    };
+    ];
   }
 
   private buildXrayWsOutbound(
@@ -316,6 +126,9 @@ export class SubscriptionService {
         wsSettings: {
           path: xray.wsPath,
           headers: { Host: xray.wsHost },
+        },
+        sockopt: {
+          domainStrategy: 'UseIPv4',
         },
       },
     };
@@ -363,94 +176,10 @@ export class SubscriptionService {
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
-    const realityTag = `Reality · ${xray.host}`;
-    const grpcTag = `Reality gRPC · ${xray.host}`;
-    const xhttpTag = `Reality XHTTP · ${xray.host}`;
+    const wsTag = `CDN WS · ${xray.wsHost}`;
 
-    const realityTls = {
-      enabled: true,
-      server_name: xray.realitySni,
-      utls: { enabled: true, fingerprint: 'chrome' },
-      reality: {
-        enabled: true,
-        public_key: xray.realityPublicKey,
-        short_id: xray.realityShortId,
-      },
-    };
-
-    const outbounds: Record<string, unknown>[] = [];
-    const channelTags: string[] = [];
-
-    outbounds.push({
-      type: 'vless',
-      tag: realityTag,
-      ...(includeDnsReferences
-        ? {
-            domain_resolver: {
-              server: DNS_BOOTSTRAP_TAG,
-              strategy: domainStrategy,
-            },
-          }
-        : {}),
-      server: xray.host,
-      server_port: xray.realityPort,
-      uuid: peer.vlessUuid,
-      flow: XRAY_REALITY_FLOW,
-      tls: realityTls,
-    });
-    channelTags.push(realityTag);
-
-    // gRPC и XHTTP — новые каналы той же подписки: urltest.auto собирается
-    // из channelTags, поэтому автопереключение подхватывает их без правок.
-    // flow здесь не выставляется (XTLS Vision ломает оба транспорта).
-    outbounds.push({
-      type: 'vless',
-      tag: grpcTag,
-      ...(includeDnsReferences
-        ? {
-            domain_resolver: {
-              server: DNS_BOOTSTRAP_TAG,
-              strategy: domainStrategy,
-            },
-          }
-        : {}),
-      server: xray.host,
-      server_port: xray.grpcPort,
-      uuid: peer.vlessUuid,
-      tls: realityTls,
-      transport: {
-        type: 'grpc',
-        service_name: xray.grpcService,
-      },
-    });
-    channelTags.push(grpcTag);
-
-    outbounds.push({
-      type: 'vless',
-      tag: xhttpTag,
-      ...(includeDnsReferences
-        ? {
-            domain_resolver: {
-              server: DNS_BOOTSTRAP_TAG,
-              strategy: domainStrategy,
-            },
-          }
-        : {}),
-      server: xray.host,
-      server_port: xray.xhttpPort,
-      uuid: peer.vlessUuid,
-      tls: realityTls,
-      transport: {
-        type: 'xhttp',
-        path: xray.xhttpPath,
-        mode: xray.xhttpMode,
-      },
-    });
-    channelTags.push(xhttpTag);
-
-    if (xray.wsHost) {
-      const wsTag = `CDN WS · ${xray.wsHost}`;
-      outbounds.push({
+    const outbounds: Record<string, unknown>[] = [
+      {
         type: 'vless',
         tag: wsTag,
         ...(includeDnsReferences
@@ -474,86 +203,15 @@ export class SubscriptionService {
           path: xray.wsPath,
           headers: { Host: xray.wsHost },
         },
-      });
-      channelTags.push(wsTag);
-    }
-
-    const hysteria: IHysteriaPublicParams =
-      this.hysteriaService.getPublicParams();
-    const hysteriaPassword = this.hysteriaService.getPassword(peer.name);
-    if (hysteriaPassword) {
-      const hysteriaTag = `Hysteria2 · ${hysteria.host}`;
-      outbounds.push({
-        type: 'hysteria2',
-        tag: hysteriaTag,
-        ...(includeDnsReferences
-          ? {
-              domain_resolver: {
-                server: DNS_BOOTSTRAP_TAG,
-                strategy: domainStrategy,
-              },
-            }
-          : {}),
-        server: hysteria.host,
-        server_port: hysteria.port,
-        password: hysteriaPassword,
-        ...(hysteria.obfsPassword
-          ? {
-              obfs: {
-                type: 'salamander',
-                password: hysteria.obfsPassword,
-              },
-            }
-          : {}),
-        tls: {
-          enabled: true,
-          server_name: hysteria.sni,
-        },
-      });
-      channelTags.push(hysteriaTag);
-    }
-
-    outbounds.push(
-      {
-        type: 'urltest',
-        tag: 'auto',
-        // ВАЖНО: плоская группа, без вложенности. Раньше пробовали разбить
-        // на вложенные urltest-группы — сломало автопереключение: внешняя
-        // группа мерила ТЕКУЩИЙ выбор внутренней в момент замера, и если он
-        // совпадал с упавшим каналом, внешняя тоже считала всю внутреннюю
-        // группу мёртвой и зависала, вместо того чтобы дать живому каналу
-        // шанс — на проде реально был случай, когда один канал упал, а
-        // автопереключения на живой не произошло, пришлось выбирать вручную.
-        outbounds: channelTags,
-        url: 'https://www.gstatic.com/generate_204',
-        // Короче, чем раньше (было 1m): быстрее ловим момент, когда канал
-        // ожил/умер после смены сети (Wi-Fi↔мобильный).
-        interval: '30s',
-        // Порог переключения поднят с 50 до 250 мс: обычный шум измерения
-        // пинга (десятки мс) не должен считаться "новым лучшим" каналом —
-        // именно из-за этого шума на 150мс живые соединения периодически
-        // обрывались каждый цикл ре-теста без единой реальной поломки канала.
-        tolerance: 250,
-        // Не держим тест простаивающего канала бесконечно.
-        idle_timeout: '15m',
-        // НЕ ставим interrupt_exist_connections здесь: ре-тест раз в 30с —
-        // шумный процесс сам по себе (пинг колеблется), а не сигнал о
-        // реальном обрыве. С interrupt=true каждое такое дрожание рвало
-        // все активные соединения (видео, загрузки) — то самое "сеть
-        // обрывается сама по себе", хотя канал был живой всё время.
-        // Новые соединения и так пойдут через актуально лучший outbound —
-        // этого достаточно, старые просто доживают на своём канале.
       },
       {
         type: 'selector',
         tag: 'select',
-        outbounds: ['auto', ...channelTags],
-        default: 'auto',
-        // Тут interrupt оправдан: это осознанный выбор пользователя (или
-        // смена default), а не шумный автотест — переключаемся мгновенно.
+        outbounds: [wsTag],
+        default: wsTag,
         interrupt_exist_connections: true,
       },
-    );
+    ];
 
     return {
       outbounds,

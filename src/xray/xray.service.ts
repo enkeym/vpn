@@ -492,31 +492,13 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  buildRealityClientLink(name: string, uuid: string): string {
-    return this.buildVlessLink(name, uuid, this.realityPort, {
-      type: 'tcp',
-      flow: XRAY_REALITY_FLOW,
-    });
-  }
-
-  /** gRPC: flow не выставляется — XTLS Vision ломает gRPC-транспорт. */
-  buildGrpcClientLink(name: string, uuid: string): string {
-    return this.buildVlessLink(name, uuid, this.grpcPort, {
-      type: 'grpc',
-      serviceName: this.grpcService,
-    });
-  }
-
-  /** XHTTP: flow не выставляется по той же причине. */
-  buildXhttpClientLink(name: string, uuid: string): string {
-    return this.buildVlessLink(name, uuid, this.xhttpPort, {
-      type: 'xhttp',
-      path: this.xhttpPath,
-      mode: this.xhttpMode,
-    });
-  }
-
   buildWsClientLink(name: string, uuid: string): string {
+    if (!this.wsHost) {
+      throw new InternalServerErrorException(
+        'Xray не инициализирован — не задан XRAY_WS_HOST',
+      );
+    }
+
     const query = new URLSearchParams({
       type: 'ws',
       security: 'tls',
@@ -532,51 +514,14 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     )}`;
   }
 
-  private buildVlessLink(
-    name: string,
-    uuid: string,
-    port: number,
-    transport: Record<string, string>,
-  ): string {
-    if (!this.realityParams) {
-      throw new InternalServerErrorException(
-        'Xray не инициализирован — невозможно собрать reality-ссылку',
-      );
-    }
-
-    const query = new URLSearchParams({
-      ...transport,
-      security: 'reality',
-      encryption: 'none',
-      pbk: this.realityParams.publicKey,
-      // Тот же отпечаток, что и в sing-box-подписке (SubscriptionService) —
-      // единый uTLS-fingerprint для одного Reality-канала, иначе DPI видит
-      // рассогласование ClientHello между прямой ссылкой и подпиской.
-      fp: 'chrome',
-      sni: this.realitySni,
-      sid: this.realityParams.shortId,
-    });
-
-    return `vless://${uuid}@${this.host}:${port}?${query.toString()}#${encodeURIComponent(
-      name,
-    )}`;
-  }
-
   /**
-   * Ссылки vless:// на все поднятые каналы пира. Имена в якоре (#...)
-   * пользователь видит в списке серверов клиента — они должны быть понятны
-   * без пояснений. Живут здесь, а не в SubscriptionService: ссылка — знание о
-   * транспорте, и так её может взять и PeersService без цикла зависимостей.
+   * Ссылки vless:// на каналы пира. Имена в якоре (#...) пользователь видит
+   * в списке серверов клиента — они должны быть понятны без пояснений. Живут
+   * здесь, а не в SubscriptionService: ссылка — знание о транспорте, и так её
+   * может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    return [
-      this.buildRealityClientLink(`${name} · Reality TCP`, uuid),
-      this.buildGrpcClientLink(`${name} · Reality gRPC`, uuid),
-      this.buildXhttpClientLink(`${name} · Reality XHTTP`, uuid),
-      ...(this.wsHost
-        ? [this.buildWsClientLink(`${name} · CDN WS`, uuid)]
-        : []),
-    ];
+    return [this.buildWsClientLink(`${name} · CDN WS`, uuid)];
   }
 
   /**

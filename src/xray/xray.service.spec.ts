@@ -110,21 +110,7 @@ describe('XrayService health and proxy recovery', () => {
     process.env = { ...originalEnv };
   });
 
-  it('uses the Reality port in links and subscription parameters', () => {
-    const uuid = 'test-client';
-    const direct = new URL(service.buildRealityClientLink('test', uuid));
-
-    expect(direct.hostname).toBe('direct.example.test');
-    expect(direct.port).toBe('2053');
-    expect(service.getPublicParams()).toEqual(
-      expect.objectContaining({
-        host: direct.hostname,
-        realityPort: Number(direct.port),
-      }),
-    );
-  });
-
-  it('exports a link for every Reality channel with the actual TLS parameters', () => {
+  it('builds the single CDN WS link and base64 subscription', () => {
     const subscription = module.get(SubscriptionService);
     const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
 
@@ -134,55 +120,21 @@ describe('XrayService health and proxy recovery', () => {
       'base64',
     ).toString('utf-8');
 
-    expect(links).toHaveLength(4);
+    expect(links).toHaveLength(1);
     expect(decoded).toBe(links.join('\n'));
 
-    const [tcpLink, grpcLink, xhttpLink, wsLink] = links.map(
-      (link) => new URL(link),
-    );
-
-    expect(tcpLink.protocol).toBe('vless:');
-    expect(tcpLink.hostname).toBe('direct.example.test');
-    expect(tcpLink.port).toBe('2053');
-    expect(tcpLink.searchParams.get('type')).toBe('tcp');
-    expect(tcpLink.searchParams.get('flow')).toBe('xtls-rprx-vision');
-    expect(decodeURIComponent(tcpLink.hash.slice(1))).toBe(
-      `${peer.name} · Reality TCP`,
-    );
-
-    expect(grpcLink.port).toBe('27443');
-    expect(grpcLink.searchParams.get('type')).toBe('grpc');
-    expect(grpcLink.searchParams.get('serviceName')).toBe('grpc-vk');
-    expect(grpcLink.searchParams.get('flow')).toBeNull();
-    expect(decodeURIComponent(grpcLink.hash.slice(1))).toBe(
-      `${peer.name} · Reality gRPC`,
-    );
-
-    expect(xhttpLink.port).toBe('27444');
-    expect(xhttpLink.searchParams.get('type')).toBe('xhttp');
-    expect(xhttpLink.searchParams.get('path')).toBe('/xhttp');
-    expect(xhttpLink.searchParams.get('mode')).toBe('auto');
-    expect(xhttpLink.searchParams.get('flow')).toBeNull();
-    expect(decodeURIComponent(xhttpLink.hash.slice(1))).toBe(
-      `${peer.name} · Reality XHTTP`,
-    );
-
-    expect(wsLink.port).toBe('443');
-    expect(wsLink.searchParams.get('type')).toBe('ws');
-    expect(wsLink.searchParams.get('security')).toBe('tls');
-    expect(wsLink.searchParams.get('host')).toBe('cdn.example.test');
-    expect(wsLink.searchParams.get('sni')).toBe('cdn.example.test');
-    expect(wsLink.searchParams.get('path')).toBe('/ws');
-    expect(wsLink.searchParams.get('flow')).toBeNull();
-    expect(decodeURIComponent(wsLink.hash.slice(1))).toBe(
-      `${peer.name} · CDN WS`,
-    );
-
-    for (const link of [tcpLink, grpcLink, xhttpLink]) {
-      expect(link.searchParams.get('security')).toBe('reality');
-      expect(link.searchParams.get('sni')).toBe('www.wikipedia.org');
-      expect(link.searchParams.get('fp')).toBe('chrome');
-    }
+    const ws = new URL(links[0]);
+    expect(ws.protocol).toBe('vless:');
+    expect(ws.hostname).toBe('cdn.example.test');
+    expect(ws.port).toBe('443');
+    expect(ws.searchParams.get('type')).toBe('ws');
+    expect(ws.searchParams.get('security')).toBe('tls');
+    expect(ws.searchParams.get('host')).toBe('cdn.example.test');
+    expect(ws.searchParams.get('sni')).toBe('cdn.example.test');
+    expect(ws.searchParams.get('path')).toBe('/ws');
+    expect(ws.searchParams.get('fp')).toBe('chrome');
+    expect(ws.searchParams.get('flow')).toBeNull();
+    expect(decodeURIComponent(ws.hash.slice(1))).toBe(`${peer.name} · CDN WS`);
   });
 
   it('builds three Reality inbounds with flow only on TCP', () => {
@@ -317,26 +269,23 @@ describe('XrayService health and proxy recovery', () => {
         outbounds: expect.arrayContaining([
           expect.objectContaining({
             type: 'vless',
-            tag: 'Reality · direct.example.test',
-            server: 'direct.example.test',
-            flow: 'xtls-rprx-vision',
+            tag: 'CDN WS · cdn.example.test',
+            server: 'cdn.example.test',
+            server_port: 443,
             tls: expect.objectContaining({
-              server_name: 'www.wikipedia.org',
-              reality: expect.objectContaining({
-                enabled: true,
-                public_key: 'test-public',
-                short_id: '01234567',
-              }),
+              server_name: 'cdn.example.test',
+              utls: expect.objectContaining({ fingerprint: 'chrome' }),
+            }),
+            transport: expect.objectContaining({
+              type: 'ws',
+              path: '/ws',
+              headers: { Host: 'cdn.example.test' },
             }),
           }),
           expect.objectContaining({
-            tag: 'auto',
-            outbounds: [
-              'Reality · direct.example.test',
-              'Reality gRPC · direct.example.test',
-              'Reality XHTTP · direct.example.test',
-              'CDN WS · cdn.example.test',
-            ],
+            tag: 'select',
+            outbounds: ['CDN WS · cdn.example.test'],
+            default: 'CDN WS · cdn.example.test',
           }),
         ]),
         dns: expect.objectContaining({
@@ -350,40 +299,11 @@ describe('XrayService health and proxy recovery', () => {
     );
     expect(JSON.stringify(config)).not.toContain('"type":"direct"');
 
-    const reality = (config.outbounds as Record<string, unknown>[]).find(
-      (outbound) => outbound.type === 'vless',
-    );
-    expect(reality).not.toHaveProperty('domain_resolver');
-    expect(config.route).not.toHaveProperty('default_domain_resolver');
-
     const vlessOutbounds = (
       config.outbounds as Record<string, unknown>[]
     ).filter((outbound) => outbound.type === 'vless');
-    expect(vlessOutbounds).toHaveLength(4);
-    expect(vlessOutbounds[0]).toMatchObject({ flow: 'xtls-rprx-vision' });
-    expect(vlessOutbounds[1]).toMatchObject({
-      transport: { type: 'grpc', service_name: 'grpc-vk' },
-    });
-    expect(vlessOutbounds[1]).not.toHaveProperty('flow');
-    expect(vlessOutbounds[2]).toMatchObject({
-      transport: { type: 'xhttp', path: '/xhttp', mode: 'auto' },
-    });
-    expect(vlessOutbounds[2]).not.toHaveProperty('flow');
-    expect(vlessOutbounds[3]).toMatchObject({
-      server: 'cdn.example.test',
-      server_port: 443,
-      tls: {
-        enabled: true,
-        server_name: 'cdn.example.test',
-        utls: { enabled: true, fingerprint: 'chrome' },
-      },
-      transport: {
-        type: 'ws',
-        path: '/ws',
-        headers: { Host: 'cdn.example.test' },
-      },
-    });
-    expect(vlessOutbounds[3]).not.toHaveProperty('flow');
+    expect(vlessOutbounds).toHaveLength(1);
+    expect(vlessOutbounds[0]).not.toHaveProperty('domain_resolver');
 
     const withoutDns = { ...config };
     delete withoutDns.dns;
@@ -394,10 +314,10 @@ describe('XrayService health and proxy recovery', () => {
       name: 'Тест',
       vlessUuid: 'test-client',
     });
-    const fullReality = (full.outbounds as Record<string, unknown>[]).find(
+    const fullWs = (full.outbounds as Record<string, unknown>[]).find(
       (outbound) => outbound.type === 'vless',
     );
-    expect(fullReality).toMatchObject({
+    expect(fullWs).toMatchObject({
       domain_resolver: { server: 'dns-bootstrap', strategy: 'prefer_ipv4' },
     });
     expect(full.route).toMatchObject({ default_domain_resolver: 'dns-remote' });
