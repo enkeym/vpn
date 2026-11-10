@@ -345,7 +345,10 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
 
     proc.on('exit', (code, signal) => {
       clearTimeout(steadyTimer);
-      if (this.currentProc === proc) this.currentProc = null;
+      // Плановый останов снимает ссылку до kill: иначе перезапуск по нашей
+      // же инициативе выглядел бы падением и копил rapidRestarts.
+      if (this.currentProc !== proc) return;
+      this.currentProc = null;
       if (this.shuttingDown) return;
 
       this.logger.warn(

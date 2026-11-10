@@ -130,4 +130,30 @@ describe('HysteriaService', () => {
       expect.stringContaining(`"Другой":`),
     );
   });
+
+  it('does not count a planned restart as a crash', async () => {
+    jest.useFakeTimers();
+    const children: ChildProcess[] = [];
+    jest.mocked(spawn).mockImplementation(() => {
+      const child = new ChildProcess();
+      jest.spyOn(child, 'kill').mockImplementation(() => {
+        child.emit('exit', 0, null);
+        return true;
+      });
+      children.push(child);
+      return child;
+    });
+    const service = makeService(true);
+
+    // Семь плановых перезапусков: лимит MAX_RAPID_RESTARTS (5) не должен
+    // исчерпаться, иначе следующий реальный сбой останется без автоподъёма.
+    for (let i = 0; i < 7; i++) {
+      const sync = service.syncClients([{ name: `Пир-${i}` }]);
+      await jest.advanceTimersByTimeAsync(2000);
+      await sync;
+    }
+
+    expect(jest.mocked(spawn)).toHaveBeenCalledTimes(7);
+    expect(children).toHaveLength(7);
+  });
 });
