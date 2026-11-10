@@ -152,6 +152,7 @@ COPY scripts/db-backup.cjs ./scripts/db-backup.cjs
 # nginx: шаблон конфига (домен и порты подставляет entrypoint из .env) и сам
 # entrypoint, который поднимает nginx перед стартом NestJS.
 COPY docker/nginx.conf /etc/nginx/nginx.conf.template
+COPY docker/sub.conf.template /etc/nginx/sub.conf.template
 COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
