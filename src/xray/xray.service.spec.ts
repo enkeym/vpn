@@ -1,4 +1,4 @@
-import { ChildProcess, execFile, spawn } from 'node:child_process';
+import { ChildProcess, execFile, spawn } from 'child_process';
 import { promisify } from 'node:util';
 import { createConnection, Socket } from 'node:net';
 import { ConfigService } from '@nestjs/config';
@@ -15,7 +15,6 @@ jest.mock('fs', () => ({
 jest.mock('fs/promises', () => ({
   readFile: jest.fn().mockResolvedValue(
     JSON.stringify({
-      wsPath: '/test',
       privateKey: 'test-private',
       publicKey: 'test-public',
       shortId: '01234567',
@@ -51,6 +50,7 @@ describe('XrayService health and proxy recovery', () => {
   const originalEnv = { ...process.env };
   let module: TestingModule;
   let service: XrayService;
+  let child: ChildProcess;
   let listening: boolean;
 
   beforeEach(async () => {
@@ -58,12 +58,12 @@ describe('XrayService health and proxy recovery', () => {
     process.env.PUBLIC_IPV4 = '';
     process.env.XRAY_ENABLED = 'true';
     process.env.WG_HOST = 'direct.example.test';
-    process.env.XRAY_DOMAIN = 'vpn.example.test';
     process.env.XRAY_REALITY_PORT = '2053';
     process.env.XRAY_INTERNAL_REALITY_PORT = '8444';
-    process.env.XRAY_INTERNAL_WS_PORT = '8880';
+    process.env.XRAY_INTERNAL_STEAL_PORT = '8446';
     listening = true;
-    const child = new ChildProcess();
+    child = new ChildProcess();
+    Object.defineProperty(child, 'exitCode', { value: null });
     jest.spyOn(child, 'kill').mockImplementation(() => {
       child.emit('exit', 0, null);
       return true;
@@ -93,6 +93,8 @@ describe('XrayService health and proxy recovery', () => {
       .compile();
     service = module.get(XrayService);
     await service.onModuleInit();
+    Reflect.set(service, 'enabled', true);
+    Reflect.set(service, 'currentProc', child);
     jest.mocked(promisify(execFile)).mockClear();
   });
 
@@ -104,25 +106,21 @@ describe('XrayService health and proxy recovery', () => {
     process.env = { ...originalEnv };
   });
 
-  it('uses one public port for both channel links and subscription parameters', () => {
+  it('uses the Reality port in links and subscription parameters', () => {
     const uuid = 'test-client';
-    const tunnel = new URL(service.buildClientLink('test', uuid));
     const direct = new URL(service.buildRealityClientLink('test', uuid));
 
-    expect(tunnel.hostname).toBe('vpn.example.test');
     expect(direct.hostname).toBe('direct.example.test');
-    expect(tunnel.port).toBe('2053');
-    expect(direct.port).toBe(tunnel.port);
+    expect(direct.port).toBe('2053');
     expect(service.getPublicParams()).toEqual(
       expect.objectContaining({
         host: direct.hostname,
-        domain: tunnel.hostname,
-        realityPort: Number(tunnel.port),
+        realityPort: Number(direct.port),
       }),
     );
   });
 
-  it('exports only the tunnel with the actual TLS hostname', () => {
+  it('exports a Reality link with the actual TLS parameters', () => {
     const subscription = module.get(SubscriptionService);
     const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
 
@@ -136,15 +134,14 @@ describe('XrayService health and proxy recovery', () => {
     expect(links).toHaveLength(1);
     expect(decoded).toBe(links[0]);
     expect(link.protocol).toBe('vless:');
-    expect(link.hostname).toBe('vpn.example.test');
-    expect(link.searchParams.get('security')).toBe('tls');
-    expect(link.searchParams.get('type')).toBe('ws');
-    expect(link.searchParams.has('flow')).toBe(false);
-    expect(link.searchParams.get('path')).toBe('/test');
-    expect(link.searchParams.get('sni')).toBe('vpn.example.test');
+    expect(link.hostname).toBe('direct.example.test');
+    expect(link.searchParams.get('security')).toBe('reality');
+    expect(link.searchParams.get('type')).toBe('tcp');
+    expect(link.searchParams.get('flow')).toBe('xtls-rprx-vision');
+    expect(link.searchParams.get('sni')).toBe('www.wikipedia.org');
     expect(link.searchParams.get('fp')).toBe('chrome');
     expect(decodeURIComponent(link.hash.slice(1))).toBe(
-      `${peer.name} · zrok · TLS vpn.example.test`,
+      `${peer.name} · Reality`,
     );
   });
 
@@ -161,17 +158,21 @@ describe('XrayService health and proxy recovery', () => {
         outbounds: expect.arrayContaining([
           expect.objectContaining({
             type: 'vless',
-            tag: 'zrok · TLS vpn.example.test',
-            server: 'vpn.example.test',
-            transport: {
-              type: 'ws',
-              path: '/test',
-              headers: { Host: 'vpn.example.test' },
-            },
+            tag: 'Reality · direct.example.test',
+            server: 'direct.example.test',
+            flow: 'xtls-rprx-vision',
+            tls: expect.objectContaining({
+              server_name: 'www.wikipedia.org',
+              reality: expect.objectContaining({
+                enabled: true,
+                public_key: 'test-public',
+                short_id: '01234567',
+              }),
+            }),
           }),
           expect.objectContaining({
             tag: 'auto',
-            outbounds: ['zrok · TLS vpn.example.test'],
+            outbounds: ['Reality · direct.example.test'],
           }),
         ]),
         dns: expect.objectContaining({
@@ -183,14 +184,12 @@ describe('XrayService health and proxy recovery', () => {
         }),
       }),
     );
-    expect(JSON.stringify(config)).not.toContain('reality-direct');
-    expect(JSON.stringify(config)).not.toContain('direct.example.test');
     expect(JSON.stringify(config)).not.toContain('"type":"direct"');
 
-    const tunnel = (config.outbounds as Record<string, unknown>[]).find(
+    const reality = (config.outbounds as Record<string, unknown>[]).find(
       (outbound) => outbound.type === 'vless',
     );
-    expect(tunnel).not.toHaveProperty('domain_resolver');
+    expect(reality).not.toHaveProperty('domain_resolver');
     expect(config.route).not.toHaveProperty('default_domain_resolver');
 
     const withoutDns = { ...config };
@@ -202,16 +201,16 @@ describe('XrayService health and proxy recovery', () => {
       name: 'Тест',
       vlessUuid: 'test-client',
     });
-    const fullTunnel = (full.outbounds as Record<string, unknown>[]).find(
+    const fullReality = (full.outbounds as Record<string, unknown>[]).find(
       (outbound) => outbound.type === 'vless',
     );
-    expect(fullTunnel).toMatchObject({
+    expect(fullReality).toMatchObject({
       domain_resolver: { server: 'dns-bootstrap', strategy: 'prefer_ipv4' },
     });
     expect(full.route).toMatchObject({ default_domain_resolver: 'dns-remote' });
   });
 
-  it('checks the public listener and both internal channels', async () => {
+  it('checks the public listener and the internal Reality listener', async () => {
     expect(await service.isHealthy()).toBe(true);
     expect(createConnection).toHaveBeenCalledWith({
       host: '127.0.0.1',
@@ -221,11 +220,6 @@ describe('XrayService health and proxy recovery', () => {
       host: '127.0.0.1',
       port: 8444,
     });
-    expect(createConnection).toHaveBeenCalledWith({
-      host: '127.0.0.1',
-      port: 8880,
-    });
-
     listening = false;
 
     expect(await service.isHealthy()).toBe(false);

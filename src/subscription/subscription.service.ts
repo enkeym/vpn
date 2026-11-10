@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
-import { XrayService } from 'src/xray/xray.service';
+import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 
 /** Минимальный набор полей пира для сборки любого формата подписки. */
@@ -73,25 +73,19 @@ export class SubscriptionService {
     }
 
     const xray = this.xrayService.getPublicParams();
-    if (!xray.domain) {
-      throw new InternalServerErrorException(
-        'Туннельный канал Xray не настроен',
-      );
-    }
-
     // Дуалстек: у сервера есть исходящий IPv6, поэтому назначения резолвятся
     // и в A, и в AAAA (IPv4 первым — он предсказуемее по маршрутам). При
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
-    const tunnelTag = `zrok · TLS ${xray.domain}`;
+    const realityTag = `Reality · ${xray.host}`;
 
     const outbounds: Record<string, unknown>[] = [];
     const channelTags: string[] = [];
 
     outbounds.push({
       type: 'vless',
-      tag: tunnelTag,
+      tag: realityTag,
       ...(includeDnsReferences
         ? {
             domain_resolver: {
@@ -100,21 +94,22 @@ export class SubscriptionService {
             },
           }
         : {}),
-      server: xray.domain,
+      server: xray.host,
       server_port: xray.realityPort,
       uuid: peer.vlessUuid,
-      transport: {
-        type: 'ws',
-        path: xray.wsPath,
-        headers: { Host: xray.domain },
-      },
+      flow: XRAY_REALITY_FLOW,
       tls: {
         enabled: true,
-        server_name: xray.domain,
+        server_name: xray.realitySni,
         utls: { enabled: true, fingerprint: 'chrome' },
+        reality: {
+          enabled: true,
+          public_key: xray.realityPublicKey,
+          short_id: xray.realityShortId,
+        },
       },
     });
-    channelTags.push(tunnelTag);
+    channelTags.push(realityTag);
 
     outbounds.push(
       {

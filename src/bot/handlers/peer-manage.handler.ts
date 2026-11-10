@@ -341,10 +341,7 @@ export class PeerManageHandler {
       await ctx.reply(BotUi.vlessMenuText(peerName, body), {
         parse_mode: 'Markdown',
         link_preview_options: { is_disabled: true },
-        reply_markup: BotUi.vlessMenuKeyboard(
-          peerName,
-          this.peersService.isSubscriptionAvailable(),
-        ),
+        reply_markup: BotUi.vlessMenuKeyboard(peerName),
       });
     } catch (error) {
       this.logger.error(`Ошибка выдачи VLESS: ${error}`);
@@ -366,22 +363,6 @@ export class PeerManageHandler {
       `${peerName}_vless_qr.png`,
       `📷 *QR — VLESS* \`${peerName}\`\n\n` +
         '_Отсканируйте в Hiddify / NekoBox / v2rayNG / Streisand_',
-    );
-  }
-
-  /**
-   * QR для официального sing-box (SFA/SFI/SFM): его сканер не принимает
-   * обычную https-ссылку за профиль — нужен deep-link его схемы.
-   */
-  async showVlessSingBoxQrCode(ctx: Context, peerName: string) {
-    await this.sendVlessQr(
-      ctx,
-      peerName,
-      () => this.peersService.generatePeerSingBoxQrCode(peerName),
-      `${peerName}_singbox_qr.png`,
-      `📷 *QR для sing-box* \`${peerName}\`\n\n` +
-        '_Только для официального приложения sing-box (SFA/SFI/SFM) — оно уже должно ' +
-        'быть установлено. В остальных клиентах берите обычный «📷 QR-код»._',
     );
   }
 

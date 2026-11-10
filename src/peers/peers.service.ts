@@ -250,15 +250,6 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     }
   }
 
-  /**
-   * Есть ли URL подписки. Требует домена (XRAY_DOMAIN): без него /sub негде
-   * опубликовать, и клиентам остаются только прямые vless://-ссылки — кнопки
-   * «QR для sing-box» в таком режиме бессмысленны.
-   */
-  isSubscriptionAvailable(): boolean {
-    return this.xrayService.isTunnelEnabled();
-  }
-
   private async syncWgWithDb() {
     let lastError: Error | null = null;
 
@@ -1718,51 +1709,15 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     return peer.vlessUuid;
   }
 
-  /**
-   * URL подписки. Отдаётся по тому же домену, что и туннельный канал: /sub на
-   * NestJS проксирует nginx внутри контейнера (см. README). Без домена подписку
-   * публиковать негде — остаются только прямые vless://-ссылки, поэтому null.
-   */
-  private buildSubscriptionUrl(vlessUuid: string): string | null {
-    const { domain, realityPort } = this.xrayService.getPublicParams();
-    if (!domain) return null;
-
-    const origin =
-      realityPort === 443
-        ? `https://${domain}`
-        : `https://${domain}:${realityPort}`;
-    return `${origin}/sub/${vlessUuid}`;
-  }
-
-  /**
-   * Тот же /sub, но с полным конфигом (log+dns+inbounds) — для официальных
-   * sing-box-клиентов (SFA/SFI/SFM): они, в отличие от Hiddify/NekoBox, не
-   * достраивают TUN/DNS сами.
-   */
-  private buildFullSubscriptionUrl(vlessUuid: string): string | null {
-    const url = this.buildSubscriptionUrl(vlessUuid);
-    return url ? `${url}/full` : null;
-  }
-
   async getPeerVlessText(peerName: string): Promise<string> {
     const peer = await this.findPeer(peerName);
     const vlessUuid = this.requireVlessUuid(peer);
 
-    const subscriptionUrl = this.buildSubscriptionUrl(vlessUuid);
     const links = this.xrayService.buildShareLinks(peer.name, vlessUuid);
     const linksBlock = links.map((link) => `\`${link}\``).join('\n\n');
 
-    if (!subscriptionUrl) {
-      return (
-        `🔗 *Ссылки для подключения* — добавьте в приложение любую:\n\n` +
-        linksBlock
-      );
-    }
-
     return (
-      `🔗 *Ссылка-подписка* — для приложений с поддержкой VLESS. ` +
-      `Подключение через туннель zrok (WebSocket + TLS):\n\`${subscriptionUrl}\`\n\n` +
-      `*Если подписка не добавляется* — импортируйте ссылку VLESS:\n` +
+      `🔗 *Ссылка для подключения* — импортируйте её в приложение:\n\n` +
       linksBlock
     );
   }
@@ -1771,42 +1726,9 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     const peer = await this.findPeer(peerName);
     const vlessUuid = this.requireVlessUuid(peer);
 
-    const payload =
-      this.buildSubscriptionUrl(vlessUuid) ??
-      this.xrayService.buildShareLinks(peer.name, vlessUuid)[0];
+    const payload = this.xrayService.buildShareLinks(peer.name, vlessUuid)[0];
 
     return QRCode.toBuffer(payload, {
-      type: 'png',
-      width: 512,
-      margin: 2,
-      errorCorrectionLevel: 'M',
-    });
-  }
-
-  /**
-   * QR специально для официальных sing-box-клиентов (SFA/SFI/SFM). Их сканер
-   * не распознаёт обычную https-ссылку как профиль (в отличие от Hiddify/
-   * NekoBox/v2rayNG) — нужен deep-link их же схемы sing-box://import-remote-
-   * profile с url/name в query. Ссылка внутри — на /full (с log/dns/inbounds),
-   * т.к. именно её ждёт официальный клиент.
-   */
-  async generatePeerSingBoxQrCode(peerName: string): Promise<Buffer> {
-    const peer = await this.findPeer(peerName);
-    const fullSubscriptionUrl = this.buildFullSubscriptionUrl(
-      this.requireVlessUuid(peer),
-    );
-
-    if (!fullSubscriptionUrl) {
-      throw new InternalServerErrorException(
-        'Подписка недоступна: не задан XRAY_DOMAIN',
-      );
-    }
-
-    const deepLink = `sing-box://import-remote-profile?url=${encodeURIComponent(
-      fullSubscriptionUrl,
-    )}&name=${encodeURIComponent(peer.name)}`;
-
-    return QRCode.toBuffer(deepLink, {
       type: 'png',
       width: 512,
       margin: 2,

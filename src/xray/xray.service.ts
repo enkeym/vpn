@@ -53,16 +53,8 @@ interface IXrayInboundClient {
   id: string;
   /** Ключ статистики трафика в StatsService (user>>>{email}>>>traffic>>>...). */
   email: string;
-  /** Только для Reality (TCP): XTLS Vision. На WS-инбаунде flow не поддерживается. */
+  /** Только для Reality (TCP): XTLS Vision. */
   flow?: string;
-}
-
-/**
- * Путь WS-эндпоинта — генерируется один раз и хранится в
- * configs/xray-ws.json, чтобы переживать рестарт (как параметры обфускации awg0).
- */
-interface IXrayWsParams {
-  wsPath: string;
 }
 
 /**
@@ -78,9 +70,6 @@ interface IXrayRealityParams {
 
 /** Публичные параметры каналов — из них SubscriptionService собирает outbound'ы. */
 export interface IXrayPublicParams {
-  /** null — домен не задан, туннельный канал выключен (остаётся только Reality). */
-  domain: string | null;
-  wsPath: string;
   host: string;
   realityPort: number;
   realityPublicKey: string;
@@ -95,22 +84,14 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(XrayService.name);
 
   /** Теги инбаундов, в которых живут VLESS-клиенты (см. buildServerConfig). */
-  private static readonly CLIENT_INBOUND_TAGS = ['ws-tunnel', 'reality-direct'];
+  private static readonly CLIENT_INBOUND_TAGS = ['reality-direct'];
 
-  private readonly wsParamsPath = path.join(
-    process.cwd(),
-    '/configs/xray-ws.json',
-  );
   private readonly realityParamsPath = path.join(
     process.cwd(),
     '/configs/xray-reality.json',
   );
   private readonly configPath = path.join(process.cwd(), '/configs/xray.json');
 
-  /** Внутренний порт WS-инбаунда — только localhost, наружу его отдаёт хостовый прокси. */
-  private readonly internalWsPort = Number(
-    process.env.XRAY_INTERNAL_WS_PORT || 8880,
-  );
   /**
    * Порт Reality — публичный и он же слушающий: контейнер работает в
    * network_mode: host и Xray биндится на него напрямую. По умолчанию 443,
@@ -132,8 +113,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
   );
-  /** Пусто — туннельный канал (WS+TLS) не поднимается, остаётся только Reality. */
-  private readonly domain = process.env.XRAY_DOMAIN || null;
+  private readonly selfStealEnabled =
+    process.env.XRAY_INTERNAL_STEAL_PORT !== undefined &&
+    process.env.XRAY_INTERNAL_STEAL_PORT !== '';
   /** Адрес сервера в прямой Reality-ссылке. Общий с AmneziaWG (WG_HOST). */
   private readonly host = process.env.WG_HOST || '';
   private readonly realityDest =
@@ -151,7 +133,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
 
   private readonly mutex = new Mutex();
 
-  private wsParams: IXrayWsParams | null = null;
   private realityParams: IXrayRealityParams | null = null;
   private clients: IXrayClient[] = [];
 
@@ -211,7 +192,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     // остальное продолжают работать — логируем и продолжаем без Xray.
     this.initPromise = this.mutex
       .runExclusive(async () => {
-        await this.loadOrGenerateWsParams();
         await this.loadOrGenerateRealityParams();
         await this.writeConfig();
         this.startProcess();
@@ -251,7 +231,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     const ports = this.behindProxy
-      ? [this.realityPort, this.internalRealityPort, this.internalWsPort]
+      ? [this.realityPort, this.internalRealityPort]
       : [this.realityPort];
     return (await Promise.all(ports.map(isTcpListening))).every(Boolean);
   }
@@ -284,20 +264,8 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Поднят ли туннельный канал (нужен домен, за которым стоит TLS-прокси). */
-  isTunnelEnabled(): boolean {
-    return this.enabled && this.domain !== null;
-  }
-
-  /**
-   * Стоит ли перед Xray nginx. Привязано к наличию домена: nginx нужен и для
-   * публичного порта Reality, и как HTTP-роутер для туннеля — такое же условие
-   * у docker-entrypoint.sh, который запускает nginx. Рассогласование здесь
-   * ломает всё: если Xray ждёт PROXY protocol, а nginx его не шлёт (или
-   * наоборот), хендшейк не состоится вообще.
-   */
   private get behindProxy(): boolean {
-    return this.domain !== null;
+    return this.selfStealEnabled;
   }
 
   private async isBinaryAvailable(): Promise<boolean> {
@@ -465,24 +433,19 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Без домена ws-инбаунда в конфиге нет — удалять пиров из него нельзя. */
   private activeInboundTags(): string[] {
-    return this.domain
-      ? XrayService.CLIENT_INBOUND_TAGS
-      : XrayService.CLIENT_INBOUND_TAGS.filter((tag) => tag !== 'ws-tunnel');
+    return XrayService.CLIENT_INBOUND_TAGS;
   }
 
   /** Публичные параметры для сборки outbound'ов в sing-box-подписке. */
   getPublicParams(): IXrayPublicParams {
-    if (!this.wsParams || !this.realityParams) {
+    if (!this.realityParams) {
       throw new InternalServerErrorException(
         'Xray не инициализирован — невозможно получить параметры',
       );
     }
 
     return {
-      domain: this.domain,
-      wsPath: this.wsParams.wsPath,
       host: this.host,
       realityPort: this.realityPort,
       realityPublicKey: this.realityParams.publicKey,
@@ -492,40 +455,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /**
-   * vless://-ссылка для клиента через туннель (WS+TLS). TLS терминирует край
-   * туннеля настоящим сертификатом домена, поэтому insecure не нужен.
-   */
-  buildClientLink(name: string, uuid: string): string {
-    if (!this.wsParams || !this.domain) {
-      throw new InternalServerErrorException(
-        'Туннельный канал Xray не настроен — невозможно собрать vless-ссылку',
-      );
-    }
-
-    const query = new URLSearchParams({
-      type: 'ws',
-      security: 'tls',
-      encryption: 'none',
-      path: this.wsParams.wsPath,
-      host: this.domain,
-      sni: this.domain,
-      // Тот же uTLS-отпечаток, что и в sing-box-подписке для этого канала —
-      // иначе DPI видит разный ClientHello в зависимости от того, импортировал
-      // ли клиент подписку или прямую ссылку.
-      fp: 'chrome',
-    });
-
-    return `vless://${uuid}@${this.domain}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
-      name,
-    )}`;
-  }
-
-  /**
-   * vless://-ссылка для клиента напрямую на IP сервера (Reality, без туннеля).
-   * Работает там, где недоступен туннель, но не защищена от блокировки по IP —
-   * дополняет, а не заменяет туннельный канал.
-   */
   buildRealityClientLink(name: string, uuid: string): string {
     if (!this.realityParams) {
       throw new InternalServerErrorException(
@@ -559,7 +488,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * транспорте, и так её может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    return [this.buildClientLink(`${name} · zrok · TLS ${this.domain}`, uuid)];
+    return [this.buildRealityClientLink(`${name} · Reality`, uuid)];
   }
 
   /**
@@ -603,22 +532,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
 
     return result;
-  }
-
-  private async loadOrGenerateWsParams(): Promise<void> {
-    if (existsSync(this.wsParamsPath)) {
-      const raw = await readFile(this.wsParamsPath, 'utf-8');
-      const parsed = JSON.parse(raw) as Partial<IXrayWsParams>;
-
-      if (parsed.wsPath) {
-        this.wsParams = { wsPath: parsed.wsPath };
-        return;
-      }
-    }
-
-    this.wsParams = { wsPath: `/${randomBytes(12).toString('hex')}` };
-    await writeFile(this.wsParamsPath, JSON.stringify(this.wsParams, null, 2));
-    this.logger.log('Сгенерирован новый WS-путь для Xray');
   }
 
   private async loadOrGenerateRealityParams(): Promise<void> {
@@ -678,25 +591,15 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private buildServerConfig(
     clients: IXrayClient[] = this.clients,
   ): Record<string, unknown> {
-    if (!this.wsParams || !this.realityParams) {
+    if (!this.realityParams) {
       throw new InternalServerErrorException('Xray не инициализирован');
     }
 
-    const inboundClients: IXrayInboundClient[] = clients.map((client) => ({
+    const realityClients: IXrayInboundClient[] = clients.map((client) => ({
       id: client.uuid,
-      // "email" — это просто ключ статистики в StatsService
-      // (user>>>{email}>>>traffic>>>...), не настоящий адрес почты.
       email: client.name,
+      flow: XRAY_REALITY_FLOW,
     }));
-
-    // Тот же список, но с XTLS Vision — только для Reality (network: tcp).
-    // Без flow внутри Reality идёт обычный TLS, то есть TLS-in-TLS, который DPI
-    // узнаёт по паттерну размеров пакетов даже при идеальной маскировке
-    // сертификата. На ws-инбаунде flow, наоборот, недопустим — Xray откажется
-    // стартовать, поэтому наборы клиентов разные.
-    const realityClients: IXrayInboundClient[] = inboundClients.map(
-      (client) => ({ ...client, flow: XRAY_REALITY_FLOW }),
-    );
 
     const inbounds: Record<string, unknown>[] = [
       {
@@ -707,34 +610,6 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
         settings: { address: '127.0.0.1' },
       },
     ];
-
-    // Туннельный канал есть только при заданном домене: без него TLS
-    // терминировать некому и ws-инбаунд просто некуда подключить.
-    if (this.domain) {
-      inbounds.push({
-        tag: 'ws-tunnel',
-        // Только localhost — снаружи этот порт публикует HTTP-роутер nginx,
-        // а TLS терминирует край туннеля и проксирует сюда обычным HTTP/WS.
-        // Xray сам TLS для этого инбаунда не делает.
-        listen: '127.0.0.1',
-        port: this.internalWsPort,
-        protocol: 'vless',
-        settings: {
-          clients: inboundClients,
-          decryption: 'none',
-        },
-        streamSettings: {
-          network: 'ws',
-          wsSettings: {
-            path: this.wsParams.wsPath,
-            // Прокси на пути могут рвать WebSocket после ~100с простоя.
-            // Пинг раз в 30с держит канал живым, пока пользователь не шлёт
-            // трафик — без него связь умирала от одной паузы в видео.
-            heartbeatPeriod: 30,
-          },
-        },
-      });
-    }
 
     inbounds.push({
       tag: 'reality-direct',
@@ -896,15 +771,12 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       }, 2000);
     });
 
-    const tunnel = this.domain
-      ? `ws-tunnel на localhost:${this.internalWsPort} (за nginx, ${this.domain}:${this.realityPort})`
-      : 'ws-tunnel выключен (XRAY_DOMAIN не задан)';
     const reality = this.behindProxy
       ? `reality-direct на localhost:${this.internalRealityPort} (за nginx:${this.realityPort})`
       : `reality-direct на :${this.realityPort} напрямую`;
 
     this.logger.log(
-      `xray запущен (pid=${proc.pid}): ${tunnel}, ${reality}, IPv6 ${
+      `xray запущен (pid=${proc.pid}): ${reality}, IPv6 ${
         this.ipv6Enabled ? 'включён' : 'выключен'
       }`,
     );

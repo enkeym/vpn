@@ -57,7 +57,6 @@ describe('PeersService without AWG', () => {
     process.env.AWG_ADDRESS = '10.9.0.1/16';
     process.env.XRAY_ENABLED = 'true';
     process.env.WG_HOST = 'direct.example.test';
-    process.env.XRAY_DOMAIN = 'vpn.example.test';
     jest.mocked(spawn).mockImplementation(() => {
       const child = new ChildProcess();
       jest.spyOn(child, 'kill').mockImplementation(() => {

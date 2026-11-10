@@ -13,7 +13,8 @@ import { UserCommandsRegistrar } from './user-commands.registrar';
 describe('UserCommandsRegistrar peer callback ownership', () => {
   const callbacks = new Map<string, unknown>();
   const findPeer = jest.fn();
-  const showQrCode = jest.fn();
+  const showVlessMenu = jest.fn();
+  const showVlessQrCode = jest.fn();
   const togglePeer = jest.fn();
   const showEditDescriptionPrompt = jest.fn();
   const deletePeer = jest.fn();
@@ -22,7 +23,8 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
   beforeEach(() => {
     callbacks.clear();
     findPeer.mockReset().mockResolvedValue({ telegramId: '200' });
-    showQrCode.mockReset();
+    showVlessMenu.mockReset();
+    showVlessQrCode.mockReset();
     togglePeer.mockReset();
     showEditDescriptionPrompt.mockReset();
     deletePeer.mockReset();
@@ -31,7 +33,8 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
       {} as MainHandler,
       {} as PeerCreateHandler,
       {
-        showQrCode,
+        showVlessMenu,
+        showVlessQrCode,
         togglePeer,
         showEditDescriptionPrompt,
       } as unknown as PeerManageHandler,
@@ -80,7 +83,7 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
     await invoke(/^vless_qr:(.+)$/, ctx);
 
     expect(findPeer).toHaveBeenCalledWith('peer-a');
-    expect(showQrCode).not.toHaveBeenCalled();
+    expect(showVlessQrCode).not.toHaveBeenCalled();
     expect(answerCallbackQuery).toHaveBeenCalledWith({
       text: 'Нет доступа к этому конфигу',
       show_alert: true,
@@ -106,14 +109,22 @@ describe('UserCommandsRegistrar peer callback ownership', () => {
     const { ctx: ownerContext } = context(200, ['vless_qr:peer-a', 'peer-a']);
     await invoke(/^vless_qr:(.+)$/, ownerContext);
 
-    expect(showQrCode).toHaveBeenCalledWith(ownerContext, 'peer-a');
+    expect(showVlessQrCode).toHaveBeenCalledWith(ownerContext, 'peer-a');
 
     findPeer.mockClear();
     const { ctx: adminContext } = context(100, ['vless_qr:peer-a', 'peer-a']);
     await invoke(/^vless_qr:(.+)$/, adminContext);
 
     expect(findPeer).not.toHaveBeenCalled();
-    expect(showQrCode).toHaveBeenCalledWith(adminContext, 'peer-a');
+    expect(showVlessQrCode).toHaveBeenCalledWith(adminContext, 'peer-a');
+  });
+
+  it('opens the VLESS menu for the config owner', async () => {
+    const { ctx } = context(200, ['vless_menu:peer-a', 'peer-a']);
+
+    await invoke(/^vless_menu:(.+)$/, ctx);
+
+    expect(showVlessMenu).toHaveBeenCalledWith(ctx, 'peer-a');
   });
 
   it('denies an administrator mutating another administrator config', async () => {

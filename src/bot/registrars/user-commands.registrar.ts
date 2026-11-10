@@ -377,21 +377,14 @@ export class UserCommandsRegistrar {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
+      await this.peerManageHandler.showVlessMenu(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_qr:(.+)$/, async (ctx) => {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showQrCode(ctx, ctx.match[1]);
-    });
-
-    bot.callbackQuery(/^vless_qr_sb:(.+)$/, async (ctx) => {
-      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
-      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
-      await ctx.answerCallbackQuery();
-      await this.peerManageHandler.showQrCode(ctx, ctx.match[1]);
+      await this.peerManageHandler.showVlessQrCode(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery(/^vless_json:(.+)$/, async (ctx) => {

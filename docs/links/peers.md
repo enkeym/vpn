@@ -20,8 +20,7 @@ paths:
   UDP не проверяет этот TCP-порт.
 
 ## Контракты
-- URL подписки — `src/peers/peers.service.ts:buildSubscriptionUrl` собирает
-  `${origin}/sub/${vlessUuid}`, принимает `src/subscription/subscription.controller.ts:getSubscription`,
-  публикует наружу `location /sub/` в `docker/nginx.conf`. Ссылки уже у клиентов:
-  путь и формат (выбор по User-Agent) менять нельзя.
+- VLESS Reality-ссылка собирается в `src/xray/xray.service.ts:buildRealityClientLink`.
+  В ней должны совпадать порт, public key, short ID, SNI и XTLS Vision с
+  инбаундом Xray.
 - Трафик VLESS ищется по `peer.name` — см. `xray.md`, «Имя клиента Xray».

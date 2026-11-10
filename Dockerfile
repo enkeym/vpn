@@ -115,8 +115,6 @@ RUN apk add --no-cache \
     sudo \
     # awg-quick — bash-скрипт
     bash \
-    # nginx — публичный порт Reality и HTTP-роутер для туннеля zrok.
-    # Запускается только при заданном XRAY_DOMAIN (см. docker-entrypoint.sh).
     nginx \
     # stream в Alpine отдельным пакетом: без него нет listener'а, отдающего 443 в Reality.
     nginx-mod-stream \
@@ -167,8 +165,6 @@ LABEL version="1.0"
 # Порты. EXPOSE в network_mode: host носит справочный характер — контейнер и
 # так слушает порты хоста, открывать их нужно в фаерволе VPS (см. README).
 EXPOSE 51821/udp
-# XRAY_REALITY_PORT: с заданным XRAY_DOMAIN его слушает nginx и отдаёт в Reality,
-# без домена — сам Xray.
 EXPOSE 443/tcp
 EXPOSE 3000
 
@@ -176,5 +172,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD wget -q --spider http://localhost:3000/health || exit 1
 
-# Запуск: nginx (если задан XRAY_DOMAIN) + NestJS — см. docker/docker-entrypoint.sh
 CMD ["/docker-entrypoint.sh"]

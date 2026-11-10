@@ -599,6 +599,8 @@ export const BotUi = {
       { text: '📄 Файл AmneziaWG', data: `get_config_file:${peer.name}` },
     ]);
 
+    rows.push([{ text: '🌐 VLESS Reality', data: `vless_menu:${peer.name}` }]);
+
     // Кнопка «Продлить» — если конфиг истёк или на паузе
     if (peer.paused || expired) {
       rows.push([{ text: '🔄 Продлить', data: `extend_peer:${peer.name}` }]);
@@ -656,31 +658,18 @@ export const BotUi = {
    */
   vlessMenuText: (peerName: string, body: string) =>
     `🌐 *VLESS для* \`${peerName}\`\n\n` +
-    'Подключение через туннель zrok: Hiddify, NekoBox, v2rayNG, Happ, ' +
-    'Streisand и другие клиенты. Прямого подключения к IP сервера в подписке нет.\n\n' +
+    'Прямое подключение Reality: Hiddify, NekoBox, v2rayNG, Happ, ' +
+    'Streisand и другие клиенты.\n\n' +
     `${body}\n\n` +
     '_Пошагово — в разделе «Инструкция» → «VLESS»._',
 
-  /**
-   * subscriptionAvailable — задан домен подписки (XRAY_DOMAIN). Без него QR
-   * для официального sing-box смысла не имеет: его deep-link ведёт на /sub.
-   */
-  vlessMenuKeyboard: (peerName: string, subscriptionAvailable: boolean) => {
-    const keyboard = new InlineKeyboard().text(
-      '📷 QR-код',
-      `vless_qr:${peerName}`,
-    );
-
-    if (subscriptionAvailable) {
-      keyboard.text('📷 QR для sing-box', `vless_qr_sb:${peerName}`);
-    }
-
-    return keyboard
+  vlessMenuKeyboard: (peerName: string) =>
+    new InlineKeyboard()
+      .text('📷 QR-код', `vless_qr:${peerName}`)
       .row()
       .text('📥 Файл sing-box (.json)', `vless_json:${peerName}`)
       .row()
-      .text('« Закрыть', 'close_media');
-  },
+      .text('« Закрыть', 'close_media'),
 
   /** Xray не поднялся (нет бинарника, не задан хост, процесс упал). */
   vlessUnavailable:
@@ -1000,6 +989,8 @@ export const BotUi = {
         .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
         .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
         .row()
+        .text('🌐 VLESS Reality', `vless_menu:${peer.name}`)
+        .row()
         .text('« К конфигам', `f_mc:${mId}`);
     }
 
@@ -1019,6 +1010,8 @@ export const BotUi = {
       .row()
       .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
       .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
+      .row()
+      .text('🌐 VLESS Reality', `vless_menu:${peer.name}`)
       .row()
       .text('🗑 Удалить', `f_dp:${peer.name}:${mId}`)
       .row()
@@ -1380,6 +1373,8 @@ export const BotUi = {
         .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
         .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
         .row()
+        .text('🌐 VLESS Reality', `vless_menu:${peer.name}`)
+        .row()
         .text('« К конфигам', `admin_client_configs:${telegramId}`);
     }
 
@@ -1408,6 +1403,8 @@ export const BotUi = {
       .row()
       .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
       .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
+      .row()
+      .text('🌐 VLESS Reality', `vless_menu:${peer.name}`)
       .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)
       .row()
@@ -1637,12 +1634,12 @@ export const BotUi = {
 
   instructionsVlessTitle:
     '🌐 *Подключение по VLESS*\n\n' +
-    'Бот выдаёт *ссылку-подписку* — она работает во всех популярных приложениях. Подключение идёт через туннель zrok: реальный IP сервера в ссылке не участвует.\n\n' +
+    'Бот выдаёт ссылку VLESS Reality для импорта в приложение.\n\n' +
     'Выберите вашу платформу — откроется пошаговая инструкция с точными названиями файлов для скачивания.\n\n' +
     '⚙️ _Пользуетесь Hiddify? Ниже есть кнопка «Готовые настройки» — файл со всеми рекомендуемыми параметрами, который применяется в одно касание, без ручной настройки._\n\n' +
     '⏱ _Обычно настройка занимает 2–3 минуты_\n\n' +
-    '🔀 _Плохо работает или заблокировано на конкретной сети?_ Попробуйте переключить сеть или повторить подключение позже — канал зависит от доступности туннеля.\n\n' +
-    '🌍 _IPv6 включён:_ сайты, доступные только по IPv6, открываются через тот же туннель — отдельно ничего настраивать не нужно.',
+    '🔀 _Плохо работает или заблокировано на конкретной сети?_ Попробуйте переключить сеть или повторить подключение позже.\n\n' +
+    '🌍 _IPv6 включён:_ сайты, доступные только по IPv6, открываются через тот же канал — отдельно ничего настраивать не нужно.',
 
   instructionsVlessKeyboard: () =>
     new InlineKeyboard()
@@ -1677,9 +1674,9 @@ export const BotUi = {
   instructionVlessAndroid:
     '📱 *VLESS на Android*\n\n' +
     '━━━ *1. NekoBox (рекомендуем)* ━━━\n' +
-    '_Поддерживает нашу подписку VLESS через туннель zrok._\n' +
+    '_Поддерживает VLESS Reality._\n' +
     '• [Скачать APK](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest) → `NekoBoxForAndroid-universal-release.apk`\n' +
-    '• «➕» вверху справа → *«Import profile from clipboard»* (вставит ссылку-подписку) или *«Scan QR code»*\n' +
+    '• «➕» вверху справа → *«Import profile from clipboard»* (вставит ссылку) или *«Scan QR code»*\n' +
     '• Переключатель ⏻ внизу справа — подключиться\n\n' +
     '━━━ *2. Hiddify* ━━━\n' +
     '• [Google Play](https://play.google.com/store/apps/details?id=app.hiddify.com) · [GitHub `.apk`](https://github.com/hiddify/hiddify-app/releases/latest)\n' +
@@ -1688,10 +1685,10 @@ export const BotUi = {
     '• Разово выставьте Маршрутизация → Входящие → *TUN → Mixed*, либо нажмите «⚙️ Готовые настройки Hiddify» в списке платформ — настроится само\n' +
     '• Не грузятся сайты? Settings → DNS → Remote DNS → `1.1.1.1`\n\n' +
     '━━━ *3. v2rayNG* ━━━\n' +
-    '_Тоже понимает нашу ссылку-подписку целиком._\n' +
+    '_Поддерживает VLESS Reality._\n' +
     '• [Скачать APK](https://github.com/2dust/v2rayNG/releases/latest) — ищите файл с `arm64-v8a` в названии\n' +
-    '• «+» → *«Импорт из буфера обмена»* — вставьте ссылку-подписку из бота\n' +
-    '• Выберите профиль *zrok* и подключитесь\n\n' +
+    '• «+» → *«Импорт из буфера обмена»* — вставьте ссылку из бота\n' +
+    '• Выберите профиль *Reality* и подключитесь\n\n' +
     '✅ Весь трафик (включая Telegram и YouTube) идёт через VPN.',
 
   instructionVlessIos:
@@ -1711,7 +1708,7 @@ export const BotUi = {
     '• *Shadowrocket* — платный (~$3), самый гибкий, для опытных: [App Store](https://apps.apple.com/app/shadowrocket/id932747118)\n\n' +
     '💡 _Не хотите трогать основной Apple ID?_ Создайте отдельный Apple ID с регионом США и войдите им *только* в App Store (Настройки → App Store → аккаунт), не трогая iCloud. Тогда основной аккаунт, фото и переписки останутся нетронутыми.\n\n' +
     '*Шаг 3: Добавьте конфиг*\n' +
-    '• Скопируйте *ссылку-подписку* из бота (нажмите на неё) — профиль zrok\n' +
+    '• Скопируйте ссылку из бота (нажмите на неё) — профиль Reality\n' +
     '• Откройте приложение → «+» → «Добавить из буфера обмена» (Import from clipboard)\n' +
     '• _Или_ «+» → «Сканировать QR-код» и наведите на QR из бота\n\n' +
     '*Шаг 4: Подключитесь*\n' +
