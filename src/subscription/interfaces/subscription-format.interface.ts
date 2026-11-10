@@ -1,5 +1,5 @@
 /** Формат ответа подписки. */
-export type TSubscriptionFormat = 'base64' | 'singbox';
+export type TSubscriptionFormat = 'base64' | 'singbox' | 'xray';
 
 /**
  * Клиенты на движке sing-box — им нужен JSON, остальным base64. Список
@@ -22,7 +22,9 @@ export function resolveSubscriptionFormat(
   userAgent: string | undefined,
   explicit: string | undefined,
 ): TSubscriptionFormat {
-  if (explicit === 'base64' || explicit === 'singbox') return explicit;
+  if (explicit === 'base64' || explicit === 'singbox' || explicit === 'xray') {
+    return explicit;
+  }
 
   const ua = (userAgent ?? '').toLowerCase();
   return SINGBOX_CLIENT_MARKERS.some((marker) => ua.includes(marker))

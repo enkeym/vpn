@@ -26,6 +26,12 @@ describe('resolveSubscriptionFormat', () => {
     expect(resolveSubscriptionFormat('NekoBox/1.4', 'singbox')).toBe('singbox');
   });
 
+  it('serves the Xray config array only on an explicit request', () => {
+    expect(resolveSubscriptionFormat('Happ/3.0', 'xray')).toBe('xray');
+    expect(resolveSubscriptionFormat('Hiddify/2.0', 'xray')).toBe('xray');
+    expect(resolveSubscriptionFormat(undefined, 'xray')).toBe('xray');
+  });
+
   it('ignores an unsupported override and detects the client', () => {
     expect(resolveSubscriptionFormat('NekoBox/1.4', 'invalid')).toBe('base64');
   });

@@ -33,7 +33,14 @@ export class SubscriptionController {
 
     this.subscriptionService.applySubscriptionHeaders(res, peer);
 
-    if (resolveSubscriptionFormat(userAgent, format) === 'singbox') {
+    const resolvedFormat = resolveSubscriptionFormat(userAgent, format);
+
+    if (resolvedFormat === 'xray') {
+      res.json(this.subscriptionService.buildXrayConfigArray(peer));
+      return;
+    }
+
+    if (resolvedFormat === 'singbox') {
       res.json(this.subscriptionService.buildSingBoxConfig(peer));
       return;
     }

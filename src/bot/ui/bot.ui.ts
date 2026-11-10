@@ -661,13 +661,47 @@ export const BotUi = {
     'Прямое подключение Reality: Hiddify, NekoBox, v2rayNG, Happ, ' +
     'Streisand и другие клиенты.\n\n' +
     `${body}\n\n` +
+    '_Каналов три: TCP, gRPC и XHTTP. Если один не подключается, возьмите ' +
+    'соседнюю ссылку — остальные настройки те же._\n\n' +
     '_Пошагово — в разделе «Инструкция» → «VLESS»._',
 
   vlessMenuKeyboard: (peerName: string) =>
     new InlineKeyboard()
+      .text('🔗 Одна ссылка — все протоколы', `all_protocols:${peerName}`)
+      .row()
       .text('📷 QR-код', `vless_qr:${peerName}`)
       .row()
       .text('📥 Файл sing-box (.json)', `vless_json:${peerName}`)
+      .row()
+      .text('« Закрыть', 'close_media'),
+
+  /**
+   * Одна ссылка-подписка со всеми каналами и deep-link'ами клиентов. Deep-link
+   * идёт текстом в code-блоке: Telegram не принимает произвольные схемы в
+   * URL-кнопках, а code-строку пользователь копирует одним нажатием.
+   */
+  allProtocolsText: (peerName: string, url: string) =>
+    `🔗 *Одна ссылка — все протоколы*\n\n` +
+    `Для \`${peerName}\` в подписке три канала: Reality TCP, gRPC и XHTTP. ` +
+    'Профиль «⚡ Авто-обход» сам выбирает откликнувшийся канал, отдельные ' +
+    'профили — на случай, когда нужен конкретный.\n\n' +
+    `*Ссылка-подписка:*\n\`${url}\`\n\n` +
+    '*Открыть сразу в приложении:*\n' +
+    `\`happ://add/${url}\`\n` +
+    `\`hiddify://import/${url}\`\n` +
+    `\`v2rayng://install-sub?url=${encodeURIComponent(url)}\`\n` +
+    `\`sing-box://import-remote-profile?url=${encodeURIComponent(url)}\`\n\n` +
+    '_Канал перестал подключаться — выберите в приложении профиль с другим ' +
+    'каналом, ссылку менять не нужно._',
+
+  allProtocolsUnavailable:
+    '🔗 *Одна ссылка — все протоколы*\n\n' +
+    'Ссылка-подписка сейчас недоступна. Прямые ссылки на каналы — в ' +
+    'сообщении «🌐 VLESS».',
+
+  allProtocolsKeyboard: (peerName: string) =>
+    new InlineKeyboard()
+      .text('« К VLESS', `vless_menu:${peerName}`)
       .row()
       .text('« Закрыть', 'close_media'),
 
@@ -1663,12 +1697,16 @@ export const BotUi = {
     '📖 *Официальные ресурсы клиентов*\n\n' +
     '*Hiddify*\n' +
     '• [Сайт](https://hiddify.com/) · [GitHub](https://github.com/hiddify/hiddify-app/releases/latest)\n\n' +
+    '*Happ (iOS)*\n' +
+    '• [App Store](https://apps.apple.com/app/happ-proxy-utility/id6504287215)\n\n' +
     '*v2rayNG (Android)*\n' +
     '• [GitHub](https://github.com/2dust/v2rayNG/releases/latest)\n\n' +
     '*v2rayN (Windows/macOS/Linux)*\n' +
     '• [GitHub](https://github.com/2dust/v2rayN/releases/latest)\n\n' +
     '*NekoBox / NekoRay*\n' +
     '• [Android](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases/latest) · [Desktop](https://github.com/MatsuriDayo/nekoray/releases/latest)\n\n' +
+    '_gRPC и XHTTP требуют свежего ядра: обновляйте приложение и не откатывайтесь ' +
+    'на старые версии — иначе эти каналы просто не появятся в списке._\n\n' +
     '_Выберите платформу для пошаговой инструкции_',
 
   instructionVlessAndroid:

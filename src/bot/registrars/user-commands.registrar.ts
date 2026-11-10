@@ -380,6 +380,13 @@ export class UserCommandsRegistrar {
       await this.peerManageHandler.showVlessMenu(ctx, ctx.match[1]);
     });
 
+    bot.callbackQuery(/^all_protocols:(.+)$/, async (ctx) => {
+      const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
+      if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
+      await ctx.answerCallbackQuery();
+      await this.peerManageHandler.showAllProtocols(ctx, ctx.match[1]);
+    });
+
     bot.callbackQuery(/^vless_qr:(.+)$/, async (ctx) => {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;

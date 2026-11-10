@@ -22,5 +22,12 @@ paths:
 ## Контракты
 - VLESS Reality-ссылка собирается в `src/xray/xray.service.ts:buildRealityClientLink`.
   В ней должны совпадать порт, public key, short ID, SNI и XTLS Vision с
-  инбаундом Xray.
+  инбаундом Xray. `buildShareLinks` возвращает три ссылки — TCP, gRPC, XHTTP —
+  с именами `«<peer> · Reality TCP|gRPC|XHTTP»` в якоре; прямой QR и base64
+  собираются из этого же массива, поэтому новый канал попадает везде сразу.
+- `GET /sub/<uuid>` в `src/subscription/subscription.controller.ts` отдаёт три
+  формата: по умолчанию base64 со всеми `vless://`, `singbox` — клиентам,
+  опознанным по User-Agent (`resolveSubscriptionFormat`), `xray` — только явным
+  `?format=xray` и в приоритете над UA. Менять список UA-маркеров нельзя без
+  проверки выданных ссылок: Happ и прочие получают base64.
 - Трафик VLESS ищется по `peer.name` — см. `xray.md`, «Имя клиента Xray».

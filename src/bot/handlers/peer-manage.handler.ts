@@ -354,6 +354,49 @@ export class PeerManageHandler {
     }
   }
 
+  /**
+   * Одна ссылка-подписка со всеми каналами и deep-link'ами клиентов. Права
+   * проверяет регистратор (ensurePeerAccess) — как у остальных VLESS-кнопок.
+   */
+  async showAllProtocols(ctx: Context, peerName: string) {
+    if (!ctx.chat) return;
+
+    if (!this.peersService.isXrayAvailable()) {
+      await ctx.reply(BotUi.vlessUnavailable, {
+        parse_mode: 'Markdown',
+        reply_markup: BotUi.closeMediaKeyboard(),
+      });
+      return;
+    }
+
+    try {
+      const peer = await this.peersService.findPeer(peerName);
+      const url = this.subscriptionService.buildSubscriptionUrl(peer, 'xray');
+
+      if (!url) {
+        await ctx.reply(BotUi.allProtocolsUnavailable, {
+          parse_mode: 'Markdown',
+          reply_markup: BotUi.allProtocolsKeyboard(peerName),
+        });
+        return;
+      }
+
+      await ctx.reply(BotUi.allProtocolsText(peerName, url), {
+        parse_mode: 'Markdown',
+        link_preview_options: { is_disabled: true },
+        reply_markup: BotUi.allProtocolsKeyboard(peerName),
+      });
+    } catch (error) {
+      this.logger.error(`Ошибка выдачи ссылки-подписки: ${error}`);
+      await ctx
+        .answerCallbackQuery({
+          text: 'Не удалось собрать ссылку-подписку',
+          show_alert: true,
+        })
+        .catch(() => {});
+    }
+  }
+
   /** QR со ссылкой-подпиской — для Hiddify, NekoBox, v2rayNG, Streisand. */
   async showVlessQrCode(ctx: Context, peerName: string) {
     await this.sendVlessQr(

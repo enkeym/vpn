@@ -1,7 +1,9 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
 import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
+import type { IXrayPublicParams } from 'src/xray/xray.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
+import type { TSubscriptionFormat } from './interfaces/subscription-format.interface';
 
 /** Минимальный набор полей пира для сборки любого формата подписки. */
 export type TSubscriptionPeer = Pick<TPeerSelect, 'name' | 'vlessUuid'>;
@@ -10,9 +12,42 @@ const DNS_REMOTE_TAG = 'dns-remote';
 const DNS_BOOTSTRAP_TAG = 'dns-bootstrap';
 const DNS_SERVER = '1.1.1.1';
 
+/** DNS Xray-профилей: резолвим прямо, без DoH-петли вокруг туннеля. */
+const XRAY_JSON_DNS_SERVERS = ['1.1.1.1', '1.0.0.1'];
+
+/**
+ * Дробление ClientHello для TCP+Reality. Отдельный слой защиты «голого» TCP:
+ * reality-хендшейк уходит несколькими короткими пакетами, а не одним.
+ */
+const XRAY_FRAGMENT_SETTINGS = {
+  length: '10-20',
+  packets: 'tlshello',
+  interval: '0',
+};
+
 @Injectable()
 export class SubscriptionService {
+  /**
+   * Публичный HTTPS-адрес приложения (reverse proxy на PORT). Без него
+   * /sub/<uuid> снаружи недоступен, поэтому бот показывает только прямые
+   * ссылки — не выдаём заведомо нерабочую ссылку-подписку.
+   */
+  private readonly publicBaseUrl = (process.env.SUB_PUBLIC_URL || '').replace(
+    /\/+$/,
+    '',
+  );
+
   constructor(private readonly xrayService: XrayService) {}
+
+  /** Ссылка-подписка для импорта одним URL; null — SUB_PUBLIC_URL не задан. */
+  buildSubscriptionUrl(
+    peer: TSubscriptionPeer,
+    format?: TSubscriptionFormat,
+  ): string | null {
+    if (!this.publicBaseUrl || !peer.vlessUuid) return null;
+    const query = format ? `?format=${format}` : '';
+    return `${this.publicBaseUrl}/sub/${peer.vlessUuid}${query}`;
+  }
 
   /**
    * Универсальный формат подписки: ссылки через перевод строки, всё вместе
@@ -34,6 +69,212 @@ export class SubscriptionService {
     }
 
     return this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
+  }
+
+  /**
+   * Массив готовых Xray-конфигов (формат Happ/Streisand/V2Box): «⚡
+   * Авто-обход» с balancer'ом leastLoad по всем каналам плюс отдельный профиль
+   * на каждый канал. Один канал не прошёл DPI — пользователь переключает
+   * профиль вручную, не меняя подписку.
+   */
+  buildXrayConfigArray(
+    peer: TSubscriptionPeer,
+  ): Array<Record<string, unknown>> {
+    if (!peer.vlessUuid) {
+      throw new InternalServerErrorException(
+        `У конфига ${peer.name} отсутствует vlessUuid`,
+      );
+    }
+
+    const xray = this.xrayService.getPublicParams();
+    const uuid = peer.vlessUuid;
+
+    const tcpOutbound = this.buildXrayVlessOutbound(xray, uuid, 'tcp');
+    const grpcOutbound = this.buildXrayVlessOutbound(xray, uuid, 'grpc');
+    const xhttpOutbound = this.buildXrayVlessOutbound(xray, uuid, 'xhttp');
+
+    const fragmentOutbound = {
+      tag: 'fragment',
+      protocol: 'freedom',
+      settings: { fragment: XRAY_FRAGMENT_SETTINGS },
+    };
+    const directOutbound = { tag: 'direct', protocol: 'freedom' };
+    const blockOutbound = { tag: 'block', protocol: 'blackhole' };
+
+    const directRules = [
+      { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
+      { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
+    ];
+
+    const channelProfile = (
+      remarks: string,
+      outbound: Record<string, unknown>,
+      extraOutbounds: Record<string, unknown>[] = [],
+    ): Record<string, unknown> => ({
+      remarks,
+      dns: {
+        servers: XRAY_JSON_DNS_SERVERS,
+        queryStrategy: 'UseIP',
+      },
+      outbounds: [outbound, ...extraOutbounds, directOutbound, blockOutbound],
+      routing: {
+        domainStrategy: 'IPIfNonMatch',
+        rules: directRules,
+      },
+    });
+
+    // selector 'proxy' — префикс тегов proxy-tcp/proxy-grpc/proxy-xhttp:
+    // balancer сам исключает из выбора канал, который не отвечает.
+    const autoProfile: Record<string, unknown> = {
+      remarks: '⚡ Авто-обход',
+      dns: {
+        servers: XRAY_JSON_DNS_SERVERS,
+        queryStrategy: 'UseIP',
+      },
+      outbounds: [
+        tcpOutbound,
+        grpcOutbound,
+        xhttpOutbound,
+        fragmentOutbound,
+        directOutbound,
+        blockOutbound,
+      ],
+      routing: {
+        domainStrategy: 'IPIfNonMatch',
+        rules: [
+          ...directRules,
+          {
+            type: 'field',
+            network: 'tcp,udp',
+            balancerTag: 'Super_Balancer',
+          },
+        ],
+        balancers: [
+          {
+            tag: 'Super_Balancer',
+            selector: ['proxy'],
+            fallbackTag: 'direct',
+            strategy: {
+              type: 'leastLoad',
+              settings: { maxRTT: '1s', expected: 2, tolerance: 0.01 },
+            },
+          },
+        ],
+      },
+      burstObservatory: {
+        subjectSelector: ['proxy'],
+        pingConfig: {
+          destination: 'https://www.gstatic.com/generate_204',
+          connectivity: 'https://www.gstatic.com/generate_204',
+          interval: '1m',
+          timeout: '3s',
+          sampling: 3,
+        },
+      },
+    };
+
+    return [
+      autoProfile,
+      channelProfile('Reality gRPC', grpcOutbound),
+      channelProfile('Reality XHTTP', xhttpOutbound),
+      channelProfile('Reality TCP + fragment', tcpOutbound, [fragmentOutbound]),
+    ];
+  }
+
+  /**
+   * Один VLESS+Reality outbound. flow — только у TCP: XTLS Vision несовместим
+   * с gRPC/XHTTP, а fragment-диалер нужен лишь «голому» TCP.
+   */
+  private buildXrayVlessOutbound(
+    xray: IXrayPublicParams,
+    uuid: string,
+    channel: 'tcp' | 'grpc' | 'xhttp',
+  ): Record<string, unknown> {
+    const realitySettings = {
+      serverName: xray.realitySni,
+      publicKey: xray.realityPublicKey,
+      shortId: xray.realityShortId,
+      fingerprint: 'chrome',
+      spiderX: '/',
+    };
+
+    const user: Record<string, unknown> = {
+      id: uuid,
+      encryption: 'none',
+    };
+
+    if (channel === 'tcp') {
+      user.flow = XRAY_REALITY_FLOW;
+      return {
+        tag: 'proxy-tcp',
+        protocol: 'vless',
+        settings: {
+          vnext: [
+            {
+              address: xray.host,
+              port: xray.realityPort,
+              users: [user],
+            },
+          ],
+        },
+        streamSettings: {
+          network: 'tcp',
+          security: 'reality',
+          realitySettings,
+          // Дробим ClientHello только у «голого» TCP — gRPC/XHTTP в этом не
+          // нуждаются, лишняя обработка им только мешает.
+          sockopt: { dialerProxy: 'fragment' },
+        },
+      };
+    }
+
+    if (channel === 'grpc') {
+      return {
+        tag: 'proxy-grpc',
+        protocol: 'vless',
+        settings: {
+          vnext: [
+            {
+              address: xray.host,
+              port: xray.grpcPort,
+              users: [user],
+            },
+          ],
+        },
+        streamSettings: {
+          network: 'grpc',
+          security: 'reality',
+          grpcSettings: {
+            serviceName: xray.grpcService,
+            multiMode: true,
+          },
+          realitySettings,
+        },
+      };
+    }
+
+    return {
+      tag: 'proxy-xhttp',
+      protocol: 'vless',
+      settings: {
+        vnext: [
+          {
+            address: xray.host,
+            port: xray.xhttpPort,
+            users: [user],
+          },
+        ],
+      },
+      streamSettings: {
+        network: 'xhttp',
+        security: 'reality',
+        xhttpSettings: {
+          path: xray.xhttpPath,
+          mode: xray.xhttpMode,
+        },
+        realitySettings,
+      },
+    };
   }
 
   /**
@@ -79,6 +320,19 @@ export class SubscriptionService {
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
     const realityTag = `Reality · ${xray.host}`;
+    const grpcTag = `Reality gRPC · ${xray.host}`;
+    const xhttpTag = `Reality XHTTP · ${xray.host}`;
+
+    const realityTls = {
+      enabled: true,
+      server_name: xray.realitySni,
+      utls: { enabled: true, fingerprint: 'chrome' },
+      reality: {
+        enabled: true,
+        public_key: xray.realityPublicKey,
+        short_id: xray.realityShortId,
+      },
+    };
 
     const outbounds: Record<string, unknown>[] = [];
     const channelTags: string[] = [];
@@ -98,18 +352,57 @@ export class SubscriptionService {
       server_port: xray.realityPort,
       uuid: peer.vlessUuid,
       flow: XRAY_REALITY_FLOW,
-      tls: {
-        enabled: true,
-        server_name: xray.realitySni,
-        utls: { enabled: true, fingerprint: 'chrome' },
-        reality: {
-          enabled: true,
-          public_key: xray.realityPublicKey,
-          short_id: xray.realityShortId,
-        },
-      },
+      tls: realityTls,
     });
     channelTags.push(realityTag);
+
+    // gRPC и XHTTP — новые каналы той же подписки: urltest.auto собирается
+    // из channelTags, поэтому автопереключение подхватывает их без правок.
+    // flow здесь не выставляется (XTLS Vision ломает оба транспорта).
+    outbounds.push({
+      type: 'vless',
+      tag: grpcTag,
+      ...(includeDnsReferences
+        ? {
+            domain_resolver: {
+              server: DNS_BOOTSTRAP_TAG,
+              strategy: domainStrategy,
+            },
+          }
+        : {}),
+      server: xray.host,
+      server_port: xray.grpcPort,
+      uuid: peer.vlessUuid,
+      tls: realityTls,
+      transport: {
+        type: 'grpc',
+        service_name: xray.grpcService,
+      },
+    });
+    channelTags.push(grpcTag);
+
+    outbounds.push({
+      type: 'vless',
+      tag: xhttpTag,
+      ...(includeDnsReferences
+        ? {
+            domain_resolver: {
+              server: DNS_BOOTSTRAP_TAG,
+              strategy: domainStrategy,
+            },
+          }
+        : {}),
+      server: xray.host,
+      server_port: xray.xhttpPort,
+      uuid: peer.vlessUuid,
+      tls: realityTls,
+      transport: {
+        type: 'xhttp',
+        path: xray.xhttpPath,
+        mode: xray.xhttpMode,
+      },
+    });
+    channelTags.push(xhttpTag);
 
     outbounds.push(
       {

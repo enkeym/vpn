@@ -75,6 +75,13 @@ export interface IXrayPublicParams {
   realityPublicKey: string;
   realityShortId: string;
   realitySni: string;
+  /** gRPC+Reality: порт и имя сервиса (без flow — иначе клиент не подключится). */
+  grpcPort: number;
+  grpcService: string;
+  /** XHTTP+Reality: порт, путь и режим (без flow). */
+  xhttpPort: number;
+  xhttpPath: string;
+  xhttpMode: string;
   /** Разрешён ли IPv6 наружу — см. XRAY_IPV6. */
   ipv6: boolean;
 }
@@ -84,7 +91,11 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(XrayService.name);
 
   /** Теги инбаундов, в которых живут VLESS-клиенты (см. buildServerConfig). */
-  private static readonly CLIENT_INBOUND_TAGS = ['reality-direct'];
+  private static readonly CLIENT_INBOUND_TAGS = [
+    'reality-direct',
+    'reality-grpc',
+    'reality-xhttp',
+  ];
 
   private readonly realityParamsPath = path.join(
     process.cwd(),
@@ -109,6 +120,18 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly internalRealityPort = Number(
     process.env.XRAY_INTERNAL_REALITY_PORT || 8444,
   );
+  /**
+   * Остальные Reality-каналы: gRPC и XHTTP. Прямой TCP+Reality с 17.02.2026
+   * режется поведенческим анализом, эти транспорты выживают там, где голый
+   * TCP замораживают. Порт общий с Reality, ключи и SNI тоже — меняется только
+   * транспорт, поэтому ссылки и подписка остаются совместимыми.
+   */
+  public readonly grpcPort = Number(process.env.XRAY_GRPC_PORT || 27443);
+  private readonly grpcService = process.env.XRAY_GRPC_SERVICE || 'grpc-vk';
+  public readonly xhttpPort = Number(process.env.XRAY_XHTTP_PORT || 27444);
+  private readonly xhttpPath = process.env.XRAY_XHTTP_PATH || '/xhttp';
+  /** auto | packet-up | stream-up | stream-one — см. docs/links/xray.md. */
+  private readonly xhttpMode = process.env.XRAY_XHTTP_MODE || 'auto';
   /** Внутренний порт StatsService API — только localhost, наружу не публикуется. */
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
@@ -451,11 +474,45 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       realityPublicKey: this.realityParams.publicKey,
       realityShortId: this.realityParams.shortId,
       realitySni: this.realitySni,
+      grpcPort: this.grpcPort,
+      grpcService: this.grpcService,
+      xhttpPort: this.xhttpPort,
+      xhttpPath: this.xhttpPath,
+      xhttpMode: this.xhttpMode,
       ipv6: this.ipv6Enabled,
     };
   }
 
   buildRealityClientLink(name: string, uuid: string): string {
+    return this.buildVlessLink(name, uuid, this.realityPort, {
+      type: 'tcp',
+      flow: XRAY_REALITY_FLOW,
+    });
+  }
+
+  /** gRPC: flow не выставляется — XTLS Vision ломает gRPC-транспорт. */
+  buildGrpcClientLink(name: string, uuid: string): string {
+    return this.buildVlessLink(name, uuid, this.grpcPort, {
+      type: 'grpc',
+      serviceName: this.grpcService,
+    });
+  }
+
+  /** XHTTP: flow не выставляется по той же причине. */
+  buildXhttpClientLink(name: string, uuid: string): string {
+    return this.buildVlessLink(name, uuid, this.xhttpPort, {
+      type: 'xhttp',
+      path: this.xhttpPath,
+      mode: this.xhttpMode,
+    });
+  }
+
+  private buildVlessLink(
+    name: string,
+    uuid: string,
+    port: number,
+    transport: Record<string, string>,
+  ): string {
     if (!this.realityParams) {
       throw new InternalServerErrorException(
         'Xray не инициализирован — невозможно собрать reality-ссылку',
@@ -463,11 +520,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
 
     const query = new URLSearchParams({
-      type: 'tcp',
+      ...transport,
       security: 'reality',
       encryption: 'none',
       pbk: this.realityParams.publicKey,
-      flow: XRAY_REALITY_FLOW,
       // Тот же отпечаток, что и в sing-box-подписке (SubscriptionService) —
       // единый uTLS-fingerprint для одного Reality-канала, иначе DPI видит
       // рассогласование ClientHello между прямой ссылкой и подпиской.
@@ -476,7 +532,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       sid: this.realityParams.shortId,
     });
 
-    return `vless://${uuid}@${this.host}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
+    return `vless://${uuid}@${this.host}:${port}?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
@@ -488,7 +544,11 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * транспорте, и так её может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    return [this.buildRealityClientLink(`${name} · Reality`, uuid)];
+    return [
+      this.buildRealityClientLink(`${name} · Reality TCP`, uuid),
+      this.buildGrpcClientLink(`${name} · Reality gRPC`, uuid),
+      this.buildXhttpClientLink(`${name} · Reality XHTTP`, uuid),
+    ];
   }
 
   /**
@@ -600,6 +660,29 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       email: client.name,
       flow: XRAY_REALITY_FLOW,
     }));
+    // gRPC и XHTTP живут без flow: XTLS Vision несовместим с этими
+    // транспортами, и при рассогласовании клиент не подключится вовсе.
+    const transportClients: IXrayInboundClient[] = clients.map((client) => ({
+      id: client.uuid,
+      email: client.name,
+    }));
+
+    const realitySettings = {
+      show: false,
+      dest: this.realityDest,
+      // xver — версия PROXY protocol, которую Reality ШЛЁТ на dest.
+      // Маскировочный сайт про PROXY ничего не знает, поэтому 0.
+      xver: 0,
+      serverNames: [this.realitySni],
+      privateKey: this.realityParams.privateKey,
+      shortIds: ['', this.realityParams.shortId],
+    };
+    const sniffing = {
+      enabled: true,
+      destOverride: ['http', 'tls', 'quic'],
+    };
+    // Новые каналы слушают напрямую (nginx разводчиком на них не стоит).
+    const directListen = this.ipv6Enabled ? '::' : '0.0.0.0';
 
     const inbounds: Record<string, unknown>[] = [
       {
@@ -638,21 +721,51 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
         ...(this.behindProxy
           ? { tcpSettings: { acceptProxyProtocol: true } }
           : {}),
-        realitySettings: {
-          show: false,
-          dest: this.realityDest,
-          // xver — версия PROXY protocol, которую Reality ШЛЁТ на dest.
-          // Маскировочный сайт про PROXY ничего не знает, поэтому 0.
-          xver: 0,
-          serverNames: [this.realitySni],
-          privateKey: this.realityParams.privateKey,
-          shortIds: ['', this.realityParams.shortId],
+        realitySettings,
+      },
+      sniffing,
+    });
+
+    inbounds.push({
+      tag: 'reality-grpc',
+      listen: directListen,
+      port: this.grpcPort,
+      protocol: 'vless',
+      settings: {
+        clients: transportClients,
+        decryption: 'none',
+      },
+      streamSettings: {
+        network: 'grpc',
+        security: 'reality',
+        grpcSettings: {
+          serviceName: this.grpcService,
+          multiMode: true,
         },
+        realitySettings,
       },
-      sniffing: {
-        enabled: true,
-        destOverride: ['http', 'tls', 'quic'],
+      sniffing,
+    });
+
+    inbounds.push({
+      tag: 'reality-xhttp',
+      listen: directListen,
+      port: this.xhttpPort,
+      protocol: 'vless',
+      settings: {
+        clients: transportClients,
+        decryption: 'none',
       },
+      streamSettings: {
+        network: 'xhttp',
+        security: 'reality',
+        xhttpSettings: {
+          path: this.xhttpPath,
+          mode: this.xhttpMode,
+        },
+        realitySettings,
+      },
+      sniffing,
     });
 
     return {

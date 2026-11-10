@@ -16,8 +16,47 @@ paths:
   `XRAY_REALITY_DEST`. Для него нужны `configs/steal-cert.pem` и
   `configs/steal-key.pem`; при отсутствии сертификата entrypoint останавливает
   контейнер до старта Xray.
+- `XRAY_GRPC_PORT` (27443), `XRAY_GRPC_SERVICE` (`grpc-vk`) — канал
+  `reality-grpc`. Имя сервиса уезжает и в инбаунд (`grpcSettings.serviceName`),
+  и в ссылку (`serviceName`), и в sing-box-подписку: разойдутся — клиент не
+  подключится.
+- `XRAY_XHTTP_PORT` (27444), `XRAY_XHTTP_PATH` (`/xhttp`), `XRAY_XHTTP_MODE`
+  (`auto`) — канал `reality-xhttp`. Путь стоит заменить на случайный; режимы
+  `auto | packet-up | stream-up | stream-one` должны совпадать в ссылке и
+  инбаунде.
+- `SUB_PUBLIC_URL` — публичный HTTPS-адрес приложения, из него
+  `src/subscription/subscription.service.ts:buildSubscriptionUrl` собирает
+  `/sub/<uuid>` для кнопки «Одна ссылка — все протоколы». Пусто — ссылки нет,
+  бот предлагает прямые `vless://`.
+
+## Каналы
+
+| Инбаунд | Транспорт | Порт | `flow` | Примечание |
+|---|---|---|---|---|
+| `reality-direct` | tcp + reality | `XRAY_REALITY_PORT`, при self-steal `XRAY_INTERNAL_REALITY_PORT` | `xtls-rprx-vision` | Единственный за nginx: `acceptProxyProtocol` только здесь |
+| `reality-grpc` | grpc + reality | `XRAY_GRPC_PORT` | нет | `multiMode: true`; XTLS Vision ломает gRPC |
+| `reality-xhttp` | xhttp + reality | `XRAY_XHTTP_PORT` | нет | `path`/`mode` обязаны совпадать с клиентом |
+
+Все три используют один `realitySettings` (dest, SNI, privateKey, shortIds) и
+один набор клиентов: UUID пира и `email` одинаковые. gRPC и XHTTP слушают
+напрямую (`::` или `0.0.0.0`), nginx на них не стоит — self-steal на 443 к ним
+не относится.
 
 ## Контракты
+- `CLIENT_INBOUND_TAGS` в `src/xray/xray.service.ts` — список всех инбаундов с
+  VLESS-клиентами (`reality-direct`, `reality-grpc`, `reality-xhttp`). Новый
+  инбаунд без записи сюда не получит `rmu`-удаление: ушедший пир останется в
+  конфиге до перезапуска. `adu` работает иначе — берёт теги из конфига,
+  собранного тем же `buildServerConfig`.
+- `flow` задаётся по инбаунду, а не по клиенту: TCP получает `xtls-rprx-vision`,
+  gRPC и XHTTP — объект клиента без `flow`. Одно и то же значение на всех
+  инбаундах рвёт подключение к gRPC/XHTTP.
+- XHTTP требует совпадения версий ядра Xray на сервере и в клиенте: формат
+  `xhttpSettings` и режим передачи менялись между версиями. Для старых клиентов
+  остаются gRPC и TCP — версия закреплена в `ARG XRAY_VERSION`.
+- gRPC по Reality идёт поверх HTTP/2; ALPN `h2` выставляет сам Reality, отдельной
+  настройки в инбаунде нет. Если канал не поднимается, проверять в первую очередь
+  версию ядра и `serviceName`, а не ALPN.
 - PROXY protocol — `proxy_protocol on` в `docker/nginx.conf` ↔
   `acceptProxyProtocol` в `src/xray/xray.service.ts:buildServerConfig`. Включать
   и выключать только вместе, иначе Reality не проходит хендшейк.
