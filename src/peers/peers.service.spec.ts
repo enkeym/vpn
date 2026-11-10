@@ -12,6 +12,7 @@ import { HostNetworkService } from '../network/host-network.service';
 import { NotificationService } from '../notification/notification.service';
 import { AwgService } from '../wg/awg.service';
 import { XrayService } from '../xray/xray.service';
+import { HysteriaService } from '../hysteria/hysteria.service';
 import { PeersService } from './peers.service';
 
 jest.mock('fs', () => ({
@@ -76,6 +77,7 @@ describe('PeersService without AWG', () => {
         CacheService,
         AwgService,
         XrayService,
+        HysteriaService,
         PeersService,
         { provide: DRIZZLE, useValue: db },
       ],

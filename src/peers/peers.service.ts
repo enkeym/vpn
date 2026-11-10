@@ -24,6 +24,7 @@ import {
 import { AwgService } from 'src/wg/awg.service';
 import { XrayService } from 'src/xray/xray.service';
 import type { IXrayClient } from 'src/xray/xray.service';
+import { HysteriaService } from 'src/hysteria/hysteria.service';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import type { DiscountEligibleDuration } from 'src/payment/pricing';
@@ -73,6 +74,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     @Inject(DRIZZLE) private db: BetterSQLite3Database<typeof schema>,
     private readonly tunnel: AwgService,
     private readonly xrayService: XrayService,
+    private readonly hysteriaService: HysteriaService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -318,34 +320,62 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    * старт бота, ни создание/удаление пира: AmneziaWG при этом остаётся живым.
    */
   private async syncXrayWithDb(required = false): Promise<void> {
-    if (!this.xrayService.isEnabled()) {
+    if (!this.xrayService.isEnabled() && !this.hysteriaService.isEnabled()) {
       if (required) {
         throw new BadRequestException(VPN_UNAVAILABLE_MESSAGE);
       }
       return;
     }
 
+    let activePeers: Array<{ name: string; vlessUuid: string | null }>;
     try {
-      const activePeers = await this.db.query.peers.findMany({
+      activePeers = await this.db.query.peers.findMany({
         where: eq(schema.peers.paused, false),
         columns: { name: true, vlessUuid: true },
       });
-
-      const clients: IXrayClient[] = activePeers
-        .filter(
-          (peer): peer is { name: string; vlessUuid: string } =>
-            peer.vlessUuid !== null,
-        )
-        .map((peer) => ({ name: peer.name, uuid: peer.vlessUuid }));
-
-      await this.xrayService.syncClients(clients);
     } catch (error) {
       if (required) throw error;
       this.logger.error(
-        `Ошибка синхронизации Xray с БД: ${
+        `Ошибка чтения пиров для синхронизации каналов: ${
           error instanceof Error ? error.message : error
         }`,
       );
+      return;
+    }
+
+    if (this.xrayService.isEnabled()) {
+      try {
+        const clients: IXrayClient[] = activePeers
+          .filter(
+            (peer): peer is { name: string; vlessUuid: string } =>
+              peer.vlessUuid !== null,
+          )
+          .map((peer) => ({ name: peer.name, uuid: peer.vlessUuid }));
+
+        await this.xrayService.syncClients(clients);
+      } catch (error) {
+        if (required) throw error;
+        this.logger.error(
+          `Ошибка синхронизации Xray с БД: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+    }
+
+    if (this.hysteriaService.isEnabled()) {
+      try {
+        await this.hysteriaService.syncClients(
+          activePeers.map((peer) => ({ name: peer.name })),
+        );
+      } catch (error) {
+        if (required) throw error;
+        this.logger.error(
+          `Ошибка синхронизации Hysteria2 с БД: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
     }
   }
 
@@ -1272,8 +1302,13 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     // и он попадает в «давно не используется» (handleInactiveActivePeers) при
     // живом конфиге.
     const xrayStats = await this.xrayService.getTrafficStats();
+    const hysteriaStats = await this.hysteriaService.getTrafficStats();
 
-    if (runtimeStats.size === 0 && xrayStats.size === 0) {
+    if (
+      runtimeStats.size === 0 &&
+      xrayStats.size === 0 &&
+      hysteriaStats.size === 0
+    ) {
       return 0;
     }
 
@@ -1295,12 +1330,17 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     for (const peer of activePeers) {
       const tunnelStats = runtimeStats.get(peer.publicKey);
       const vlessStats = xrayStats.get(peer.name);
-      if (!tunnelStats && !vlessStats) continue;
+      const hysteriaPeerStats = hysteriaStats.get(peer.name);
+      if (!tunnelStats && !vlessStats && !hysteriaPeerStats) continue;
 
-      // Оба счётчика кумулятивные с момента старта своего процесса, поэтому
-      // складываются напрямую — это две части трафика одного пира.
-      const rxBytes = (tunnelStats?.rxBytes ?? 0) + (vlessStats?.downlink ?? 0);
-      const txBytes = (tunnelStats?.txBytes ?? 0) + (vlessStats?.uplink ?? 0);
+      const rxBytes =
+        (tunnelStats?.rxBytes ?? 0) +
+        (vlessStats?.downlink ?? 0) +
+        (hysteriaPeerStats?.downlink ?? 0);
+      const txBytes =
+        (tunnelStats?.txBytes ?? 0) +
+        (vlessStats?.uplink ?? 0) +
+        (hysteriaPeerStats?.uplink ?? 0);
 
       const previousTotal = peer.rxBytes + peer.txBytes;
       const currentTotal = rxBytes + txBytes;

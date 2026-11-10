@@ -1,4 +1,5 @@
 import type { IXrayPublicParams, XrayService } from 'src/xray/xray.service';
+import type { HysteriaService } from 'src/hysteria/hysteria.service';
 import { SubscriptionService } from './subscription.service';
 
 const XRAY_PARAMS: IXrayPublicParams = {
@@ -40,11 +41,34 @@ interface IRouting {
   rules: Array<Record<string, unknown>>;
 }
 
-function makeService(): SubscriptionService {
+const HYSTERIA_PARAMS = {
+  host: 'vpn.example.test',
+  port: 443,
+  sni: 'r.example.test',
+  obfsPassword: 'obfs-secret',
+};
+
+function makeService(
+  obfsPassword: string | null = HYSTERIA_PARAMS.obfsPassword,
+): SubscriptionService {
   const xray = {
     getPublicParams: () => XRAY_PARAMS,
+    buildShareLinks: () => [
+      'vless://tcp@vpn.example.test:8443',
+      'vless://grpc@vpn.example.test:27443',
+      'vless://xhttp@vpn.example.test:27444',
+    ],
   };
-  return new SubscriptionService(xray as unknown as XrayService);
+  const hysteria = {
+    getPublicParams: () => ({ ...HYSTERIA_PARAMS, obfsPassword }),
+    getPassword: (name: string) => `pass-${name}`,
+    buildShareLink: (name: string) =>
+      `hysteria2://pass-${name}@vpn.example.test:443/?sni=r.example.test#${name}`,
+  };
+  return new SubscriptionService(
+    xray as unknown as XrayService,
+    hysteria as unknown as HysteriaService,
+  );
 }
 
 function outboundsOf(config: Record<string, unknown>): IOutbound[] {
@@ -166,5 +190,50 @@ describe('SubscriptionService subscription URL', () => {
     delete process.env.SUB_PUBLIC_URL;
 
     expect(makeService().buildSubscriptionUrl(PEER, 'xray')).toBeNull();
+  });
+});
+
+describe('SubscriptionService Hysteria2 channel', () => {
+  it('adds a hysteria2 outbound to the sing-box subscription', () => {
+    const outbounds = makeService().buildSingBoxConfig(PEER).outbounds as Array<
+      Record<string, unknown>
+    >;
+
+    const hysteria = outbounds.find(
+      (outbound) => outbound.type === 'hysteria2',
+    );
+    expect(hysteria).toMatchObject({
+      server: HYSTERIA_PARAMS.host,
+      server_port: HYSTERIA_PARAMS.port,
+      password: `pass-${PEER.name}`,
+      obfs: { type: 'salamander', password: HYSTERIA_PARAMS.obfsPassword },
+      tls: { enabled: true, server_name: HYSTERIA_PARAMS.sni },
+    });
+
+    const auto = outbounds.find((outbound) => outbound.type === 'urltest');
+    expect(auto?.outbounds).toContain(hysteria?.tag);
+  });
+
+  it('omits obfs when the server disables it', () => {
+    const outbounds = makeService(null).buildSingBoxConfig(PEER)
+      .outbounds as Array<Record<string, unknown>>;
+
+    expect(
+      outbounds.find((outbound) => outbound.type === 'hysteria2'),
+    ).not.toHaveProperty('obfs');
+  });
+
+  it('adds the hysteria2 link to the base64 subscription', () => {
+    const links = Buffer.from(
+      makeService().buildBase64Subscription(PEER),
+      'base64',
+    )
+      .toString('utf-8')
+      .split('\n');
+
+    expect(links).toContain(
+      `hysteria2://pass-${PEER.name}@vpn.example.test:443/?sni=r.example.test#${PEER.name}`,
+    );
+    expect(links.filter((link) => link.startsWith('vless://'))).toHaveLength(3);
   });
 });

@@ -2,6 +2,8 @@ import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
 import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
 import type { IXrayPublicParams } from 'src/xray/xray.service';
+import { HysteriaService } from 'src/hysteria/hysteria.service';
+import type { IHysteriaPublicParams } from 'src/hysteria/hysteria.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 import type { TSubscriptionFormat } from './interfaces/subscription-format.interface';
 
@@ -37,7 +39,10 @@ export class SubscriptionService {
     '',
   );
 
-  constructor(private readonly xrayService: XrayService) {}
+  constructor(
+    private readonly xrayService: XrayService,
+    private readonly hysteriaService: HysteriaService,
+  ) {}
 
   /** Ссылка-подписка для импорта одним URL; null — SUB_PUBLIC_URL не задан. */
   buildSubscriptionUrl(
@@ -68,7 +73,10 @@ export class SubscriptionService {
       );
     }
 
-    return this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
+    const links = this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
+    const hysteriaLink = this.hysteriaService.buildShareLink(peer.name);
+
+    return hysteriaLink ? [...links, hysteriaLink] : links;
   }
 
   /**
@@ -403,6 +411,41 @@ export class SubscriptionService {
       },
     });
     channelTags.push(xhttpTag);
+
+    const hysteria: IHysteriaPublicParams =
+      this.hysteriaService.getPublicParams();
+    const hysteriaPassword = this.hysteriaService.getPassword(peer.name);
+    if (hysteriaPassword) {
+      const hysteriaTag = `Hysteria2 · ${hysteria.host}`;
+      outbounds.push({
+        type: 'hysteria2',
+        tag: hysteriaTag,
+        ...(includeDnsReferences
+          ? {
+              domain_resolver: {
+                server: DNS_BOOTSTRAP_TAG,
+                strategy: domainStrategy,
+              },
+            }
+          : {}),
+        server: hysteria.host,
+        server_port: hysteria.port,
+        password: hysteriaPassword,
+        ...(hysteria.obfsPassword
+          ? {
+              obfs: {
+                type: 'salamander',
+                password: hysteria.obfsPassword,
+              },
+            }
+          : {}),
+        tls: {
+          enabled: true,
+          server_name: hysteria.sni,
+        },
+      });
+      channelTags.push(hysteriaTag);
+    }
 
     outbounds.push(
       {

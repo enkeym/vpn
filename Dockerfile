@@ -98,7 +98,17 @@ RUN apk add --no-cache curl unzip && \
     chmod +x /xray/out/xray
 
 # ============================================
-# Stage 6: Production image
+# Stage 6: Hysteria2 (QUIC/UDP)
+# ============================================
+FROM base AS hysteria-build
+ARG HYSTERIA_VERSION=app/v2.13.0
+RUN apk add --no-cache curl && \
+    curl -fsSL -o /hysteria \
+      "https://github.com/apernet/hysteria/releases/download/${HYSTERIA_VERSION}/hysteria-linux-amd64" && \
+    chmod +x /hysteria
+
+# ============================================
+# Stage 7: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -136,6 +146,7 @@ RUN awg --version && command -v awg-quick >/dev/null
 # Без него приложение стартует и AmneziaWG работает как раньше — XrayService
 # просто не поднимется и напишет об этом в лог (см. isBinaryAvailable).
 COPY --from=xray-build /xray/out/xray /usr/bin/xray
+COPY --from=hysteria-build /hysteria /usr/bin/hysteria
 COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
 COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat
 ENV XRAY_LOCATION_ASSET=/usr/share/xray

@@ -1,0 +1,133 @@
+import { ChildProcess, spawn } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import axios from 'axios';
+import { HysteriaService } from './hysteria.service';
+
+jest.mock('child_process', () => {
+  const actual =
+    jest.requireActual<typeof import('child_process')>('child_process');
+  return {
+    ...actual,
+    spawn: jest.fn(),
+    spawnSync: jest.fn(() => ({ status: 0 })),
+  };
+});
+jest.mock('fs/promises', () => ({
+  readFile: jest.fn(),
+  writeFile: jest.fn().mockResolvedValue(undefined),
+}));
+
+interface IHysteriaInternals {
+  secrets: {
+    passwordSecret: string;
+    obfsPassword: string;
+    statsSecret: string;
+  } | null;
+  enabled: boolean;
+  buildConfig: (clients: Array<{ name: string }>) => string;
+}
+
+const SECRETS = {
+  passwordSecret: 'password-secret',
+  obfsPassword: 'obfs-secret',
+  statsSecret: 'stats-secret',
+};
+
+function makeService(obfs: boolean): HysteriaService {
+  process.env.WG_HOST = 'vpn.example.test';
+  process.env.HY2_SNI = 'r.example.test';
+  process.env.HY2_PORT = '443';
+  process.env.HY2_OBFS = obfs ? 'true' : 'false';
+
+  const service = new HysteriaService();
+  const internals = service as unknown as IHysteriaInternals;
+  internals.secrets = SECRETS;
+  internals.enabled = true;
+  return service;
+}
+
+describe('HysteriaService', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    jest.useRealTimers();
+    jest.clearAllMocks();
+  });
+
+  it('derives a stable password per peer without storing it', () => {
+    const service = makeService(true);
+
+    expect(service.getPassword('Тест')).toBe(service.getPassword('Тест'));
+    expect(service.getPassword('Тест')).not.toBe(service.getPassword('Другой'));
+    expect(service.getPassword('Тест')).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('builds a hysteria2 link with sni and salamander obfs', () => {
+    const link = makeService(true).buildShareLink('Тест');
+
+    expect(link).toContain('hysteria2://');
+    expect(link).toContain('@vpn.example.test:443/');
+    expect(link).toContain('sni=r.example.test');
+    expect(link).toContain('obfs=salamander');
+    expect(link).toContain(`obfs-password=${SECRETS.obfsPassword}`);
+  });
+
+  it('drops obfs parameters when obfs is disabled', () => {
+    const link = makeService(false).buildShareLink('Тест');
+
+    expect(link).not.toContain('obfs');
+  });
+
+  it('writes every peer into the userpass map', () => {
+    const service = makeService(true);
+    const config = (service as unknown as IHysteriaInternals).buildConfig([
+      { name: 'Тест' },
+      { name: 'Другой' },
+    ]);
+
+    expect(config).toContain('type: userpass');
+    expect(config).toContain(JSON.stringify(service.getPassword('Тест')));
+    expect(config).toContain(JSON.stringify(service.getPassword('Другой')));
+    expect(config).toContain(`secret: ${JSON.stringify(SECRETS.statsSecret)}`);
+  });
+
+  it('returns no link while the channel is disabled', () => {
+    const service = makeService(true);
+    (service as unknown as IHysteriaInternals).enabled = false;
+
+    expect(service.buildShareLink('Тест')).toBeNull();
+  });
+
+  it('maps tx to uplink and rx to downlink without clearing the counters', async () => {
+    const service = makeService(true);
+    const get = jest
+      .spyOn(axios, 'get')
+      .mockResolvedValue({ data: { Тест: { tx: 100, rx: 900 } } });
+
+    const stats = await service.getTrafficStats();
+
+    expect(stats.get('Тест')).toEqual({ uplink: 100, downlink: 900 });
+    const [, options] = get.mock.calls[0] as [string, Record<string, unknown>];
+    expect(options).not.toHaveProperty('params');
+    expect(options.headers).toEqual({ Authorization: SECRETS.statsSecret });
+  });
+
+  it('coalesces two syncs into a single restart', async () => {
+    jest.useFakeTimers();
+    const spawnMock = jest.mocked(spawn);
+    spawnMock.mockImplementation(() => new ChildProcess());
+    const service = makeService(true);
+
+    const first = service.syncClients([{ name: 'Тест' }]);
+    const second = service.syncClients([{ name: 'Другой' }]);
+    await jest.advanceTimersByTimeAsync(2000);
+    await Promise.all([first, second]);
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(writeFile).toHaveBeenLastCalledWith(
+      expect.stringContaining('hysteria.yaml'),
+      expect.stringContaining(`"Другой":`),
+    );
+  });
+});
