@@ -82,6 +82,8 @@ export interface IXrayPublicParams {
   xhttpPort: number;
   xhttpPath: string;
   xhttpMode: string;
+  wsHost: string;
+  wsPath: string;
   /** Разрешён ли IPv6 наружу — см. XRAY_IPV6. */
   ipv6: boolean;
 }
@@ -132,6 +134,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly xhttpPath = process.env.XRAY_XHTTP_PATH || '/xhttp';
   /** auto | packet-up | stream-up | stream-one — см. docs/links/xray.md. */
   private readonly xhttpMode = process.env.XRAY_XHTTP_MODE || 'auto';
+  private readonly wsHost = process.env.XRAY_WS_HOST || '';
+  private readonly wsPort = Number(process.env.XRAY_WS_PORT || 8002);
+  private readonly wsPath = process.env.XRAY_WS_PATH || '/ws';
   /** Внутренний порт StatsService API — только localhost, наружу не публикуется. */
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
@@ -457,7 +462,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   }
 
   private activeInboundTags(): string[] {
-    return XrayService.CLIENT_INBOUND_TAGS;
+    return this.wsHost
+      ? [...XrayService.CLIENT_INBOUND_TAGS, 'vless-ws']
+      : XrayService.CLIENT_INBOUND_TAGS;
   }
 
   /** Публичные параметры для сборки outbound'ов в sing-box-подписке. */
@@ -479,6 +486,8 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       xhttpPort: this.xhttpPort,
       xhttpPath: this.xhttpPath,
       xhttpMode: this.xhttpMode,
+      wsHost: this.wsHost,
+      wsPath: this.wsPath,
       ipv6: this.ipv6Enabled,
     };
   }
@@ -505,6 +514,22 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       path: this.xhttpPath,
       mode: this.xhttpMode,
     });
+  }
+
+  buildWsClientLink(name: string, uuid: string): string {
+    const query = new URLSearchParams({
+      type: 'ws',
+      security: 'tls',
+      encryption: 'none',
+      sni: this.wsHost,
+      host: this.wsHost,
+      path: this.wsPath,
+      fp: 'chrome',
+    });
+
+    return `vless://${uuid}@${this.wsHost}:443?${query.toString()}#${encodeURIComponent(
+      name,
+    )}`;
   }
 
   private buildVlessLink(
@@ -548,6 +573,9 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       this.buildRealityClientLink(`${name} · Reality TCP`, uuid),
       this.buildGrpcClientLink(`${name} · Reality gRPC`, uuid),
       this.buildXhttpClientLink(`${name} · Reality XHTTP`, uuid),
+      ...(this.wsHost
+        ? [this.buildWsClientLink(`${name} · CDN WS`, uuid)]
+        : []),
     ];
   }
 
@@ -767,6 +795,27 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       },
       sniffing,
     });
+
+    if (this.wsHost) {
+      inbounds.push({
+        tag: 'vless-ws',
+        listen: '127.0.0.1',
+        port: this.wsPort,
+        protocol: 'vless',
+        settings: {
+          clients: transportClients,
+          decryption: 'none',
+        },
+        streamSettings: {
+          network: 'ws',
+          security: 'none',
+          wsSettings: {
+            path: this.wsPath,
+          },
+        },
+        sniffing,
+      });
+    }
 
     return {
       // access: 'none' — иначе Xray пишет строку на КАЖДОЕ принятое соединение

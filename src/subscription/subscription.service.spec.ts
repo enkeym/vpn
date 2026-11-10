@@ -13,6 +13,8 @@ const XRAY_PARAMS: IXrayPublicParams = {
   xhttpPort: 27444,
   xhttpPath: '/xhttp',
   xhttpMode: 'auto',
+  wsHost: 'cdn.example.test',
+  wsPath: '/ws-test',
   ipv6: true,
 };
 
@@ -33,6 +35,8 @@ interface IOutbound {
     sockopt?: { dialerProxy?: string };
     grpcSettings?: { serviceName: string; multiMode: boolean };
     xhttpSettings?: { path: string; mode: string };
+    tlsSettings?: { serverName: string; fingerprint: string };
+    wsSettings?: { path: string; headers: { Host: string } };
   };
 }
 
@@ -84,6 +88,7 @@ describe('SubscriptionService Xray config array', () => {
       'Reality gRPC',
       'Reality XHTTP',
       'Reality TCP + fragment',
+      'CDN WS',
     ]);
   });
 
@@ -96,7 +101,12 @@ describe('SubscriptionService Xray config array', () => {
       expect.objectContaining({ selector: ['proxy'] }),
     );
     expect(tags).toEqual(
-      expect.arrayContaining(['proxy-tcp', 'proxy-grpc', 'proxy-xhttp']),
+      expect.arrayContaining([
+        'proxy-tcp',
+        'proxy-grpc',
+        'proxy-xhttp',
+        'proxy-ws',
+      ]),
     );
     expect(auto.burstObservatory).toEqual(
       expect.objectContaining({ subjectSelector: ['proxy'] }),
@@ -129,6 +139,20 @@ describe('SubscriptionService Xray config array', () => {
       mode: XRAY_PARAMS.xhttpMode,
     });
     expect(xhttp.settings.vnext[0].users[0]).not.toHaveProperty('flow');
+
+    const ws = byTag.get('proxy-ws')!;
+    expect(ws.streamSettings.network).toBe('ws');
+    expect(ws.settings.vnext[0].address).toBe(XRAY_PARAMS.wsHost);
+    expect(ws.settings.vnext[0].port).toBe(443);
+    expect(ws.streamSettings.tlsSettings).toEqual({
+      serverName: XRAY_PARAMS.wsHost,
+      fingerprint: 'chrome',
+    });
+    expect(ws.streamSettings.wsSettings).toEqual({
+      path: XRAY_PARAMS.wsPath,
+      headers: { Host: XRAY_PARAMS.wsHost },
+    });
+    expect(ws.settings.vnext[0].users[0]).not.toHaveProperty('flow');
   });
 
   it('fragments only the bare TCP channel', () => {
@@ -143,6 +167,9 @@ describe('SubscriptionService Xray config array', () => {
       'sockopt',
     );
     expect(autoByTag.get('proxy-xhttp')!.streamSettings).not.toHaveProperty(
+      'sockopt',
+    );
+    expect(autoByTag.get('proxy-ws')!.streamSettings).not.toHaveProperty(
       'sockopt',
     );
 

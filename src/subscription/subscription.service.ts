@@ -100,6 +100,9 @@ export class SubscriptionService {
     const tcpOutbound = this.buildXrayVlessOutbound(xray, uuid, 'tcp');
     const grpcOutbound = this.buildXrayVlessOutbound(xray, uuid, 'grpc');
     const xhttpOutbound = this.buildXrayVlessOutbound(xray, uuid, 'xhttp');
+    const wsOutbound = xray.wsHost
+      ? this.buildXrayWsOutbound(xray, uuid)
+      : null;
 
     const fragmentOutbound = {
       tag: 'fragment',
@@ -143,6 +146,7 @@ export class SubscriptionService {
         tcpOutbound,
         grpcOutbound,
         xhttpOutbound,
+        ...(wsOutbound ? [wsOutbound] : []),
         fragmentOutbound,
         directOutbound,
         blockOutbound,
@@ -186,6 +190,7 @@ export class SubscriptionService {
       channelProfile('Reality gRPC', grpcOutbound),
       channelProfile('Reality XHTTP', xhttpOutbound),
       channelProfile('Reality TCP + fragment', tcpOutbound, [fragmentOutbound]),
+      ...(wsOutbound ? [channelProfile('CDN WS', wsOutbound)] : []),
     ];
   }
 
@@ -281,6 +286,37 @@ export class SubscriptionService {
           mode: xray.xhttpMode,
         },
         realitySettings,
+      },
+    };
+  }
+
+  private buildXrayWsOutbound(
+    xray: IXrayPublicParams,
+    uuid: string,
+  ): Record<string, unknown> {
+    return {
+      tag: 'proxy-ws',
+      protocol: 'vless',
+      settings: {
+        vnext: [
+          {
+            address: xray.wsHost,
+            port: 443,
+            users: [{ id: uuid, encryption: 'none' }],
+          },
+        ],
+      },
+      streamSettings: {
+        network: 'ws',
+        security: 'tls',
+        tlsSettings: {
+          serverName: xray.wsHost,
+          fingerprint: 'chrome',
+        },
+        wsSettings: {
+          path: xray.wsPath,
+          headers: { Host: xray.wsHost },
+        },
       },
     };
   }
@@ -411,6 +447,36 @@ export class SubscriptionService {
       },
     });
     channelTags.push(xhttpTag);
+
+    if (xray.wsHost) {
+      const wsTag = `CDN WS · ${xray.wsHost}`;
+      outbounds.push({
+        type: 'vless',
+        tag: wsTag,
+        ...(includeDnsReferences
+          ? {
+              domain_resolver: {
+                server: DNS_BOOTSTRAP_TAG,
+                strategy: domainStrategy,
+              },
+            }
+          : {}),
+        server: xray.wsHost,
+        server_port: 443,
+        uuid: peer.vlessUuid,
+        tls: {
+          enabled: true,
+          server_name: xray.wsHost,
+          utls: { enabled: true, fingerprint: 'chrome' },
+        },
+        transport: {
+          type: 'ws',
+          path: xray.wsPath,
+          headers: { Host: xray.wsHost },
+        },
+      });
+      channelTags.push(wsTag);
+    }
 
     const hysteria: IHysteriaPublicParams =
       this.hysteriaService.getPublicParams();
