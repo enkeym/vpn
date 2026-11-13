@@ -661,11 +661,11 @@ export const BotUi = {
    */
   vlessMenuText: (peerName: string, body: string) =>
     `🌐 *VLESS для* \`${peerName}\`\n\n` +
-    'Прямое подключение Reality: Hiddify, NekoBox, v2rayNG, Happ, ' +
-    'Streisand и другие клиенты.\n\n' +
+    'Прямое подключение: Happ, Hiddify, NekoBox, v2rayNG, Streisand ' +
+    'и другие клиенты.\n\n' +
     `${body}\n\n` +
-    '_Каналов три: TCP, gRPC и XHTTP. Если один не подключается, возьмите ' +
-    'соседнюю ссылку — остальные настройки те же._\n\n' +
+    '_Каналов два: Hysteria2 (QUIC, маскируется под HTTP/3) и VLESS+Reality. ' +
+    'Если один не подключается, возьмите соседнюю ссылку — данные те же._\n\n' +
     '_Пошагово — в разделе «Инструкция» → «VLESS»._',
 
   vlessMenuKeyboard: (peerName: string) =>

@@ -1758,7 +1758,9 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     const vlessUuid = this.requireVlessUuid(peer);
 
     const links = this.xrayService.buildShareLinks(peer.name, vlessUuid);
-    const linksBlock = links.map((link) => `\`${link}\``).join('\n\n');
+    const hysteriaLink = this.hysteriaService.buildShareLink(peer.name);
+    const allLinks = hysteriaLink ? [...links, hysteriaLink] : links;
+    const linksBlock = allLinks.map((link) => `\`${link}\``).join('\n\n');
 
     return (
       `🔗 *Ссылка для подключения* — импортируйте её в приложение:\n\n` +
