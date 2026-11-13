@@ -25,29 +25,33 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
-## Два способа подключения
+## Подключение
 
-Один конфиг (запись в `peers`) выдаётся сразу двумя способами:
+Один конфиг (запись в `peers`) выдаётся подпиской и прямыми ссылками в боте:
 
-| | AmneziaWG 3 | VLESS (Xray) |
+| | Hysteria2 | VLESS (Xray) |
 |---|---|---|
-| Что выдаётся | файл `.conf` и QR | подписка на три канала, `vless://`-ссылки, QR, Xray-JSON |
-| Клиент | AmneziaVPN | Happ, Hiddify, NekoBox, v2rayNG, Streisand, sing-box |
-| Сервис | `AwgService` (`src/wg`) | `XrayService` (`src/xray`) |
-| Ключ пира | `publicKey`/`privateKey` | `vlessUuid` |
+| Что выдаётся | `hysteria2://`-ссылка в подписке и текстом в боте | подписка, `vless://`-ссылка, QR, sing-box JSON |
+| Клиент | Happ, Hiddify, NekoBox, Streisand, sing-box | Happ, Hiddify, NekoBox, v2rayNG, Streisand, sing-box |
+| Сервис | `HysteriaService` (`src/hysteria`) | `XrayService` (`src/xray`) |
+| Ключ пира | пароль из HMAC(peerName) | `vlessUuid` |
 
-VLESS выдаётся не одним каналом, а группой из трёх — Reality TCP, gRPC и
-XHTTP. У них общие ключи Reality, SNI и список клиентов, различается только
-транспорт и порт, поэтому ссылку-подписку можно не менять при переключении
-профиля в клиенте.
+AmneziaWG в выдачу не попадает: DPI раскрывает AWG-Handshake. Сервис остаётся
+в коде (`AWG_ENABLED=false` его не поднимает), чтобы старые конфиги не ломались
+при откате.
 
-| Канал | Транспорт | Состояние на 10.11.2026 |
+Подписка содержит два канала — Hysteria2 (основной, маскируется под HTTP/3) и
+VLESS+Reality TCP (fallback). Не подключился один — в клиенте выбирается
+соседний, ссылка та же.
+
+| Канал | Транспорт | Состояние на 13.11.2026 |
 |---|---|---|
-| Reality TCP | VLESS+Reality по TCP, 443 | С 17.02.2026 режется поведенческим анализом: первые ~16 КБ проходят, дальше заморозка. Оставлен fallback'ом, в Xray-профиле TCP идёт через `fragment` |
-| Reality gRPC | gRPC (HTTP/2) + Reality, 27443 | Живой, совместим с большинством клиентов |
-| Reality XHTTP | XHTTP + Reality, 27444 | Живой, нужен свежий Xray в клиенте; версии ядра клиента и сервера должны совпадать |
-| AmneziaWG 3 | UDP, `AWG_PORT` (5667) | Работает там, где не режут UDP |
-| Hysteria2, CDN-фронт | — | В этой итерации нет, отдельная задача |
+| Hysteria2 | UDP/QUIC 8443 + obfs salamander, TLS r.enkeym.site | Основной замаскированный канал: выглядит как HTTP/3 |
+| Reality TCP | VLESS+Reality по TCP, 443 | Fallback: с 17.02.2026 режется поведенческим анализом у части сетей — первые ~16 КБ проходят, дальше заморозка |
+| Reality gRPC | gRPC (HTTP/2) + Reality, 27443 | Не выдаётся в текущей подписке |
+| Reality XHTTP | XHTTP + Reality, 27444 | Не выдаётся в текущей подписке |
+| AmneziaWG 3 | UDP, `AWG_PORT` (5667) | Не выдаётся: DPI раскрывает AWG-Handshake; демон на сервере выключен (`AWG_ENABLED=false`) |
+| CDN-фронт (Cloudflare/zrok) | — | Не работает в сети клиента — изъят из выдачи |
 
 Даты и наблюдения — не гарантия: блокировки меняются, и канал проверяется на
 конкретной сети. Именно поэтому в подписке лежат все три: не подключился один
