@@ -10,6 +10,7 @@ describe('BotUi connection visibility', () => {
     expect(text).toContain(
       `sing-box://import-remote-profile?url=${encodeURIComponent(`${url}/full`)}`,
     );
+    expect(text).toContain(`${url}/full`);
     expect(text).toContain(`happ://add/${url}`);
     expect(text).not.toMatch(/gRPC|XHTTP|Авто-обход/);
   });
