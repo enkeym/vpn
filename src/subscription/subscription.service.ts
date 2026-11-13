@@ -280,7 +280,7 @@ export class SubscriptionService implements OnModuleInit {
           : {}),
         server: this.dialHost(hysteria.host),
         server_port: hysteria.port,
-        password: hysteriaPassword,
+        password: `${peer.name}:${hysteriaPassword}`,
         ...(hysteria.obfsPassword
           ? {
               obfs: {

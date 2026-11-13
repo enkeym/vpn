@@ -159,7 +159,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
       params.set('obfs-password', obfsPassword);
     }
 
-    return `hysteria2://${password}@${this.host}:${this.port}/?${params.toString()}#${encodeURIComponent(peerName)}`;
+    return `hysteria2://${peerName}:${password}@${this.host}:${this.port}/?${params.toString()}#${encodeURIComponent(peerName)}`;
   }
 
   async syncClients(clients: IHysteriaClient[]): Promise<void> {

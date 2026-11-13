@@ -69,6 +69,9 @@ describe('HysteriaService', () => {
     const link = makeService(true).buildShareLink('Тест');
 
     expect(link).toContain('hysteria2://');
+    expect(link).toMatch(
+      /^hysteria2:\/\/Тест:[0-9a-f]{32}@vpn\.example\.test:443\//,
+    );
     expect(link).toContain('@vpn.example.test:443/');
     expect(link).toContain('sni=r.example.test');
     expect(link).toContain('obfs=salamander');

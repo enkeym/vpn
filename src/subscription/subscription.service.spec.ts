@@ -68,7 +68,7 @@ function makeHysteria(
     buildShareLink: () =>
       password === null
         ? null
-        : `hysteria2://${password}@vpn.example.test:443/?sni=www.wikipedia.org#${PEER.name}`,
+        : `hysteria2://${PEER.name}:${password}@vpn.example.test:443/?sni=www.wikipedia.org#${PEER.name}`,
   } as unknown as HysteriaService;
 }
 
@@ -181,7 +181,7 @@ describe('SubscriptionService Hysteria2 channel', () => {
 
     expect(links).toHaveLength(2);
     expect(links[1]).toMatch(
-      /^hysteria2:\/\/peer-password@vpn\.example\.test:443\//,
+      /^hysteria2:\/\/Тест:peer-password@vpn\.example\.test:443\//,
     );
   });
 
@@ -202,7 +202,7 @@ describe('SubscriptionService Hysteria2 channel', () => {
     expect(hysteria.type).toBe('hysteria2');
     expect(hysteria.server).toBe(HYSTERIA_PARAMS.host);
     expect(hysteria.server_port).toBe(HYSTERIA_PARAMS.port);
-    expect(hysteria.password).toBe('peer-password');
+    expect(hysteria.password).toBe('Тест:peer-password');
     expect(hysteria.obfs).toEqual({
       type: 'salamander',
       password: HYSTERIA_PARAMS.obfsPassword,
