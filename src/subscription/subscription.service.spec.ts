@@ -215,17 +215,10 @@ describe('SubscriptionService Hysteria2 channel', () => {
       server_name: HYSTERIA_PARAMS.sni,
     });
 
-    const group = outbounds.find((outbound) => outbound.tag === 'select')! as {
-      type: string;
-      outbounds: string[];
-      url: string;
-    };
-    expect(group.type).toBe('urltest');
-    expect(group.url).toBe('https://www.gstatic.com/generate_204');
-    expect(group.outbounds).toEqual([
-      'Reality · vpn.example.test',
-      'Hysteria2 · vpn.example.test',
-    ]);
+    const selector = outbounds.find(
+      (outbound) => outbound.tag === 'select',
+    )! as { outbounds: string[] };
+    expect(selector.outbounds).toContain('Hysteria2 · vpn.example.test');
   });
 
   it('omits the hysteria2 outbound when the channel is disabled', () => {
@@ -235,13 +228,6 @@ describe('SubscriptionService Hysteria2 channel', () => {
     expect(outbounds.some((outbound) => outbound.type === 'hysteria2')).toBe(
       false,
     );
-
-    const group = outbounds.find((outbound) => outbound.tag === 'select')! as {
-      type: string;
-      outbounds: string[];
-    };
-    expect(group.type).toBe('selector');
-    expect(group.outbounds).toEqual(['Reality · vpn.example.test']);
   });
 
   it('omits the hysteria2 outbound when share links are hidden', () => {

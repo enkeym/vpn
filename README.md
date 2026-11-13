@@ -41,13 +41,12 @@ AmneziaWG в выдачу не попадает: DPI раскрывает AWG-Ha
 при откате.
 
 Подписка содержит два канала — Hysteria2 (основной, маскируется под HTTP/3) и
-VLESS+Reality TCP (fallback). В sing-box-конфиге оба собраны в `urltest`-группу:
-health-check отсеивает мёртвый канал, и клиент переключается на соседний
-автоматически, ссылка та же.
+VLESS+Reality TCP (fallback). Не подключился один — в клиенте выбирается
+соседний, ссылка та же.
 
 | Канал | Транспорт | Состояние на 13.11.2026 |
 |---|---|---|
-| Hysteria2 | UDP/QUIC 443 + obfs salamander, TLS r.enkeym.site | Основной замаскированный канал: выглядит как HTTP/3 |
+| Hysteria2 | UDP/QUIC 8443 + obfs salamander, TLS r.enkeym.site | Основной замаскированный канал: выглядит как HTTP/3 |
 | Reality TCP | VLESS+Reality по TCP, 443 | Fallback: с 17.02.2026 режется поведенческим анализом у части сетей — первые ~16 КБ проходят, дальше заморозка |
 | Reality gRPC | gRPC (HTTP/2) + Reality, 27443 | Не выдаётся в текущей подписке |
 | Reality XHTTP | XHTTP + Reality, 27444 | Не выдаётся в текущей подписке |

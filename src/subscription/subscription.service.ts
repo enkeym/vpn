@@ -297,25 +297,13 @@ export class SubscriptionService implements OnModuleInit {
       channelTags.push(hysteriaTag);
     }
 
-    if (channelTags.length > 1) {
-      outbounds.push({
-        type: 'urltest',
-        tag: 'select',
-        outbounds: channelTags,
-        url: 'https://www.gstatic.com/generate_204',
-        interval: '3m',
-        tolerance: 150,
-        interrupt_exist_connections: true,
-      });
-    } else {
-      outbounds.push({
-        type: 'selector',
-        tag: 'select',
-        outbounds: channelTags,
-        default: channelTags[0],
-        interrupt_exist_connections: true,
-      });
-    }
+    outbounds.push({
+      type: 'selector',
+      tag: 'select',
+      outbounds: channelTags,
+      default: channelTags[0],
+      interrupt_exist_connections: true,
+    });
 
     return {
       outbounds,
