@@ -694,12 +694,17 @@ export class AdminHandler {
 
     await safeEditMessageText(
       ctx,
-      BotUi.clientPeerDetailsText(peer, readOnly),
+      BotUi.clientPeerDetailsText(
+        peer,
+        readOnly,
+        this.peersService.isTunnelAvailable(),
+      ),
       {
         reply_markup: BotUi.clientPeerDetailsKeyboard(
           peer,
           telegramId,
           readOnly,
+          this.peersService.isTunnelAvailable(),
         ),
         parse_mode: 'Markdown',
       },
@@ -999,7 +1004,11 @@ export class AdminHandler {
           this.peersService,
           peer,
           config,
-          BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+          BotUi.memberConfigCreated(
+            peer.name,
+            this.peersService.isTunnelAvailable() ? peer.ip : null,
+            peer.expiresAt,
+          ),
           this.mainHandler.isAdmin(telegramId),
         );
         await this.peersService.setConfigMessageId(

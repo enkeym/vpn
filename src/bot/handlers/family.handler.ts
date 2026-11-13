@@ -871,7 +871,11 @@ export class FamilyHandler {
           this.peersService,
           peer,
           config,
-          BotUi.memberConfigCreated(peer.name, peer.ip, peer.expiresAt),
+          BotUi.memberConfigCreated(
+            peer.name,
+            this.peersService.isTunnelAvailable() ? peer.ip : null,
+            peer.expiresAt,
+          ),
           this.mainHandler.isAdmin(member.telegramId),
         );
         await this.peersService.setConfigMessageId(

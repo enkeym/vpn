@@ -6,11 +6,12 @@ import { BotUi } from '../ui/bot.ui';
 export async function sendCreatedPeerMessage(
   api: Api,
   chatId: string | number,
-  _peersService: PeersService,
+  peersService: PeersService,
   peer: TPeer,
   config: string,
   caption: string,
   _isAdmin: boolean,
+  subscriptionUrl: string | null = null,
   keyboard = BotUi.configDeliveredKeyboard(peer.name),
 ) {
   const options = {
@@ -24,7 +25,12 @@ export async function sendCreatedPeerMessage(
       { ...options, caption },
     );
   }
-  throw new Error('Конфиг AmneziaWG недоступен');
+  const links = await peersService.getPeerVlessText(peer.name);
+  return api.sendMessage(
+    chatId,
+    BotUi.configDeliveryText(caption, links, subscriptionUrl),
+    { ...options, link_preview_options: { is_disabled: true } },
+  );
 }
 
 /**

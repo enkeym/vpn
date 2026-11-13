@@ -247,7 +247,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private assertVpnAvailable(): void {
-    if (!this.tunnel.isEnabled()) {
+    if (
+      !this.isTunnelAvailable() &&
+      !this.xrayService.isEnabled() &&
+      !this.hysteriaService.isEnabled()
+    ) {
       throw new BadRequestException(VPN_UNAVAILABLE_MESSAGE);
     }
   }

@@ -16,6 +16,7 @@ import {
   type PaidDuration,
 } from 'src/payment/pricing';
 import { BotUi } from '../ui/bot.ui';
+import { SubscriptionService } from 'src/subscription/subscription.service';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 import { MainHandler } from '../handlers/main.handler';
 import { MainMenuService } from '../menu/main-menu.service';
@@ -48,6 +49,7 @@ export class InvoiceService {
     private readonly mainHandler: MainHandler,
     private readonly mainMenuService: MainMenuService,
     private readonly anchorStore: MainMenuAnchorStore,
+    private readonly subscriptionService: SubscriptionService,
     @Inject(forwardRef(() => PaymentService))
     private readonly paymentService: PaymentService,
     @Inject(forwardRef(() => PaymentFulfillmentService))
@@ -517,6 +519,10 @@ export class InvoiceService {
       config,
       caption,
       this.mainHandler.isAdmin(telegramId),
+      this.subscriptionService.buildSubscriptionUrl({
+        name: peer.name,
+        vlessUuid: peer.vlessUuid ?? null,
+      }),
     );
 
     await this.peersService.setConfigMessageId(peer.name, message.message_id);
@@ -541,7 +547,11 @@ export class InvoiceService {
       const caption =
         `✅ *Оплата прошла успешно!* (${amount} ₽)\n` +
         `Конфиг *${peer.name}* на *${durationDays} дн.*\n\n` +
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
+        BotUi.configCreated(
+          peer.name,
+          this.peersService.isTunnelAvailable() ? peer.ip : null,
+          peer.expiresAt,
+        );
 
       await this.sendPaidConfigDocument(
         telegramId,
@@ -652,7 +662,11 @@ export class InvoiceService {
       const caption =
         `✅ *Продление прошло успешно!* (${amount} ₽)\n` +
         `Конфиг *${peer.name}* — *${durationDays} дн.*, до *${expiresStr}*\n\n` +
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt);
+        BotUi.configCreated(
+          peer.name,
+          this.peersService.isTunnelAvailable() ? peer.ip : null,
+          peer.expiresAt,
+        );
 
       await this.sendPaidConfigDocument(
         telegramId,

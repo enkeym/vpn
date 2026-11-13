@@ -586,6 +586,7 @@ export const BotUi = {
     peer: TPeer,
     isAdmin: boolean = false,
     canManageOwn = false,
+    awgAvailable = true,
   ) => {
     const expired = isExpired(peer);
 
@@ -594,10 +595,12 @@ export const BotUi = {
     // и в клавиатуре легко появляется пустая строка.
     const rows: IKeyboardButton[][] = [];
 
-    rows.push([
-      { text: '📷 QR AmneziaWG', data: `show_qr:${peer.name}` },
-      { text: '📄 Файл AmneziaWG', data: `get_config_file:${peer.name}` },
-    ]);
+    if (awgAvailable) {
+      rows.push([
+        { text: '📷 QR AmneziaWG', data: `show_qr:${peer.name}` },
+        { text: '📄 Файл AmneziaWG', data: `get_config_file:${peer.name}` },
+      ]);
+    }
 
     rows.push([{ text: '🌐 VLESS Reality', data: `vless_menu:${peer.name}` }]);
 
@@ -760,8 +763,11 @@ export const BotUi = {
     '• Или выбрать тариф от 30 дней до года\n\n' +
     'После оплаты вы получите данные подключения и сможете настроить приложение по инструкции.',
 
-  configCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ *Конфиг ${name} создан!*\n\n` + `🌐 IP: \`${ip}\`\n`;
+  configCreated: (name: string, ip: string | null, expiresAt?: Date | null) => {
+    let msg = `✅ *Конфиг ${name} создан!*\n\n`;
+    if (ip) {
+      msg += `🌐 IP: \`${ip}\`\n`;
+    }
     if (expiresAt) {
       msg += `📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}\n\n`;
     } else {
@@ -775,11 +781,28 @@ export const BotUi = {
     return msg;
   },
 
+  configDeliveryText: (
+    caption: string,
+    links: string,
+    subscriptionUrl?: string | null,
+  ) => {
+    let msg = `${caption}\n\n${links}`;
+    if (subscriptionUrl) {
+      msg += `\n\n*Ссылка-подписка:*\n\`${subscriptionUrl}\``;
+    }
+    return msg;
+  },
+
   configError: (msg: string) => `❌ *Ошибка:* ${msg}`,
 
   // Замена конфига
-  configReplaced: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ Конфиг *${name}* успешно заменён!\n\n🌐 Новый IP: \`${ip}\``;
+  configReplaced: (
+    name: string,
+    ip: string | null,
+    expiresAt?: Date | null,
+  ) => {
+    let msg = `✅ Конфиг *${name}* успешно заменён!`;
+    msg += ip ? `\n\n🌐 Новый IP: \`${ip}\`` : '\n';
     if (expiresAt) {
       msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
     } else {
@@ -800,6 +823,7 @@ export const BotUi = {
     peer: TPeer,
     isAdmin: boolean = false,
     canManageOwn = false,
+    awgAvailable = true,
   ) => {
     const expired = isExpired(peer);
     let status: string;
@@ -817,15 +841,17 @@ export const BotUi = {
     let text =
       `⚙️ *Управление конфигом*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
-      `🌐 IP: \`${peer.ip}\`\n` +
+      (awgAvailable ? `🌐 IP: \`${peer.ip}\`\n` : '') +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
 
     if (!expired && !peer.paused) {
-      text +=
-        '\n📱 *Подключение:*\n' +
-        '• Нажмите «QR-код» — для настройки на телефоне\n' +
-        '• «Получить файл» — для компьютера или повторной загрузки';
+      if (awgAvailable) {
+        text +=
+          '\n📱 *Подключение:*\n' +
+          '• Нажмите «QR-код» — для настройки на телефоне\n' +
+          '• «Получить файл» — для компьютера или повторной загрузки';
+      }
     } else if (expired) {
       text += '\n\n_Конфиг истёк. Нажмите «Продлить» для продления подписки._';
     } else if (peer.paused) {
@@ -1071,8 +1097,15 @@ export const BotUi = {
     return kb.row().text('« Назад', `f_m:${mId}`);
   },
 
-  memberConfigCreated: (name: string, ip: string, expiresAt?: Date | null) => {
-    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\`\nIP: \`${ip}\``;
+  memberConfigCreated: (
+    name: string,
+    ip: string | null,
+    expiresAt?: Date | null,
+  ) => {
+    let msg = `✅ Конфиг создан\n\n🏷 Имя: \`${name}\``;
+    if (ip) {
+      msg += `\nIP: \`${ip}\``;
+    }
     if (expiresAt) {
       msg += `\n📅 Действует до: ${expiresAt.toLocaleDateString('ru-RU')}`;
     } else {
@@ -1362,7 +1395,11 @@ export const BotUi = {
     return keyboard;
   },
 
-  clientPeerDetailsText: (peer: TPeer, readOnly = false) => {
+  clientPeerDetailsText: (
+    peer: TPeer,
+    readOnly = false,
+    awgAvailable = true,
+  ) => {
     const expired = isExpired(peer);
     let status: string;
 
@@ -1379,7 +1416,7 @@ export const BotUi = {
     let text =
       `⚙️ *Конфиг клиента*\n\n` +
       `🏷 Имя: \`${peer.name}\`\n` +
-      `🌐 IP: \`${peer.ip}\`\n` +
+      (awgAvailable ? `🌐 IP: \`${peer.ip}\`\n` : '') +
       `📊 Статус: ${status}\n\n` +
       subscriptionDetails;
 
@@ -1398,15 +1435,19 @@ export const BotUi = {
     peer: TPeer,
     telegramId: string,
     readOnly = false,
+    awgAvailable = true,
   ) => {
     const keyboard = new InlineKeyboard();
     const expired = isExpired(peer);
 
     if (readOnly) {
+      if (awgAvailable) {
+        keyboard
+          .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
+          .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
+          .row();
+      }
       return keyboard
-        .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
-        .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
-        .row()
         .text('🌐 VLESS Reality', `vless_menu:${peer.name}`)
         .row()
         .text('« К конфигам', `admin_client_configs:${telegramId}`);
@@ -1434,10 +1475,14 @@ export const BotUi = {
         '📅 Изменить срок',
         `admin_change_duration:${peer.name}:${telegramId}`,
       )
-      .row()
-      .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
-      .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
-      .row()
+      .row();
+    if (awgAvailable) {
+      keyboard
+        .text('📷 QR AmneziaWG', `show_qr:${peer.name}`)
+        .text('📄 Файл AmneziaWG', `get_config_file:${peer.name}`)
+        .row();
+    }
+    keyboard
       .text('🌐 VLESS Reality', `vless_menu:${peer.name}`)
       .row()
       .text('🗑 Удалить', `admin_delete_peer:${peer.name}:${telegramId}`)

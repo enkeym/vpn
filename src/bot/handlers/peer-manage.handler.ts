@@ -88,12 +88,18 @@ export class PeerManageHandler {
 
       await safeEditMessageText(
         ctx,
-        BotUi.peerDetailsText(peer, isAdmin && canManage, canManage),
+        BotUi.peerDetailsText(
+          peer,
+          isAdmin && canManage,
+          canManage,
+          this.peersService.isTunnelAvailable(),
+        ),
         {
           reply_markup: BotUi.peerDetailsKeyboard(
             peer,
             isAdmin && canManage,
             canManage,
+            this.peersService.isTunnelAvailable(),
           ),
           parse_mode: 'Markdown',
         },
@@ -128,12 +134,18 @@ export class PeerManageHandler {
       await ctx.deleteMessage().catch(() => {});
 
       await ctx.reply(
-        BotUi.peerDetailsText(peer, isAdmin && canManage, canManage),
+        BotUi.peerDetailsText(
+          peer,
+          isAdmin && canManage,
+          canManage,
+          this.peersService.isTunnelAvailable(),
+        ),
         {
           reply_markup: BotUi.peerDetailsKeyboard(
             peer,
             isAdmin && canManage,
             canManage,
+            this.peersService.isTunnelAvailable(),
           ),
           parse_mode: 'Markdown',
         },
@@ -500,14 +512,20 @@ export class PeerManageHandler {
       }
 
       // Отправляем новый конфиг файлом (родитель удалён — нужна клавиатура с goto_peer_after_replace)
+      const awgAvailable = this.peersService.isTunnelAvailable();
       await sendCreatedPeerMessage(
         ctx.api,
         ctx.chat.id,
         this.peersService,
         newPeer,
         config,
-        BotUi.configReplaced(newPeer.name, newPeer.ip, newPeer.expiresAt),
+        BotUi.configReplaced(
+          newPeer.name,
+          awgAvailable ? newPeer.ip : null,
+          newPeer.expiresAt,
+        ),
         !!ctx.from && this.mainHandler.isAdmin(String(ctx.from.id)),
+        this.subscriptionService.buildSubscriptionUrl(newPeer),
         BotUi.backToOwnPeerKeyboardReplyAfterReplace(peerName),
       );
     } catch (error) {

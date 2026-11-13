@@ -99,15 +99,18 @@ describe('PeersService without AWG', () => {
     process.env = { ...originalEnv };
   });
 
-  it('refuses issuance when AWG is unavailable even if Xray is running', async () => {
+  it('issues a config without the AWG file when Xray is running', async () => {
     await module.get(XrayService).onModuleInit();
     jest.mocked(writeFile).mockClear();
-    await expect(
-      peers.createPeer({
-        telegramId: '123',
-        durationDays: 30,
-      }),
-    ).rejects.toThrow('VPN сейчас недоступен');
+
+    const { peer, config } = await peers.createPeer({
+      telegramId: '123',
+      durationDays: 30,
+    });
+
+    expect(config).toBe('');
+    expect(peer.vlessUuid).toEqual(expect.any(String));
+    expect(peer.ip).toMatch(/^10\.9\./);
     expect(
       jest.mocked(spawn).mock.calls.some(([command]) => command === 'awg'),
     ).toBe(false);
@@ -117,6 +120,24 @@ describe('PeersService without AWG', () => {
         .mock.calls.some(
           ([file]) => typeof file === 'string' && file.endsWith('awg0.conf'),
         ),
+    ).toBe(false);
+  });
+
+  it('replaces a config without the AWG file and rotates the VLESS uuid', async () => {
+    await module.get(XrayService).onModuleInit();
+    const { peer: created } = await peers.createPeer({
+      telegramId: '123',
+      durationDays: 30,
+    });
+
+    const { peer: replaced, config } = await peers.replacePeer(created.name);
+
+    expect(config).toBe('');
+    expect(replaced.name).toBe(created.name);
+    expect(replaced.vlessUuid).not.toBe(created.vlessUuid);
+    expect(replaced.expiresAt).toEqual(created.expiresAt);
+    expect(
+      jest.mocked(spawn).mock.calls.some(([command]) => command === 'awg'),
     ).toBe(false);
   });
 

@@ -23,6 +23,19 @@ describe('BotUi connection visibility', () => {
     );
   });
 
+  it('hides AWG actions when the tunnel is unavailable', () => {
+    const serialized = JSON.stringify(
+      BotUi.peerDetailsKeyboard(peer, false, false, false),
+    );
+
+    expect(serialized).toContain('vless_menu:test-peer');
+    expect(serialized).not.toContain('show_qr:test-peer');
+    expect(serialized).not.toContain('get_config_file:test-peer');
+    expect(BotUi.peerDetailsText(peer, false, false, false)).not.toContain(
+      '10.0.0.2',
+    );
+  });
+
   it('shows both connection channels to administrators and client cards', () => {
     const serialized = JSON.stringify(BotUi.peerDetailsKeyboard(peer, true));
 

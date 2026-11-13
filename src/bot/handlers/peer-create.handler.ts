@@ -7,6 +7,7 @@ import { BotUi } from '../ui/bot.ui';
 import { safeEditMessageText } from '../utils/safe-edit-message';
 import type { SubscriptionDuration } from 'src/peers/dto/create-peer.dto';
 import { PaymentService } from 'src/payment/payment.service';
+import { SubscriptionService } from 'src/subscription/subscription.service';
 import type { DiscountEligibleDuration } from 'src/payment/pricing';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class PeerCreateHandler {
     private readonly peersService: PeersService,
     private readonly mainHandler: MainHandler,
     private readonly paymentService: PaymentService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   async showCreateOptions(ctx: Context) {
@@ -133,8 +135,13 @@ export class PeerCreateHandler {
         this.peersService,
         peer,
         config,
-        BotUi.configCreated(peer.name, peer.ip, peer.expiresAt),
+        BotUi.configCreated(
+          peer.name,
+          this.peersService.isTunnelAvailable() ? peer.ip : null,
+          peer.expiresAt,
+        ),
         this.mainHandler.isAdmin(String(ctx.from.id)),
+        this.subscriptionService.buildSubscriptionUrl(peer),
       );
 
       await this.peersService.setConfigMessageId(peer.name, message.message_id);
