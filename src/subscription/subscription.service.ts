@@ -1,4 +1,11 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  type OnModuleInit,
+} from '@nestjs/common';
+import { resolve4 } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type { Response } from 'express';
 import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
 import type { IXrayPublicParams } from 'src/xray/xray.service';
@@ -18,7 +25,39 @@ const DNS_SERVER = '1.1.1.1';
 const XRAY_JSON_DNS_SERVERS = ['1.1.1.1', '1.0.0.1'];
 
 @Injectable()
-export class SubscriptionService {
+export class SubscriptionService implements OnModuleInit {
+  private readonly logger = new Logger(SubscriptionService.name);
+
+  private readonly dialHosts = new Map<string, string>();
+
+  async onModuleInit(): Promise<void> {
+    const hosts = new Set<string>();
+    const xrayHost = this.xrayService.getPublicParams().host;
+    if (xrayHost) hosts.add(xrayHost);
+    const hysteriaHost = this.hysteriaService.getPublicParams().host;
+    if (hysteriaHost) hosts.add(hysteriaHost);
+
+    await Promise.all(
+      [...hosts].map(async (host) => {
+        if (isIP(host)) {
+          this.dialHosts.set(host, host);
+          return;
+        }
+        try {
+          const [ip] = await resolve4(host);
+          if (ip) this.dialHosts.set(host, ip);
+        } catch {
+          this.logger.warn(
+            `Не удалось разрешить ${host} в IP — sing-box будет резолвить его на клиенте`,
+          );
+        }
+      }),
+    );
+  }
+
+  private dialHost(host: string): string {
+    return this.dialHosts.get(host) ?? host;
+  }
   /**
    * Публичный HTTPS-адрес приложения (reverse proxy на PORT). Без него
    * /sub/<uuid> снаружи недоступен, поэтому бот показывает только прямые
@@ -120,7 +159,7 @@ export class SubscriptionService {
       settings: {
         vnext: [
           {
-            address: xray.host,
+            address: this.dialHost(xray.host),
             port: xray.realityPort,
             users: [{ id: uuid, encryption: 'none', flow: XRAY_REALITY_FLOW }],
           },
@@ -205,7 +244,7 @@ export class SubscriptionService {
               },
             }
           : {}),
-        server: xray.host,
+        server: this.dialHost(xray.host),
         server_port: xray.realityPort,
         uuid: peer.vlessUuid,
         flow: XRAY_REALITY_FLOW,
@@ -239,7 +278,7 @@ export class SubscriptionService {
               },
             }
           : {}),
-        server: hysteria.host,
+        server: this.dialHost(hysteria.host),
         server_port: hysteria.port,
         password: hysteriaPassword,
         ...(hysteria.obfsPassword

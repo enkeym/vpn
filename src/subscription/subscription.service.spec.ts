@@ -9,6 +9,10 @@ import type {
 } from 'src/hysteria/hysteria.service';
 import { SubscriptionService } from './subscription.service';
 
+jest.mock('node:dns/promises', () => ({ resolve4: jest.fn() }));
+import { resolve4 } from 'node:dns/promises';
+const resolve4Mock = jest.mocked(resolve4);
+
 const XRAY_PARAMS: IXrayPublicParams = {
   host: 'vpn.example.test',
   realityPort: 443,
@@ -221,5 +225,42 @@ describe('SubscriptionService Hysteria2 channel', () => {
     expect(outbounds.some((outbound) => outbound.type === 'hysteria2')).toBe(
       false,
     );
+  });
+
+  it('dials resolved IPs in the sing-box config while keeping TLS on the domain', async () => {
+    resolve4Mock.mockResolvedValue(['203.0.113.10'] as never);
+    const service = makeService(makeHysteria());
+    await service.onModuleInit();
+
+    const config = service.buildSingBoxConfig(PEER);
+    const outbounds = config.outbounds as Array<Record<string, unknown>>;
+
+    const vless = outbounds.find((outbound) => outbound.type === 'vless')!;
+    expect(vless.server).toBe('203.0.113.10');
+    expect((vless.tls as { server_name: string }).server_name).toBe(
+      XRAY_PARAMS.realitySni,
+    );
+
+    const hysteria = outbounds.find(
+      (outbound) => outbound.type === 'hysteria2',
+    )!;
+    expect(hysteria.server).toBe('203.0.113.10');
+    expect((hysteria.tls as { server_name: string }).server_name).toBe(
+      HYSTERIA_PARAMS.sni,
+    );
+  });
+
+  it('keeps the hostname when resolution fails', async () => {
+    resolve4Mock.mockRejectedValue(new Error('NXDOMAIN') as never);
+    const service = makeService(makeHysteria());
+    await service.onModuleInit();
+
+    const config = service.buildSingBoxConfig(PEER);
+    const outbounds = config.outbounds as Array<Record<string, unknown>>;
+
+    const hysteria = outbounds.find(
+      (outbound) => outbound.type === 'hysteria2',
+    )!;
+    expect(hysteria.server).toBe(HYSTERIA_PARAMS.host);
   });
 });
