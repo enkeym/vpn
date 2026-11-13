@@ -43,6 +43,22 @@ const RELOAD_DEBOUNCE_MS = 1500;
  */
 export const XRAY_REALITY_FLOW = 'xtls-rprx-vision';
 
+export interface ICdnXhttpSettings {
+  host: string;
+  path: string;
+  mode: 'packet-up';
+  extra: {
+    xPaddingBytes: string;
+    scMaxEachPostBytes: string;
+    scMinPostsIntervalMs: string;
+    xmux: {
+      maxConcurrency: string;
+      hMaxRequestTimes: string;
+      hMaxReusableSecs: string;
+    };
+  };
+}
+
 /** Клиент VLESS: имя пира и его UUID (vlessUuid из БД). */
 export interface IXrayClient {
   name: string;
@@ -84,6 +100,7 @@ export interface IXrayPublicParams {
   xhttpMode: string;
   wsHost: string;
   wsPath: string;
+  cdnXhttp: ICdnXhttpSettings | null;
   /** Разрешён ли IPv6 наружу — см. XRAY_IPV6. */
   ipv6: boolean;
 }
@@ -137,6 +154,8 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   private readonly wsHost = process.env.XRAY_WS_HOST || '';
   private readonly wsPort = Number(process.env.XRAY_WS_PORT || 8002);
   private readonly wsPath = process.env.XRAY_WS_PATH || '/ws';
+  private readonly cdnXhttp: ICdnXhttpSettings | null;
+  private readonly cdnXhttpPort: number;
   /** Внутренний порт StatsService API — только localhost, наружу не публикуется. */
   private readonly statsApiPort = Number(
     process.env.XRAY_STATS_API_PORT || 8881,
@@ -191,7 +210,41 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly hostNetwork: HostNetworkService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    const host = this.config.get<string>('XRAY_CDN_XHTTP_HOST', '').trim();
+    const path = this.config.get<string>('XRAY_CDN_XHTTP_PATH', '').trim();
+    this.cdnXhttpPort = Number(this.config.get('XRAY_CDN_XHTTP_PORT', 8003));
+    this.cdnXhttp = null;
+    if (!host) return;
+    if (
+      !/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(
+        host,
+      ) ||
+      !/^\/[a-zA-Z0-9_-]{16,}\/$/.test(path) ||
+      !Number.isInteger(this.cdnXhttpPort) ||
+      this.cdnXhttpPort < 1 ||
+      this.cdnXhttpPort > 65535
+    ) {
+      throw new Error(
+        'Некорректные XRAY_CDN_XHTTP_HOST/PORT/PATH: нужен домен, порт 1–65535 и путь /<16+ случайных символов>/',
+      );
+    }
+    this.cdnXhttp = {
+      host,
+      path,
+      mode: 'packet-up',
+      extra: {
+        xPaddingBytes: '100-1000',
+        scMaxEachPostBytes: '16384-65536',
+        scMinPostsIntervalMs: '10-30',
+        xmux: {
+          maxConcurrency: '16-32',
+          hMaxRequestTimes: '600-900',
+          hMaxReusableSecs: '1800-3000',
+        },
+      },
+    };
+  }
 
   async onModuleInit(): Promise<void> {
     if (process.env.XRAY_ENABLED === 'false') {
@@ -462,9 +515,11 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   }
 
   private activeInboundTags(): string[] {
-    return this.wsHost
-      ? [...XrayService.CLIENT_INBOUND_TAGS, 'vless-ws']
-      : XrayService.CLIENT_INBOUND_TAGS;
+    return [
+      ...XrayService.CLIENT_INBOUND_TAGS,
+      ...(this.wsHost ? ['vless-ws'] : []),
+      ...(this.cdnXhttp ? ['vless-cdn-xhttp'] : []),
+    ];
   }
 
   /** Публичные параметры для сборки outbound'ов в sing-box-подписке. */
@@ -488,28 +543,44 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       xhttpMode: this.xhttpMode,
       wsHost: this.wsHost,
       wsPath: this.wsPath,
+      cdnXhttp: this.cdnXhttp,
       ipv6: this.ipv6Enabled,
     };
   }
 
   buildWsClientLink(name: string, uuid: string): string {
-    if (!this.wsHost) {
-      throw new InternalServerErrorException(
-        'Xray не инициализирован — не задан XRAY_WS_HOST',
-      );
+    return this.buildCdnClientLink(name, uuid, 'ws');
+  }
+
+  private buildCdnClientLink(
+    name: string,
+    uuid: string,
+    network: 'ws' | 'xhttp',
+  ): string {
+    const settings =
+      network === 'xhttp'
+        ? this.cdnXhttp
+        : { host: this.wsHost, path: this.wsPath };
+    if (!settings?.host) {
+      throw new InternalServerErrorException('Не настроен CDN-канал Xray');
     }
 
     const query = new URLSearchParams({
-      type: 'ws',
+      type: network,
       security: 'tls',
       encryption: 'none',
-      sni: this.wsHost,
-      host: this.wsHost,
-      path: this.wsPath,
+      sni: settings.host,
+      host: settings.host,
+      path: settings.path,
       fp: 'chrome',
     });
+    if (network === 'xhttp' && this.cdnXhttp) {
+      query.set('mode', this.cdnXhttp.mode);
+      query.set('alpn', 'h2');
+      query.set('extra', JSON.stringify(this.cdnXhttp.extra));
+    }
 
-    return `vless://${uuid}@${this.wsHost}:443?${query.toString()}#${encodeURIComponent(
+    return `vless://${uuid}@${settings.host}:443?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
@@ -521,7 +592,17 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    return [this.buildWsClientLink(`${name} · CDN WS`, uuid)];
+    const links = this.wsHost
+      ? [this.buildWsClientLink(`${name} · CDN WS`, uuid)]
+      : [];
+    if (this.cdnXhttp) {
+      links.unshift(
+        this.buildCdnClientLink(`${name} · CDN XHTTP`, uuid, 'xhttp'),
+      );
+    }
+    if (!links.length)
+      throw new InternalServerErrorException('Не настроен CDN-канал Xray');
+    return links;
   }
 
   /**
@@ -757,6 +838,22 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           wsSettings: {
             path: this.wsPath,
           },
+        },
+        sniffing,
+      });
+    }
+
+    if (this.cdnXhttp) {
+      inbounds.push({
+        tag: 'vless-cdn-xhttp',
+        listen: '127.0.0.1',
+        port: this.cdnXhttpPort,
+        protocol: 'vless',
+        settings: { clients: transportClients, decryption: 'none' },
+        streamSettings: {
+          network: 'xhttp',
+          security: 'none',
+          xhttpSettings: this.cdnXhttp,
         },
         sniffing,
       });

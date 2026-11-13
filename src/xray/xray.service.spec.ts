@@ -1,6 +1,7 @@
 import { ChildProcess, execFile, spawn } from 'child_process';
 import { promisify } from 'node:util';
 import { createConnection, Socket } from 'node:net';
+import { writeFile } from 'fs/promises';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { HostNetworkService } from '../network/host-network.service';
@@ -22,6 +23,7 @@ jest.mock('fs/promises', () => ({
     }),
   ),
   writeFile: jest.fn().mockResolvedValue(undefined),
+  unlink: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('child_process', () => {
   const actual =
@@ -54,6 +56,21 @@ describe('XrayService health and proxy recovery', () => {
   let child: ChildProcess;
   let listening: boolean;
 
+  async function createModule(config: Record<string, unknown> = {}) {
+    return Test.createTestingModule({
+      providers: [
+        { provide: ConfigService, useValue: new ConfigService(config) },
+        NotificationService,
+        HostNetworkService,
+        XrayService,
+        SubscriptionService,
+        HysteriaService,
+      ],
+    })
+      .setLogger({ log: jest.fn(), error: jest.fn(), warn: jest.fn() })
+      .compile();
+  }
+
   beforeEach(async () => {
     jest.useFakeTimers();
     process.env.PUBLIC_IPV4 = '';
@@ -64,6 +81,7 @@ describe('XrayService health and proxy recovery', () => {
     process.env.XRAY_INTERNAL_STEAL_PORT = '8446';
     process.env.XRAY_WS_HOST = 'cdn.example.test';
     process.env.XRAY_WS_PORT = '8002';
+    delete process.env.XRAY_CDN_XHTTP_HOST;
     listening = true;
     child = new ChildProcess();
     Object.defineProperty(child, 'exitCode', { value: null });
@@ -83,18 +101,7 @@ describe('XrayService health and proxy recovery', () => {
       .mocked(promisify(execFile))
       .mockReset()
       .mockResolvedValue({ stdout: '', stderr: '' });
-    module = await Test.createTestingModule({
-      providers: [
-        ConfigService,
-        NotificationService,
-        HostNetworkService,
-        XrayService,
-        SubscriptionService,
-        HysteriaService,
-      ],
-    })
-      .setLogger({ log: jest.fn(), error: jest.fn(), warn: jest.fn() })
-      .compile();
+    module = await createModule();
     service = module.get(XrayService);
     await service.onModuleInit();
     Reflect.set(service, 'enabled', true);
@@ -135,6 +142,105 @@ describe('XrayService health and proxy recovery', () => {
     expect(ws.searchParams.get('fp')).toBe('chrome');
     expect(ws.searchParams.get('flow')).toBeNull();
     expect(decodeURIComponent(ws.hash.slice(1))).toBe(`${peer.name} · CDN WS`);
+  });
+
+  it('keeps CDN XHTTP client, server and user revocation consistent', async () => {
+    await module.close();
+    module = await createModule({
+      XRAY_CDN_XHTTP_HOST: 'cdn.example.test',
+      XRAY_CDN_XHTTP_PATH: '/0123456789abcdef/',
+      XRAY_CDN_XHTTP_PORT: '8003',
+    });
+    service = module.get(XrayService);
+    await service.onModuleInit();
+    const subscription = module.get(SubscriptionService);
+    const peer = { name: 'peer-cdn', vlessUuid: 'test-cdn-client' };
+
+    const added = service.syncClients([
+      { name: peer.name, uuid: peer.vlessUuid },
+    ]);
+    await jest.advanceTimersByTimeAsync(1500);
+    await added;
+    const configCall = jest
+      .mocked(writeFile)
+      .mock.calls.findLast(
+        ([file]) =>
+          typeof file === 'string' && file.endsWith('/configs/xray.json'),
+      );
+    const configData = configCall?.[1];
+    if (typeof configData !== 'string')
+      throw new Error('Xray config was not written');
+    const config = JSON.parse(configData) as {
+      inbounds: Array<{
+        tag: string;
+        streamSettings?: Record<string, unknown>;
+      }>;
+    };
+    const inbound = config.inbounds.find(
+      ({ tag }) => tag === 'vless-cdn-xhttp',
+    );
+    const [profile, wsProfile] = subscription.buildXrayConfigArray(peer);
+    const outbounds = profile.outbounds as Array<{
+      settings: { vnext: Array<{ address: string }> };
+      streamSettings: { xhttpSettings: Record<string, unknown> };
+    }>;
+    const [link] = subscription.buildShareLinks(peer);
+    const uri = new URL(link);
+
+    expect(inbound).toMatchObject({
+      listen: '127.0.0.1',
+      port: 8003,
+      settings: { clients: [{ id: peer.vlessUuid, email: peer.name }] },
+      streamSettings: { network: 'xhttp', security: 'none' },
+    });
+    expect(profile.remarks).toBe('CDN XHTTP');
+    expect(wsProfile.remarks).toBe('CDN WS');
+    expect(outbounds[0].streamSettings.xhttpSettings).toEqual(
+      inbound?.streamSettings?.xhttpSettings,
+    );
+    expect(uri.searchParams.get('type')).toBe('xhttp');
+    expect(uri.searchParams.get('mode')).toBe('packet-up');
+    expect(uri.searchParams.get('path')).toBe('/0123456789abcdef/');
+    expect(JSON.parse(uri.searchParams.get('extra') ?? '{}')).toEqual(
+      outbounds[0].streamSettings.xhttpSettings.extra,
+    );
+    expect(JSON.stringify([profile, link])).not.toContain(
+      'direct.example.test',
+    );
+    expect(subscription.buildSingBoxConfig(peer)).toMatchObject({
+      outbounds: expect.arrayContaining([
+        expect.objectContaining({
+          transport: expect.objectContaining({ type: 'ws' }),
+        }),
+      ]),
+    });
+
+    const removed = service.syncClients([]);
+    await jest.advanceTimersByTimeAsync(1500);
+    await removed;
+
+    expect(jest.mocked(promisify(execFile))).toHaveBeenCalledWith('xray', [
+      'api',
+      'rmu',
+      '--server=127.0.0.1:8881',
+      '-tag=vless-cdn-xhttp',
+      peer.name,
+    ]);
+  });
+
+  it.each([
+    { XRAY_CDN_XHTTP_PATH: '/short/' },
+    { XRAY_CDN_XHTTP_HOST: 'https://cdn.example.test' },
+    { XRAY_CDN_XHTTP_PORT: '65536' },
+    { XRAY_CDN_XHTTP_PORT: 'NaN' },
+  ])('rejects invalid CDN XHTTP settings: %j', async (overrides) => {
+    await expect(
+      createModule({
+        XRAY_CDN_XHTTP_HOST: 'cdn.example.test',
+        XRAY_CDN_XHTTP_PATH: '/0123456789abcdef/',
+        ...overrides,
+      }),
+    ).rejects.toThrow('Некорректные XRAY_CDN_XHTTP_HOST/PORT/PATH');
   });
 
   it('builds three Reality inbounds with flow only on TCP', () => {

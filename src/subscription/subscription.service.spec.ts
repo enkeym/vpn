@@ -14,6 +14,7 @@ const XRAY_PARAMS: IXrayPublicParams = {
   xhttpMode: 'auto',
   wsHost: 'cdn.example.test',
   wsPath: '/ws-test',
+  cdnXhttp: null,
   ipv6: true,
 };
 

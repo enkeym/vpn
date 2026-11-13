@@ -28,6 +28,9 @@ paths:
   `src/subscription/subscription.service.ts:buildSubscriptionUrl` собирает
   `/sub/<uuid>` для кнопки «Одна ссылка — все протоколы». Пусто — ссылки нет,
   бот предлагает прямые `vless://`.
+- `XRAY_CDN_XHTTP_HOST/PORT/PATH` — `src/xray/xray.service.ts:buildServerConfig`
+  ↔ ingress cloudflared: host/path должны вести на loopback-порт из окружения.
+  Порядок включения и совместимость подписки: `docs/cdn-xhttp.md`.
 
 ## Каналы
 
@@ -43,11 +46,8 @@ paths:
 не относится.
 
 ## Контракты
-- `CLIENT_INBOUND_TAGS` в `src/xray/xray.service.ts` — список всех инбаундов с
-  VLESS-клиентами (`reality-direct`, `reality-grpc`, `reality-xhttp`). Новый
-  инбаунд без записи сюда не получит `rmu`-удаление: ушедший пир останется в
-  конфиге до перезапуска. `adu` работает иначе — берёт теги из конфига,
-  собранного тем же `buildServerConfig`.
+- `src/xray/xray.service.ts:activeInboundTags` должен включать все VLESS-входы:
+  пропущенный тег не получит `rmu` и сохранит доступ удалённого пира до рестарта.
 - `flow` задаётся по инбаунду, а не по клиенту: TCP получает `xtls-rprx-vision`,
   gRPC и XHTTP — объект клиента без `flow`. Одно и то же значение на всех
   инбаундах рвёт подключение к gRPC/XHTTP.

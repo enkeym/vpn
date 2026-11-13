@@ -74,59 +74,72 @@ export class SubscriptionService {
       );
     }
 
+    const uuid = peer.vlessUuid;
     const xray = this.xrayService.getPublicParams();
-    const wsOutbound = this.buildXrayWsOutbound(xray, peer.vlessUuid);
-
-    return [
-      {
-        remarks: 'CDN WS',
-        dns: {
-          servers: XRAY_JSON_DNS_SERVERS,
-          queryStrategy: 'UseIP',
-        },
-        outbounds: [
-          wsOutbound,
-          { tag: 'direct', protocol: 'freedom' },
-          { tag: 'block', protocol: 'blackhole' },
-        ],
-        routing: {
-          domainStrategy: 'IPIfNonMatch',
-          rules: [
-            { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
-            { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
-          ],
-        },
-      },
+    const channels = [
+      ...(xray.cdnXhttp
+        ? [{ name: 'CDN XHTTP', network: 'xhttp' as const }]
+        : []),
+      ...(xray.wsHost ? [{ name: 'CDN WS', network: 'ws' as const }] : []),
     ];
+
+    return channels.map(({ name, network }) => ({
+      remarks: name,
+      dns: {
+        servers: XRAY_JSON_DNS_SERVERS,
+        queryStrategy: 'UseIP',
+      },
+      outbounds: [
+        this.buildXrayCdnOutbound(xray, uuid, network),
+        { tag: 'direct', protocol: 'freedom' },
+        { tag: 'block', protocol: 'blackhole' },
+      ],
+      routing: {
+        domainStrategy: 'IPIfNonMatch',
+        rules: [
+          { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
+          { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
+        ],
+      },
+    }));
   }
 
-  private buildXrayWsOutbound(
+  private buildXrayCdnOutbound(
     xray: IXrayPublicParams,
     uuid: string,
+    network: 'ws' | 'xhttp',
   ): Record<string, unknown> {
+    const host = network === 'xhttp' ? xray.cdnXhttp?.host : xray.wsHost;
+    if (!host)
+      throw new InternalServerErrorException('Не настроен CDN-канал Xray');
     return {
-      tag: 'proxy-ws',
+      tag: `proxy-${network}`,
       protocol: 'vless',
       settings: {
         vnext: [
           {
-            address: xray.wsHost,
+            address: host,
             port: 443,
             users: [{ id: uuid, encryption: 'none' }],
           },
         ],
       },
       streamSettings: {
-        network: 'ws',
+        network,
         security: 'tls',
         tlsSettings: {
-          serverName: xray.wsHost,
+          serverName: host,
           fingerprint: 'chrome',
+          ...(network === 'xhttp' ? { alpn: ['h2'] } : {}),
         },
-        wsSettings: {
-          path: xray.wsPath,
-          headers: { Host: xray.wsHost },
-        },
+        ...(network === 'xhttp'
+          ? { xhttpSettings: xray.cdnXhttp }
+          : {
+              wsSettings: {
+                path: xray.wsPath,
+                headers: { Host: xray.wsHost },
+              },
+            }),
         sockopt: {
           domainStrategy: 'UseIPv4',
         },
@@ -171,6 +184,11 @@ export class SubscriptionService {
     }
 
     const xray = this.xrayService.getPublicParams();
+    if (!xray.wsHost) {
+      throw new InternalServerErrorException(
+        'Для sing-box требуется настроенный CDN WS',
+      );
+    }
     // Дуалстек: у сервера есть исходящий IPv6, поэтому назначения резолвятся
     // и в A, и в AAAA (IPv4 первым — он предсказуемее по маршрутам). При
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
