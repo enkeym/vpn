@@ -440,7 +440,7 @@ export class UserCommandsRegistrar {
 
     bot.callbackQuery('instructions_vless', async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.mainHandler.showAwgInstructions(ctx);
+      await this.mainHandler.showVlessInstructions(ctx);
     });
 
     // Показать инструкцию для конкретной платформы (AmneziaVPN)
@@ -451,12 +451,12 @@ export class UserCommandsRegistrar {
 
     bot.callbackQuery(/^instruction_vless:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.mainHandler.showInstruction(ctx, ctx.match[1]);
+      await this.mainHandler.showVlessInstruction(ctx, ctx.match[1]);
     });
 
     bot.callbackQuery('send_hiddify_settings', async (ctx) => {
       await ctx.answerCallbackQuery();
-      await this.mainHandler.showAwgInstructions(ctx);
+      await this.mainHandler.sendHiddifySettings(ctx);
     });
   }
 

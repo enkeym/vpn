@@ -1530,12 +1530,15 @@ export const BotUi = {
 
   instructionsMenuTitle:
     '📖 *Инструкция по подключению*\n\n' +
-    '🛡 *AmneziaWG* — откройте конфиг в AmneziaVPN или отсканируйте QR-код.\n\n' +
+    '🌐 *VLESS* — подписка или прямая ссылка: Happ, Hiddify, NekoBox, ' +
+    'v2rayNG, Streisand.\n' +
+    '🛡 *AmneziaWG* — файл конфига в AmneziaVPN или QR-код.\n\n' +
     '💬 _Не получается? Поддержка:_ @CharlieWaldo',
 
   instructionsMenuKeyboard: () => {
     const keyboard = new InlineKeyboard();
     return keyboard
+      .text('🌐 VLESS', 'instructions_vless')
       .text('🛡 AmneziaWG', 'instructions_awg')
       .row()
       .text('« Назад в меню', 'main_menu');

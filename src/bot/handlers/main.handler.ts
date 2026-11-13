@@ -198,6 +198,14 @@ export class MainHandler {
     });
   }
 
+  /** Список платформ для VLESS (подписка / прямая ссылка). */
+  async showVlessInstructions(ctx: Context) {
+    await safeEditMessageText(ctx, BotUi.instructionsVlessTitle, {
+      reply_markup: BotUi.instructionsVlessKeyboard(),
+      parse_mode: 'Markdown',
+    });
+  }
+
   async showInstruction(ctx: Context, platform: string) {
     const instructions: Record<string, string> = {
       android: BotUi.instructionAndroid,
