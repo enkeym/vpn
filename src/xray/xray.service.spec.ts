@@ -6,7 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { HostNetworkService } from '../network/host-network.service';
 import { NotificationService } from '../notification/notification.service';
-import { XrayService } from './xray.service';
+import { XRAY_REALITY_FLOW, XrayService } from './xray.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { HysteriaService } from '../hysteria/hysteria.service';
 
@@ -117,7 +117,7 @@ describe('XrayService health and proxy recovery', () => {
     process.env = { ...originalEnv };
   });
 
-  it('builds the single CDN WS link and base64 subscription', () => {
+  it('builds the single Reality link and base64 subscription', () => {
     const subscription = module.get(SubscriptionService);
     const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
 
@@ -130,31 +130,26 @@ describe('XrayService health and proxy recovery', () => {
     expect(links).toHaveLength(1);
     expect(decoded).toBe(links.join('\n'));
 
-    const ws = new URL(links[0]);
-    expect(ws.protocol).toBe('vless:');
-    expect(ws.hostname).toBe('cdn.example.test');
-    expect(ws.port).toBe('443');
-    expect(ws.searchParams.get('type')).toBe('ws');
-    expect(ws.searchParams.get('security')).toBe('tls');
-    expect(ws.searchParams.get('host')).toBe('cdn.example.test');
-    expect(ws.searchParams.get('sni')).toBe('cdn.example.test');
-    expect(ws.searchParams.get('path')).toBe('/ws');
-    expect(ws.searchParams.get('fp')).toBe('chrome');
-    expect(ws.searchParams.get('flow')).toBeNull();
-    expect(decodeURIComponent(ws.hash.slice(1))).toBe(`${peer.name} · CDN WS`);
+    const reality = new URL(links[0]);
+    expect(reality.protocol).toBe('vless:');
+    expect(reality.hostname).toBe('direct.example.test');
+    expect(reality.port).toBe('2053');
+    expect(reality.searchParams.get('type')).toBe('tcp');
+    expect(reality.searchParams.get('security')).toBe('reality');
+    expect(reality.searchParams.get('encryption')).toBe('none');
+    expect(reality.searchParams.get('sni')).toBe('www.wikipedia.org');
+    expect(reality.searchParams.get('fp')).toBe('chrome');
+    expect(reality.searchParams.get('pbk')).toBe('test-public');
+    expect(reality.searchParams.get('sid')).toBe('01234567');
+    expect(reality.searchParams.get('flow')).toBe(XRAY_REALITY_FLOW);
+    expect(decodeURIComponent(reality.hash.slice(1))).toBe(
+      `${peer.name} · Reality`,
+    );
   });
 
-  it('keeps CDN XHTTP client, server and user revocation consistent', async () => {
-    await module.close();
-    module = await createModule({
-      XRAY_CDN_XHTTP_HOST: 'cdn.example.test',
-      XRAY_CDN_XHTTP_PATH: '/0123456789abcdef/',
-      XRAY_CDN_XHTTP_PORT: '8003',
-    });
-    service = module.get(XrayService);
-    await service.onModuleInit();
+  it('keeps Reality client, server and user revocation consistent', async () => {
     const subscription = module.get(SubscriptionService);
-    const peer = { name: 'peer-cdn', vlessUuid: 'test-cdn-client' };
+    const peer = { name: 'peer-reality', vlessUuid: 'test-reality-client' };
 
     const added = service.syncClients([
       { name: peer.name, uuid: peer.vlessUuid },
@@ -173,59 +168,98 @@ describe('XrayService health and proxy recovery', () => {
     const config = JSON.parse(configData) as {
       inbounds: Array<{
         tag: string;
-        streamSettings?: Record<string, unknown>;
+        listen: string;
+        port: number;
+        settings: { clients: Array<Record<string, unknown>> };
+        streamSettings?: {
+          network: string;
+          security: string;
+          realitySettings: { serverNames: string[]; shortIds: string[] };
+        };
       }>;
     };
-    const inbound = config.inbounds.find(
-      ({ tag }) => tag === 'vless-cdn-xhttp',
-    );
-    const [profile, wsProfile] = subscription.buildXrayConfigArray(peer);
+    const inbound = config.inbounds.find(({ tag }) => tag === 'reality-direct');
+    const [profile] = subscription.buildXrayConfigArray(peer);
     const outbounds = profile.outbounds as Array<{
-      settings: { vnext: Array<{ address: string }> };
-      streamSettings: { xhttpSettings: Record<string, unknown> };
+      streamSettings: {
+        realitySettings: {
+          serverName: string;
+          publicKey: string;
+          shortId: string;
+        };
+      };
     }>;
     const [link] = subscription.buildShareLinks(peer);
     const uri = new URL(link);
+    const serverReality = inbound?.streamSettings?.realitySettings;
 
     expect(inbound).toMatchObject({
       listen: '127.0.0.1',
-      port: 8003,
-      settings: { clients: [{ id: peer.vlessUuid, email: peer.name }] },
-      streamSettings: { network: 'xhttp', security: 'none' },
+      port: 8444,
+      settings: {
+        clients: [
+          {
+            id: peer.vlessUuid,
+            email: peer.name,
+            flow: XRAY_REALITY_FLOW,
+          },
+        ],
+      },
+      streamSettings: { network: 'tcp', security: 'reality' },
     });
-    expect(profile.remarks).toBe('CDN XHTTP');
-    expect(wsProfile.remarks).toBe('CDN WS');
-    expect(outbounds[0].streamSettings.xhttpSettings).toEqual(
-      inbound?.streamSettings?.xhttpSettings,
+    expect(outbounds[0].streamSettings.realitySettings.serverName).toBe(
+      serverReality?.serverNames[0],
     );
-    expect(uri.searchParams.get('type')).toBe('xhttp');
-    expect(uri.searchParams.get('mode')).toBe('packet-up');
-    expect(uri.searchParams.get('path')).toBe('/0123456789abcdef/');
-    expect(JSON.parse(uri.searchParams.get('extra') ?? '{}')).toEqual(
-      outbounds[0].streamSettings.xhttpSettings.extra,
+    expect(serverReality?.shortIds).toContain(
+      outbounds[0].streamSettings.realitySettings.shortId,
     );
-    expect(JSON.stringify([profile, link])).not.toContain(
-      'direct.example.test',
+    expect(uri.searchParams.get('pbk')).toBe(
+      outbounds[0].streamSettings.realitySettings.publicKey,
     );
-    expect(subscription.buildSingBoxConfig(peer)).toMatchObject({
-      outbounds: expect.arrayContaining([
-        expect.objectContaining({
-          transport: expect.objectContaining({ type: 'ws' }),
-        }),
-      ]),
+    expect(uri.searchParams.get('sid')).toBe(
+      outbounds[0].streamSettings.realitySettings.shortId,
+    );
+    expect(uri.searchParams.get('sni')).toBe(serverReality?.serverNames[0]);
+    expect(uri.searchParams.get('flow')).toBe(XRAY_REALITY_FLOW);
+
+    const singBox = subscription.buildSingBoxConfig(peer);
+    const vless = (singBox.outbounds as Record<string, unknown>[]).find(
+      (outbound) => outbound.type === 'vless',
+    );
+    expect(vless).toMatchObject({
+      server: 'direct.example.test',
+      server_port: 2053,
+      flow: XRAY_REALITY_FLOW,
+      tls: {
+        enabled: true,
+        server_name: 'www.wikipedia.org',
+        reality: {
+          enabled: true,
+          public_key: 'test-public',
+          short_id: '01234567',
+        },
+      },
     });
+    expect(vless).not.toHaveProperty('transport');
 
     const removed = service.syncClients([]);
     await jest.advanceTimersByTimeAsync(1500);
     await removed;
 
-    expect(jest.mocked(promisify(execFile))).toHaveBeenCalledWith('xray', [
-      'api',
-      'rmu',
-      '--server=127.0.0.1:8881',
-      '-tag=vless-cdn-xhttp',
-      peer.name,
-    ]);
+    for (const tag of [
+      'reality-direct',
+      'reality-grpc',
+      'reality-xhttp',
+      'vless-ws',
+    ]) {
+      expect(jest.mocked(promisify(execFile))).toHaveBeenCalledWith('xray', [
+        'api',
+        'rmu',
+        '--server=127.0.0.1:8881',
+        `-tag=${tag}`,
+        peer.name,
+      ]);
+    }
   });
 
   it.each([
@@ -341,8 +375,9 @@ describe('XrayService health and proxy recovery', () => {
     });
     expect(service.getPublicParams()).toEqual(
       expect.objectContaining({
-        wsHost: 'cdn.example.test',
-        wsPath: '/ws',
+        host: 'direct.example.test',
+        realityPort: 2053,
+        realitySni: 'www.wikipedia.org',
       }),
     );
   });
@@ -375,23 +410,24 @@ describe('XrayService health and proxy recovery', () => {
         outbounds: expect.arrayContaining([
           expect.objectContaining({
             type: 'vless',
-            tag: 'CDN WS · cdn.example.test',
-            server: 'cdn.example.test',
-            server_port: 443,
+            tag: 'Reality · direct.example.test',
+            server: 'direct.example.test',
+            server_port: 2053,
+            flow: XRAY_REALITY_FLOW,
             tls: expect.objectContaining({
-              server_name: 'cdn.example.test',
+              server_name: 'www.wikipedia.org',
               utls: expect.objectContaining({ fingerprint: 'chrome' }),
-            }),
-            transport: expect.objectContaining({
-              type: 'ws',
-              path: '/ws',
-              headers: { Host: 'cdn.example.test' },
+              reality: expect.objectContaining({
+                enabled: true,
+                public_key: 'test-public',
+                short_id: '01234567',
+              }),
             }),
           }),
           expect.objectContaining({
             tag: 'select',
-            outbounds: ['CDN WS · cdn.example.test'],
-            default: 'CDN WS · cdn.example.test',
+            outbounds: ['Reality · direct.example.test'],
+            default: 'Reality · direct.example.test',
           }),
         ]),
         dns: expect.objectContaining({
@@ -420,10 +456,10 @@ describe('XrayService health and proxy recovery', () => {
       name: 'Тест',
       vlessUuid: 'test-client',
     });
-    const fullWs = (full.outbounds as Record<string, unknown>[]).find(
+    const fullVless = (full.outbounds as Record<string, unknown>[]).find(
       (outbound) => outbound.type === 'vless',
     );
-    expect(fullWs).toMatchObject({
+    expect(fullVless).toMatchObject({
       domain_resolver: { server: 'dns-bootstrap', strategy: 'prefer_ipv4' },
     });
     expect(full.route).toMatchObject({ default_domain_resolver: 'dns-remote' });

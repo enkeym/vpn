@@ -1,4 +1,8 @@
-import type { IXrayPublicParams, XrayService } from 'src/xray/xray.service';
+import {
+  XRAY_REALITY_FLOW,
+  type IXrayPublicParams,
+  type XrayService,
+} from 'src/xray/xray.service';
 import { SubscriptionService } from './subscription.service';
 
 const XRAY_PARAMS: IXrayPublicParams = {
@@ -12,9 +16,6 @@ const XRAY_PARAMS: IXrayPublicParams = {
   xhttpPort: 27444,
   xhttpPath: '/xhttp',
   xhttpMode: 'auto',
-  wsHost: 'cdn.example.test',
-  wsPath: '/ws-test',
-  cdnXhttp: null,
   ipv6: true,
 };
 
@@ -32,8 +33,8 @@ interface IOutbound {
   };
   streamSettings: {
     network: string;
-    tlsSettings?: { serverName: string; fingerprint: string };
-    wsSettings?: { path: string; headers: { Host: string } };
+    security?: string;
+    realitySettings?: Record<string, string>;
     sockopt?: { domainStrategy?: string };
   };
 }
@@ -48,42 +49,44 @@ function outboundsOf(config: Record<string, unknown>): IOutbound[] {
 }
 
 describe('SubscriptionService Xray config array', () => {
-  it('returns the single CDN WS profile', () => {
+  it('returns the single Reality profile', () => {
     const profiles = makeService().buildXrayConfigArray(PEER);
 
-    expect(profiles.map((profile) => profile.remarks)).toEqual(['CDN WS']);
+    expect(profiles.map((profile) => profile.remarks)).toEqual(['Reality']);
   });
 
-  it('uses the CDN WS transport with IPv4 dialing', () => {
+  it('uses the Reality transport with IPv4 dialing', () => {
     const [profile] = makeService().buildXrayConfigArray(PEER);
-    const ws = outboundsOf(profile).find(
-      (outbound) => outbound.tag === 'proxy-ws',
+    const reality = outboundsOf(profile).find(
+      (outbound) => outbound.tag === 'proxy-reality',
     )!;
 
-    expect(ws.protocol).toBe('vless');
-    expect(ws.settings.vnext[0].address).toBe(XRAY_PARAMS.wsHost);
-    expect(ws.settings.vnext[0].port).toBe(443);
-    expect(ws.settings.vnext[0].users[0]).toEqual({
+    expect(reality.protocol).toBe('vless');
+    expect(reality.settings.vnext[0].address).toBe(XRAY_PARAMS.host);
+    expect(reality.settings.vnext[0].port).toBe(XRAY_PARAMS.realityPort);
+    expect(reality.settings.vnext[0].users[0]).toEqual({
       id: PEER.vlessUuid,
       encryption: 'none',
+      flow: XRAY_REALITY_FLOW,
     });
-    expect(ws.streamSettings.network).toBe('ws');
-    expect(ws.streamSettings.tlsSettings).toEqual({
-      serverName: XRAY_PARAMS.wsHost,
+    expect(reality.streamSettings.network).toBe('tcp');
+    expect(reality.streamSettings.security).toBe('reality');
+    expect(reality.streamSettings.realitySettings).toEqual({
+      serverName: XRAY_PARAMS.realitySni,
       fingerprint: 'chrome',
+      publicKey: XRAY_PARAMS.realityPublicKey,
+      shortId: XRAY_PARAMS.realityShortId,
     });
-    expect(ws.streamSettings.wsSettings).toEqual({
-      path: XRAY_PARAMS.wsPath,
-      headers: { Host: XRAY_PARAMS.wsHost },
+    expect(reality.streamSettings.sockopt).toEqual({
+      domainStrategy: 'UseIPv4',
     });
-    expect(ws.streamSettings.sockopt).toEqual({ domainStrategy: 'UseIPv4' });
   });
 
-  it('routes all traffic through ws without other channels', () => {
+  it('routes all traffic through reality without other channels', () => {
     const [profile] = makeService().buildXrayConfigArray(PEER);
 
     expect(outboundsOf(profile).map((outbound) => outbound.tag)).toEqual([
-      'proxy-ws',
+      'proxy-reality',
       'direct',
       'block',
     ]);

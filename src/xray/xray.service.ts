@@ -98,9 +98,6 @@ export interface IXrayPublicParams {
   xhttpPort: number;
   xhttpPath: string;
   xhttpMode: string;
-  wsHost: string;
-  wsPath: string;
-  cdnXhttp: ICdnXhttpSettings | null;
   /** Разрешён ли IPv6 наружу — см. XRAY_IPV6. */
   ipv6: boolean;
 }
@@ -531,7 +528,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
 
     return {
-      host: this.host,
+      host: this.realityAddress,
       realityPort: this.realityPort,
       realityPublicKey: this.realityParams.publicKey,
       realityShortId: this.realityParams.shortId,
@@ -541,46 +538,38 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       xhttpPort: this.xhttpPort,
       xhttpPath: this.xhttpPath,
       xhttpMode: this.xhttpMode,
-      wsHost: this.wsHost,
-      wsPath: this.wsPath,
-      cdnXhttp: this.cdnXhttp,
       ipv6: this.ipv6Enabled,
     };
   }
 
-  buildWsClientLink(name: string, uuid: string): string {
-    return this.buildCdnClientLink(name, uuid, 'ws');
+  /** Адрес, к которому клиент подключается напрямую: публичный IPv4 важнее имени без A-записи. */
+  private get realityAddress(): string {
+    return (process.env.PUBLIC_IPV4 || '').trim() || this.host;
   }
 
-  private buildCdnClientLink(
-    name: string,
-    uuid: string,
-    network: 'ws' | 'xhttp',
-  ): string {
-    const settings =
-      network === 'xhttp'
-        ? this.cdnXhttp
-        : { host: this.wsHost, path: this.wsPath };
-    if (!settings?.host) {
-      throw new InternalServerErrorException('Не настроен CDN-канал Xray');
+  private buildRealityClientLink(name: string, uuid: string): string {
+    if (!this.realityParams) {
+      throw new InternalServerErrorException(
+        'Xray не инициализирован — невозможно получить параметры',
+      );
+    }
+    const address = this.realityAddress;
+    if (!address) {
+      throw new InternalServerErrorException('Не настроен адрес Reality');
     }
 
     const query = new URLSearchParams({
-      type: network,
-      security: 'tls',
+      type: 'tcp',
+      security: 'reality',
       encryption: 'none',
-      sni: settings.host,
-      host: settings.host,
-      path: settings.path,
+      sni: this.realitySni,
       fp: 'chrome',
+      pbk: this.realityParams.publicKey,
+      sid: this.realityParams.shortId,
+      flow: XRAY_REALITY_FLOW,
     });
-    if (network === 'xhttp' && this.cdnXhttp) {
-      query.set('mode', this.cdnXhttp.mode);
-      query.set('alpn', 'h2');
-      query.set('extra', JSON.stringify(this.cdnXhttp.extra));
-    }
 
-    return `vless://${uuid}@${settings.host}:443?${query.toString()}#${encodeURIComponent(
+    return `vless://${uuid}@${address}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
@@ -592,17 +581,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    const links = this.wsHost
-      ? [this.buildWsClientLink(`${name} · CDN WS`, uuid)]
-      : [];
-    if (this.cdnXhttp) {
-      links.unshift(
-        this.buildCdnClientLink(`${name} · CDN XHTTP`, uuid, 'xhttp'),
-      );
-    }
-    if (!links.length)
-      throw new InternalServerErrorException('Не настроен CDN-канал Xray');
-    return links;
+    return [this.buildRealityClientLink(`${name} · Reality`, uuid)];
   }
 
   /**

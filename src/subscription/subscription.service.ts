@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import type { Response } from 'express';
-import { XrayService } from 'src/xray/xray.service';
+import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
 import type { IXrayPublicParams } from 'src/xray/xray.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 import type { TSubscriptionFormat } from './interfaces/subscription-format.interface';
@@ -63,7 +63,7 @@ export class SubscriptionService {
 
   /**
    * Массив готовых Xray-конфигов (формат Happ/Streisand/V2Box): единственный
-   * канал CDN WS через Cloudflare Tunnel.
+   * канал Reality напрямую, без Cloudflare.
    */
   buildXrayConfigArray(
     peer: TSubscriptionPeer,
@@ -76,70 +76,57 @@ export class SubscriptionService {
 
     const uuid = peer.vlessUuid;
     const xray = this.xrayService.getPublicParams();
-    const channels = [
-      ...(xray.cdnXhttp
-        ? [{ name: 'CDN XHTTP', network: 'xhttp' as const }]
-        : []),
-      ...(xray.wsHost ? [{ name: 'CDN WS', network: 'ws' as const }] : []),
-    ];
 
-    return channels.map(({ name, network }) => ({
-      remarks: name,
-      dns: {
-        servers: XRAY_JSON_DNS_SERVERS,
-        queryStrategy: 'UseIP',
-      },
-      outbounds: [
-        this.buildXrayCdnOutbound(xray, uuid, network),
-        { tag: 'direct', protocol: 'freedom' },
-        { tag: 'block', protocol: 'blackhole' },
-      ],
-      routing: {
-        domainStrategy: 'IPIfNonMatch',
-        rules: [
-          { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
-          { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
+    return [
+      {
+        remarks: 'Reality',
+        dns: {
+          servers: XRAY_JSON_DNS_SERVERS,
+          queryStrategy: 'UseIP',
+        },
+        outbounds: [
+          this.buildXrayRealityOutbound(xray, uuid),
+          { tag: 'direct', protocol: 'freedom' },
+          { tag: 'block', protocol: 'blackhole' },
         ],
+        routing: {
+          domainStrategy: 'IPIfNonMatch',
+          rules: [
+            { type: 'field', ip: ['geoip:private'], outboundTag: 'direct' },
+            { type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' },
+          ],
+        },
       },
-    }));
+    ];
   }
 
-  private buildXrayCdnOutbound(
+  private buildXrayRealityOutbound(
     xray: IXrayPublicParams,
     uuid: string,
-    network: 'ws' | 'xhttp',
   ): Record<string, unknown> {
-    const host = network === 'xhttp' ? xray.cdnXhttp?.host : xray.wsHost;
-    if (!host)
-      throw new InternalServerErrorException('Не настроен CDN-канал Xray');
+    if (!xray.host)
+      throw new InternalServerErrorException('Не настроен Reality-канал Xray');
     return {
-      tag: `proxy-${network}`,
+      tag: 'proxy-reality',
       protocol: 'vless',
       settings: {
         vnext: [
           {
-            address: host,
-            port: 443,
-            users: [{ id: uuid, encryption: 'none' }],
+            address: xray.host,
+            port: xray.realityPort,
+            users: [{ id: uuid, encryption: 'none', flow: XRAY_REALITY_FLOW }],
           },
         ],
       },
       streamSettings: {
-        network,
-        security: 'tls',
-        tlsSettings: {
-          serverName: host,
+        network: 'tcp',
+        security: 'reality',
+        realitySettings: {
+          serverName: xray.realitySni,
           fingerprint: 'chrome',
-          ...(network === 'xhttp' ? { alpn: ['h2'] } : {}),
+          publicKey: xray.realityPublicKey,
+          shortId: xray.realityShortId,
         },
-        ...(network === 'xhttp'
-          ? { xhttpSettings: xray.cdnXhttp }
-          : {
-              wsSettings: {
-                path: xray.wsPath,
-                headers: { Host: xray.wsHost },
-              },
-            }),
         sockopt: {
           domainStrategy: 'UseIPv4',
         },
@@ -184,9 +171,9 @@ export class SubscriptionService {
     }
 
     const xray = this.xrayService.getPublicParams();
-    if (!xray.wsHost) {
+    if (!xray.host) {
       throw new InternalServerErrorException(
-        'Для sing-box требуется настроенный CDN WS',
+        'Для sing-box требуется настроенный Reality-канал',
       );
     }
     // Дуалстек: у сервера есть исходящий IPv6, поэтому назначения резолвятся
@@ -194,12 +181,12 @@ export class SubscriptionService {
     // XRAY_IPV6=false остаётся прежнее «только IPv4»: без исходящего IPv6
     // домены с AAAA отваливались с dial tcp6 unreachable.
     const domainStrategy = xray.ipv6 ? 'prefer_ipv4' : 'ipv4_only';
-    const wsTag = `CDN WS · ${xray.wsHost}`;
+    const realityTag = `Reality · ${xray.host}`;
 
     const outbounds: Record<string, unknown>[] = [
       {
         type: 'vless',
-        tag: wsTag,
+        tag: realityTag,
         ...(includeDnsReferences
           ? {
               domain_resolver: {
@@ -208,25 +195,26 @@ export class SubscriptionService {
               },
             }
           : {}),
-        server: xray.wsHost,
-        server_port: 443,
+        server: xray.host,
+        server_port: xray.realityPort,
         uuid: peer.vlessUuid,
+        flow: XRAY_REALITY_FLOW,
         tls: {
           enabled: true,
-          server_name: xray.wsHost,
+          server_name: xray.realitySni,
           utls: { enabled: true, fingerprint: 'chrome' },
-        },
-        transport: {
-          type: 'ws',
-          path: xray.wsPath,
-          headers: { Host: xray.wsHost },
+          reality: {
+            enabled: true,
+            public_key: xray.realityPublicKey,
+            short_id: xray.realityShortId,
+          },
         },
       },
       {
         type: 'selector',
         tag: 'select',
-        outbounds: [wsTag],
-        default: wsTag,
+        outbounds: [realityTag],
+        default: realityTag,
         interrupt_exist_connections: true,
       },
     ];
