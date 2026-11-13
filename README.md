@@ -47,7 +47,7 @@ health-check отсеивает мёртвый канал, и клиент пе�
 
 | Канал | Транспорт | Состояние на 13.11.2026 |
 |---|---|---|
-| Hysteria2 | UDP/QUIC 443 + obfs salamander, TLS r.enkeym.site | Основной замаскированный канал: выглядит как HTTP/3 |
+| Hysteria2 | UDP/QUIC 8443 + obfs salamander, TLS r.enkeym.site | Основной замаскированный канал: выглядит как HTTP/3 |
 | Reality TCP | VLESS+Reality по TCP, 443 | Fallback: с 17.02.2026 режется поведенческим анализом у части сетей — первые ~16 КБ проходят, дальше заморозка |
 | Reality gRPC | gRPC (HTTP/2) + Reality, 27443 | Не выдаётся в текущей подписке |
 | Reality XHTTP | XHTTP + Reality, 27444 | Не выдаётся в текущей подписке |
