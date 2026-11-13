@@ -383,7 +383,7 @@ export class PeerManageHandler {
 
     try {
       const peer = await this.peersService.findPeer(peerName);
-      const url = this.subscriptionService.buildSubscriptionUrl(peer, 'xray');
+      const url = this.subscriptionService.buildSubscriptionUrl(peer);
 
       if (!url) {
         await ctx.reply(BotUi.allProtocolsUnavailable, {

@@ -2,6 +2,25 @@ import type { TPeer } from 'src/peers/peers.service';
 import { BotUi } from './bot.ui';
 
 describe('BotUi connection visibility', () => {
+  it('imports a complete remote profile into official sing-box clients', () => {
+    const url = 'https://sub.example.test/sub/test-uuid';
+
+    const text = BotUi.allProtocolsText('test-peer', url);
+
+    expect(text).toContain(
+      `sing-box://import-remote-profile?url=${encodeURIComponent(`${url}/full`)}`,
+    );
+    expect(text).toContain(`happ://add/${url}`);
+    expect(text).not.toMatch(/gRPC|XHTTP|Авто-обход/);
+  });
+
+  it('does not promise unavailable channels or HTTP/3 camouflage', () => {
+    const text = BotUi.vlessMenuText('test-peer', 'test-links');
+
+    expect(text).not.toContain('HTTP/3');
+    expect(text).not.toContain('Каналов два');
+  });
+
   const peer: TPeer = {
     telegramId: '123',
     name: 'test-peer',

@@ -171,6 +171,22 @@ describe('SubscriptionService subscription URL', () => {
     );
   });
 
+  it('keeps automatic client format selection when no format is requested', () => {
+    process.env.SUB_PUBLIC_URL = 'https://sub.example.test/';
+
+    const url = makeService().buildSubscriptionUrl(PEER);
+
+    expect(url).toBe(`https://sub.example.test/sub/${PEER.vlessUuid}`);
+  });
+
+  it('returns null when the peer has no subscription UUID', () => {
+    process.env.SUB_PUBLIC_URL = 'https://sub.example.test/';
+
+    expect(
+      makeService().buildSubscriptionUrl({ ...PEER, vlessUuid: null }),
+    ).toBeNull();
+  });
+
   it('returns null when no public URL is configured', () => {
     delete process.env.SUB_PUBLIC_URL;
 
