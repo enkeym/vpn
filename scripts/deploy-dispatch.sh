@@ -16,8 +16,8 @@ exec 9>/run/lock/vpn-new-deploy.lock
 flock -n 9
 cd "$DEPLOY_PROJECT_DIR"
 
-if [ -n "$(git status --porcelain)" ]; then
-  echo 'Deployment refused: working tree is dirty' >&2
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo 'Deployment refused: working tree has modified tracked files' >&2
   exit 1
 fi
 
