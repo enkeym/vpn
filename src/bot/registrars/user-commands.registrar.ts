@@ -398,7 +398,7 @@ export class UserCommandsRegistrar {
       const admin = ctx.from ? isAdmin(String(ctx.from.id)) : false;
       if (!(await this.ensurePeerAccess(ctx, ctx.match[1], admin))) return;
       await ctx.answerCallbackQuery();
-      await this.peerManageHandler.sendConfigFile(ctx, ctx.match[1]);
+      await this.peerManageHandler.sendVlessJsonFile(ctx, ctx.match[1]);
     });
 
     // Редактирование описания своего конфига (только для админов)
