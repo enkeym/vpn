@@ -714,6 +714,10 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
       enabled: true,
       destOverride: ['http', 'tls', 'quic'],
     };
+    // TCP keep-alive на всех VLESS-инбаундах: NAT и операторы выкидывают
+    // простаивающие соединения из таблиц, и без keep-alive клиент узнаёт
+    // о мёртвом сокете только по долгому таймауту после смены сети.
+    const sockopt = { tcpKeepAliveInterval: 30 };
     // Новые каналы слушают напрямую (nginx разводчиком на них не стоит).
     const directListen = this.ipv6Enabled ? '::' : '0.0.0.0';
 
@@ -755,6 +759,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           ? { tcpSettings: { acceptProxyProtocol: true } }
           : {}),
         realitySettings,
+        sockopt,
       },
       sniffing,
     });
@@ -776,6 +781,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           multiMode: true,
         },
         realitySettings,
+        sockopt,
       },
       sniffing,
     });
@@ -797,6 +803,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           mode: this.xhttpMode,
         },
         realitySettings,
+        sockopt,
       },
       sniffing,
     });
@@ -817,6 +824,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           wsSettings: {
             path: this.wsPath,
           },
+          sockopt,
         },
         sniffing,
       });
@@ -833,6 +841,7 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
           network: 'xhttp',
           security: 'none',
           xhttpSettings: this.cdnXhttp,
+          sockopt,
         },
         sniffing,
       });

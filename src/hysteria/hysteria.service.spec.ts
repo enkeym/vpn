@@ -104,6 +104,27 @@ describe('HysteriaService', () => {
     expect(service.buildShareLink('Тест')).toBeNull();
   });
 
+  it('returns no link when HY2_SHARE_LINKS=false', () => {
+    process.env.HY2_SHARE_LINKS = 'false';
+    const service = makeService(true);
+
+    expect(service.isShareLinkEnabled()).toBe(false);
+    expect(service.buildShareLink('Тест')).toBeNull();
+  });
+
+  it('tunes QUIC receive windows and keep-alive in the server config', () => {
+    const config = (
+      makeService(true) as unknown as IHysteriaInternals
+    ).buildConfig([{ name: 'Тест' }]);
+
+    expect(config).toContain('initStreamReceiveWindow: 8388608');
+    expect(config).toContain('maxStreamReceiveWindow: 8388608');
+    expect(config).toContain('initConnReceiveWindow: 20971520');
+    expect(config).toContain('maxConnReceiveWindow: 20971520');
+    expect(config).toContain('keepAlivePeriod: 10s');
+    expect(config).toContain('maxIdleTimeout: 30s');
+  });
+
   it('maps tx to uplink and rx to downlink without clearing the counters', async () => {
     const service = makeService(true);
     const get = jest

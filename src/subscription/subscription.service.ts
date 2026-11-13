@@ -265,7 +265,7 @@ export class SubscriptionService implements OnModuleInit {
     const hysteria: IHysteriaPublicParams =
       this.hysteriaService.getPublicParams();
     const hysteriaPassword = this.hysteriaService.getPassword(peer.name);
-    if (hysteriaPassword) {
+    if (this.hysteriaService.isShareLinkEnabled() && hysteriaPassword) {
       const hysteriaTag = `Hysteria2 · ${hysteria.host}`;
       outbounds.push({
         type: 'hysteria2',

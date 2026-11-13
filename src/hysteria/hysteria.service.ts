@@ -58,6 +58,12 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
   private readonly keyPath =
     process.env.HY2_KEY || path.join(process.cwd(), '/configs/steal-key.pem');
   private readonly host = process.env.WG_HOST || '';
+  /**
+   * HY2_SHARE_LINKS=false оставляет сервер работающим, но убирает hysteria2
+   * из подписки, sing-box-конфига и сообщений бота — канал прошивается
+   * только там, где UDP реально проходит.
+   */
+  private readonly shareLinksEnabled = process.env.HY2_SHARE_LINKS !== 'false';
 
   private readonly mutex = new Mutex();
 
@@ -129,6 +135,11 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
     return this.enabled;
   }
 
+  /** Канал жив и его ссылки публикуются наружу. */
+  isShareLinkEnabled(): boolean {
+    return this.enabled && this.shareLinksEnabled;
+  }
+
   getPublicParams(): IHysteriaPublicParams {
     return {
       host: this.host,
@@ -150,7 +161,7 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
 
   buildShareLink(peerName: string): string | null {
     const password = this.getPassword(peerName);
-    if (!this.enabled || !password) return null;
+    if (!this.isShareLinkEnabled() || !password) return null;
 
     const params = new URLSearchParams({ sni: this.sni, insecure: '0' });
     const obfsPassword = this.getPublicParams().obfsPassword;
@@ -305,6 +316,19 @@ export class HysteriaService implements OnModuleInit, OnModuleDestroy {
         `    password: ${JSON.stringify(this.secrets.obfsPassword)}`,
       );
     }
+
+    // QUIC-тюнинг под плохие каналы: потеря пакетов у клиента не должна
+    // обнулять окно приёма, а смена сети (Wi-Fi↔LTE) — рвать сессию.
+    lines.push(
+      '',
+      'quic:',
+      '  initStreamReceiveWindow: 8388608',
+      '  maxStreamReceiveWindow: 8388608',
+      '  initConnReceiveWindow: 20971520',
+      '  maxConnReceiveWindow: 20971520',
+      '  keepAlivePeriod: 10s',
+      '  maxIdleTimeout: 30s',
+    );
 
     lines.push(
       '',

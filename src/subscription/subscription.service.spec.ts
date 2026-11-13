@@ -58,13 +58,16 @@ function makeHysteria(
   overrides: Partial<{
     params: IHysteriaPublicParams;
     password: string | null;
+    shareLinks: boolean;
   }> = {},
 ): HysteriaService {
   const disabled = overrides.password === null;
   const password = disabled ? null : (overrides.password ?? 'peer-password');
+  const shareLinks = overrides.shareLinks ?? true;
   return {
     getPublicParams: () => overrides.params ?? HYSTERIA_PARAMS,
     getPassword: () => password,
+    isShareLinkEnabled: () => shareLinks && password !== null,
     buildShareLink: () =>
       password === null
         ? null
@@ -220,6 +223,17 @@ describe('SubscriptionService Hysteria2 channel', () => {
 
   it('omits the hysteria2 outbound when the channel is disabled', () => {
     const config = makeService().buildSingBoxConfig(PEER);
+    const outbounds = config.outbounds as Array<Record<string, unknown>>;
+
+    expect(outbounds.some((outbound) => outbound.type === 'hysteria2')).toBe(
+      false,
+    );
+  });
+
+  it('omits the hysteria2 outbound when share links are hidden', () => {
+    const config = makeService(
+      makeHysteria({ shareLinks: false }),
+    ).buildSingBoxConfig(PEER);
     const outbounds = config.outbounds as Array<Record<string, unknown>>;
 
     expect(outbounds.some((outbound) => outbound.type === 'hysteria2')).toBe(
