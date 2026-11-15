@@ -119,8 +119,9 @@ ARG SHADOWSOCKS_VERSION=v1.25.0
 RUN apk add --no-cache curl xz && \
     curl -fsSL -o /ss.tar.xz \
       "https://github.com/shadowsocks/shadowsocks-rust/releases/download/${SHADOWSOCKS_VERSION}/shadowsocks-${SHADOWSOCKS_VERSION}.x86_64-unknown-linux-musl.tar.xz" && \
-    tar -xJf /ss.tar.xz -C / && \
-    cp "/shadowsocks-${SHADOWSOCKS_VERSION}/ssserver" /ssserver && \
+    mkdir -p /ss-bin && \
+    tar -xJf /ss.tar.xz -C /ss-bin && \
+    cp /ss-bin/ssserver /ssserver && \
     chmod +x /ssserver
 
 # ============================================
