@@ -9,6 +9,7 @@ import { NotificationService } from '../notification/notification.service';
 import { XRAY_REALITY_FLOW, XrayService } from './xray.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { HysteriaService } from '../hysteria/hysteria.service';
+import { ShadowsocksService } from '../shadowsocks/shadowsocks.service';
 
 jest.mock('fs', () => ({
   ...jest.requireActual<typeof import('fs')>('fs'),
@@ -65,6 +66,7 @@ describe('XrayService health and proxy recovery', () => {
         XrayService,
         SubscriptionService,
         HysteriaService,
+        ShadowsocksService,
       ],
     })
       .setLogger({ log: jest.fn(), error: jest.fn(), warn: jest.fn() })

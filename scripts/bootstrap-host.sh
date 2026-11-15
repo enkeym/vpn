@@ -31,6 +31,12 @@ if [[ ! "$HY2_PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$HY2_PORT < 1 || 10#$HY2_PORT > 6
   echo "HY2_PORT должен быть UDP-портом от 1 до 65535" >&2
   exit 1
 fi
+SS_PORT="$(docker compose -p "$NAME" config --environment | awk -F= '$1 == "SS_PORT" { print $2 }')"
+SS_PORT="${SS_PORT:-2096}"
+if [[ ! "$SS_PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$SS_PORT < 1 || 10#$SS_PORT > 65535)); then
+  echo "SS_PORT должен быть портом от 1 до 65535" >&2
+  exit 1
+fi
 [ -e /dev/net/tun ] || warn "нет /dev/net/tun — amneziawg-go не поднимется"
 
 # --- sysctl ---
@@ -48,7 +54,7 @@ echo "sysctl: $SYSCTL_FILE применён (ip_forward=$(cat /proc/sys/net/ipv4
 # --- фаервол ---
 # ufw не включаем сами: на чужом хосте это закрыло бы SSH. Если он выключен,
 # правила не добавляем и говорим об этом.
-open_ports=("443/tcp" "${AWG_PORT}/udp" "${HY2_PORT}/udp")
+open_ports=("443/tcp" "${AWG_PORT}/udp" "${HY2_PORT}/udp" "${SS_PORT}/tcp" "${SS_PORT}/udp")
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
   for port in "${open_ports[@]}"; do

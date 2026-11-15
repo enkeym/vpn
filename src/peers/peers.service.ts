@@ -25,6 +25,7 @@ import { AwgService } from 'src/wg/awg.service';
 import { XrayService } from 'src/xray/xray.service';
 import type { IXrayClient } from 'src/xray/xray.service';
 import { HysteriaService } from 'src/hysteria/hysteria.service';
+import { ShadowsocksService } from 'src/shadowsocks/shadowsocks.service';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ICreatePeer, SubscriptionDuration } from './dto/create-peer.dto';
 import type { DiscountEligibleDuration } from 'src/payment/pricing';
@@ -75,6 +76,7 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     private readonly tunnel: AwgService,
     private readonly xrayService: XrayService,
     private readonly hysteriaService: HysteriaService,
+    private readonly shadowsocksService: ShadowsocksService,
     private readonly notificationService: NotificationService,
     private readonly cacheService: CacheService,
   ) {}
@@ -246,11 +248,16 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
     return this.xrayService.isEnabled();
   }
 
+  isShadowsocksAvailable(): boolean {
+    return this.shadowsocksService.isEnabled();
+  }
+
   private assertVpnAvailable(): void {
     if (
       !this.isTunnelAvailable() &&
       !this.xrayService.isEnabled() &&
-      !this.hysteriaService.isEnabled()
+      !this.hysteriaService.isEnabled() &&
+      !this.shadowsocksService.isEnabled()
     ) {
       throw new BadRequestException(VPN_UNAVAILABLE_MESSAGE);
     }
@@ -324,7 +331,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
    * старт бота, ни создание/удаление пира: AmneziaWG при этом остаётся живым.
    */
   private async syncXrayWithDb(required = false): Promise<void> {
-    if (!this.xrayService.isEnabled() && !this.hysteriaService.isEnabled()) {
+    if (
+      !this.xrayService.isEnabled() &&
+      !this.hysteriaService.isEnabled() &&
+      !this.shadowsocksService.isEnabled()
+    ) {
       if (required) {
         throw new BadRequestException(VPN_UNAVAILABLE_MESSAGE);
       }
@@ -376,6 +387,21 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
         if (required) throw error;
         this.logger.error(
           `Ошибка синхронизации Hysteria2 с БД: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+    }
+
+    if (this.shadowsocksService.isEnabled()) {
+      try {
+        await this.shadowsocksService.syncClients(
+          activePeers.map((peer) => ({ name: peer.name })),
+        );
+      } catch (error) {
+        if (required) throw error;
+        this.logger.error(
+          `Ошибка синхронизации Shadowsocks с БД: ${
             error instanceof Error ? error.message : error
           }`,
         );
@@ -1759,7 +1785,11 @@ export class PeersService implements OnModuleInit, OnApplicationBootstrap {
 
     const links = this.xrayService.buildShareLinks(peer.name, vlessUuid);
     const hysteriaLink = this.hysteriaService.buildShareLink(peer.name);
-    const allLinks = hysteriaLink ? [...links, hysteriaLink] : links;
+    const linksWithHysteria = hysteriaLink ? [...links, hysteriaLink] : links;
+    const ssLink = this.shadowsocksService.buildShareLink(peer.name);
+    const allLinks = ssLink
+      ? [...linksWithHysteria, ssLink]
+      : linksWithHysteria;
     const linksBlock = allLinks.map((link) => `\`${link}\``).join('\n\n');
 
     return (

@@ -108,7 +108,23 @@ RUN apk add --no-cache curl && \
     chmod +x /hysteria
 
 # ============================================
-# Stage 7: Production image
+# Stage 7: Shadowsocks-2022 (SIP022, TCP+UDP)
+# ============================================
+# Третий канал: AEAD-2022 multi-user через users[] (Extensible Identity Header).
+# Минимальный отпечаток: без TLS-handshake и узнаваемых заголовков. Бинарник
+# собран под musl — runtime-образ Alpine. Версия закреплена (ARG), бампать тегом
+# из https://github.com/shadowsocks/shadowsocks-rust/releases.
+FROM base AS ss-build
+ARG SHADOWSOCKS_VERSION=v1.25.0
+RUN apk add --no-cache curl xz && \
+    curl -fsSL -o /ss.tar.xz \
+      "https://github.com/shadowsocks/shadowsocks-rust/releases/download/${SHADOWSOCKS_VERSION}/shadowsocks-${SHADOWSOCKS_VERSION}.x86_64-unknown-linux-musl.tar.xz" && \
+    tar -xJf /ss.tar.xz -C / && \
+    cp "/shadowsocks-${SHADOWSOCKS_VERSION}/ssserver" /ssserver && \
+    chmod +x /ssserver
+
+# ============================================
+# Stage 8: Production image
 # ============================================
 FROM base AS deploy
 WORKDIR /app
@@ -147,10 +163,11 @@ RUN awg --version && command -v awg-quick >/dev/null
 # просто не поднимется и напишет об этом в лог (см. isBinaryAvailable).
 COPY --from=xray-build /xray/out/xray /usr/bin/xray
 COPY --from=hysteria-build /hysteria /usr/bin/hysteria
+COPY --from=ss-build /ssserver /usr/bin/ssserver
 COPY --from=xray-build /xray/out/geoip.dat /usr/share/xray/geoip.dat
 COPY --from=xray-build /xray/out/geosite.dat /usr/share/xray/geosite.dat
 ENV XRAY_LOCATION_ASSET=/usr/share/xray
-RUN xray version >/dev/null
+RUN xray version >/dev/null && ssserver --version >/dev/null
 
 # Копируем только необходимое для запуска
 COPY --from=build /app/dist ./dist
@@ -178,6 +195,7 @@ LABEL version="1.0"
 # так слушает порты хоста, открывать их нужно в фаерволе VPS (см. README).
 EXPOSE 51821/udp
 EXPOSE 443/tcp
+EXPOSE 2096
 EXPOSE 3000
 
 # Health check внутри контейнера

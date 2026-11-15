@@ -11,6 +11,8 @@ import { XRAY_REALITY_FLOW, XrayService } from 'src/xray/xray.service';
 import type { IXrayPublicParams } from 'src/xray/xray.service';
 import { HysteriaService } from 'src/hysteria/hysteria.service';
 import type { IHysteriaPublicParams } from 'src/hysteria/hysteria.service';
+import { ShadowsocksService } from 'src/shadowsocks/shadowsocks.service';
+import type { IShadowsocksPublicParams } from 'src/shadowsocks/shadowsocks.service';
 import type { TPeerSelect } from 'src/peers/peers.service';
 import type { TSubscriptionFormat } from './interfaces/subscription-format.interface';
 
@@ -36,6 +38,8 @@ export class SubscriptionService implements OnModuleInit {
     if (xrayHost) hosts.add(xrayHost);
     const hysteriaHost = this.hysteriaService.getPublicParams().host;
     if (hysteriaHost) hosts.add(hysteriaHost);
+    const shadowsocksHost = this.shadowsocksService.getPublicParams().host;
+    if (shadowsocksHost) hosts.add(shadowsocksHost);
 
     await Promise.all(
       [...hosts].map(async (host) => {
@@ -71,6 +75,7 @@ export class SubscriptionService implements OnModuleInit {
   constructor(
     private readonly xrayService: XrayService,
     private readonly hysteriaService: HysteriaService,
+    private readonly shadowsocksService: ShadowsocksService,
   ) {}
 
   /** Ссылка-подписка для импорта одним URL; null — SUB_PUBLIC_URL не задан. */
@@ -104,8 +109,10 @@ export class SubscriptionService implements OnModuleInit {
 
     const links = this.xrayService.buildShareLinks(peer.name, peer.vlessUuid);
     const hysteriaLink = this.hysteriaService.buildShareLink(peer.name);
+    const linksWithHysteria = hysteriaLink ? [...links, hysteriaLink] : links;
+    const ssLink = this.shadowsocksService.buildShareLink(peer.name);
 
-    return hysteriaLink ? [...links, hysteriaLink] : links;
+    return ssLink ? [...linksWithHysteria, ssLink] : linksWithHysteria;
   }
 
   /**
@@ -295,6 +302,35 @@ export class SubscriptionService implements OnModuleInit {
         },
       });
       channelTags.push(hysteriaTag);
+    }
+
+    const shadowsocks: IShadowsocksPublicParams =
+      this.shadowsocksService.getPublicParams();
+    const ssServerKey = this.shadowsocksService.getServerKey();
+    const ssPeerKey = this.shadowsocksService.getPeerKey(peer.name);
+    if (
+      this.shadowsocksService.isShareLinkEnabled() &&
+      ssServerKey &&
+      ssPeerKey
+    ) {
+      const ssTag = `Shadowsocks · ${shadowsocks.host}`;
+      outbounds.push({
+        type: 'shadowsocks',
+        tag: ssTag,
+        ...(includeDnsReferences
+          ? {
+              domain_resolver: {
+                server: DNS_BOOTSTRAP_TAG,
+                strategy: domainStrategy,
+              },
+            }
+          : {}),
+        server: this.dialHost(shadowsocks.host),
+        server_port: shadowsocks.port,
+        method: shadowsocks.method,
+        password: `${ssServerKey}:${ssPeerKey}`,
+      });
+      channelTags.push(ssTag);
     }
 
     outbounds.push({

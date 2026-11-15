@@ -13,6 +13,7 @@ import { NotificationService } from '../notification/notification.service';
 import { AwgService } from '../wg/awg.service';
 import { XrayService } from '../xray/xray.service';
 import { HysteriaService } from '../hysteria/hysteria.service';
+import { ShadowsocksService } from '../shadowsocks/shadowsocks.service';
 import { PeersService } from './peers.service';
 
 jest.mock('fs', () => ({
@@ -78,6 +79,7 @@ describe('PeersService without AWG', () => {
         AwgService,
         XrayService,
         HysteriaService,
+        ShadowsocksService,
         PeersService,
         { provide: DRIZZLE, useValue: db },
       ],

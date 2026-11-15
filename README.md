@@ -29,19 +29,19 @@
 
 Один конфиг (запись в `peers`) выдаётся подпиской и прямыми ссылками в боте:
 
-| | Hysteria2 | VLESS (Xray) |
-|---|---|---|
-| Что выдаётся | `hysteria2://`-ссылка в подписке и текстом в боте | подписка, `vless://`-ссылка, QR, sing-box JSON |
-| Клиент | Happ, Hiddify, NekoBox, Streisand, sing-box | Happ, Hiddify, NekoBox, v2rayNG, Streisand, sing-box |
-| Сервис | `HysteriaService` (`src/hysteria`) | `XrayService` (`src/xray`) |
-| Ключ пира | пароль из HMAC(peerName) | `vlessUuid` |
+| | Hysteria2 | VLESS (Xray) | Shadowsocks-2022 |
+|---|---|---|---|
+| Что выдаётся | `hysteria2://`-ссылка в подписке и текстом в боте | подписка, `vless://`-ссылка, QR, sing-box JSON | `ss://`-ссылка в подписке и текстом в боте |
+| Клиент | Happ, Hiddify, NekoBox, Streisand, sing-box | Happ, Hiddify, NekoBox, v2rayNG, Streisand, sing-box | Happ, Hiddify, NekoBox, v2rayNG, Streisand, sing-box |
+| Сервис | `HysteriaService` (`src/hysteria`) | `XrayService` (`src/xray`) | `ShadowsocksService` (`src/shadowsocks`) |
+| Ключ пира | пароль из HMAC(peerName) | `vlessUuid` | ключ из HMAC(peerName) |
 
 AmneziaWG в выдачу не попадает: DPI раскрывает AWG-Handshake. Сервис остаётся
 в коде (`AWG_ENABLED=false` его не поднимает), чтобы старые конфиги не ломались
 при откате.
 
-Подписка выдаёт VLESS+Reality TCP и, при включённом `HY2_SHARE_LINKS`,
-Hysteria2. Формат выбирается по User-Agent; явный `?format=base64|singbox|xray`
+Подписка выдаёт VLESS+Reality TCP и, при включённых `HY2_SHARE_LINKS` /
+`SS_SHARE_LINKS`, Hysteria2 и Shadowsocks-2022. Формат выбирается по User-Agent; явный `?format=base64|singbox|xray`
 имеет приоритет. Xray JSON содержит только Reality. Общая ссылка в боте
 не фиксирует формат, а официальный sing-box импортирует полный конфиг
 из `/sub/<uuid>/full`. Ранее выданную общую ссылку с `?format=xray`
@@ -55,6 +55,7 @@ Reality использует TCP и TLS-подобный обмен, Hysteria2 �
 | Канал | Транспорт | Состояние на 13.11.2026 |
 |---|---|---|
 | Hysteria2 | UDP/QUIC, `HY2_PORT`, TLS `HY2_SNI`, опциональный Salamander | Выдаётся при `HY2_SHARE_LINKS`; доступность UDP и сертификат требуют проверки на работающем сервере |
+| Shadowsocks-2022 | TCP+UDP, `SS_PORT` (2096), AEAD-2022 (`2022-blake3-aes-256-gcm`) | Выдаётся при `SS_SHARE_LINKS`; без TLS-handshake — минимальный отпечаток, устойчивость проверять на конкретной сети |
 | Reality TCP | VLESS+Reality по TCP, 443 | Fallback: с 17.02.2026 режется поведенческим анализом у части сетей — первые ~16 КБ проходят, дальше заморозка |
 | Reality gRPC | gRPC (HTTP/2) + Reality, 27443 | Не выдаётся в текущей подписке |
 | Reality XHTTP | XHTTP + Reality, 27444 | Не выдаётся в текущей подписке |
@@ -68,8 +69,8 @@ Reality использует TCP и TLS-подобный обмен, Hysteria2 �
 
 Они не заменяют, а дополняют друг друга: протоколы блокируются по-разному, и
 клиент подключается тем, что живо на его сети. Состав активных пиров
-синхронизируется в оба сервиса из `PeersService` — пауза, истечение срока,
-удаление и замена конфига отключают сразу оба канала.
+синхронизируется во все сервисы каналов из `PeersService` — пауза, истечение срока,
+удаление и замена конфига отключают сразу все каналы.
 
 ## Развёртывание на сервере
 

@@ -7,6 +7,10 @@ import type {
   HysteriaService,
   IHysteriaPublicParams,
 } from 'src/hysteria/hysteria.service';
+import type {
+  IShadowsocksPublicParams,
+  ShadowsocksService,
+} from 'src/shadowsocks/shadowsocks.service';
 import { SubscriptionService } from './subscription.service';
 
 jest.mock('node:dns/promises', () => ({ resolve4: jest.fn() }));
@@ -54,6 +58,12 @@ const HYSTERIA_PARAMS: IHysteriaPublicParams = {
   obfsPassword: 'obfs-password',
 };
 
+const SHADOWSOCKS_PARAMS: IShadowsocksPublicParams = {
+  host: 'vpn.example.test',
+  port: 2096,
+  method: '2022-blake3-aes-256-gcm',
+};
+
 function makeHysteria(
   overrides: Partial<{
     params: IHysteriaPublicParams;
@@ -75,14 +85,41 @@ function makeHysteria(
   } as unknown as HysteriaService;
 }
 
+function makeShadowsocks(
+  overrides: Partial<{
+    params: IShadowsocksPublicParams;
+    peerKey: string | null;
+    shareLinks: boolean;
+  }> = {},
+): ShadowsocksService {
+  const disabled = overrides.peerKey === null;
+  const peerKey = disabled ? null : (overrides.peerKey ?? 'peer-key');
+  const shareLinks = overrides.shareLinks ?? true;
+  return {
+    getPublicParams: () => overrides.params ?? SHADOWSOCKS_PARAMS,
+    getServerKey: () => (disabled ? null : 'server-key'),
+    getPeerKey: () => peerKey,
+    isShareLinkEnabled: () => shareLinks && peerKey !== null,
+    buildShareLink: () =>
+      peerKey === null
+        ? null
+        : `ss://b64info@vpn.example.test:2096#${PEER.name}`,
+  } as unknown as ShadowsocksService;
+}
+
 function makeService(
   hysteria: HysteriaService = makeHysteria({ password: null }),
+  shadowsocks: ShadowsocksService = makeShadowsocks({ peerKey: null }),
 ): SubscriptionService {
   const xray = {
     getPublicParams: () => XRAY_PARAMS,
     buildShareLinks: () => [`vless://${PEER.vlessUuid}@vpn.example.test:443`],
   };
-  return new SubscriptionService(xray as unknown as XrayService, hysteria);
+  return new SubscriptionService(
+    xray as unknown as XrayService,
+    hysteria,
+    shadowsocks,
+  );
 }
 
 function outboundsOf(config: Record<string, unknown>): IOutbound[] {
@@ -292,5 +329,48 @@ describe('SubscriptionService Hysteria2 channel', () => {
       (outbound) => outbound.type === 'hysteria2',
     )!;
     expect(hysteria.server).toBe(HYSTERIA_PARAMS.host);
+  });
+});
+
+describe('SubscriptionService Shadowsocks channel', () => {
+  it('appends the ss link to the share links when the channel is live', () => {
+    const links = makeService(
+      makeHysteria({ password: null }),
+      makeShadowsocks(),
+    ).buildShareLinks(PEER);
+
+    expect(links).toHaveLength(2);
+    expect(links[1]).toMatch(/^ss:\/\/b64info@vpn\.example\.test:2096#/);
+  });
+
+  it('adds a shadowsocks outbound with EIH server:user password', () => {
+    const config = makeService(
+      makeHysteria({ password: null }),
+      makeShadowsocks(),
+    ).buildSingBoxConfig(PEER);
+    const outbounds = config.outbounds as Array<Record<string, unknown>>;
+
+    const ss = outbounds.find(
+      (outbound) => outbound.tag === 'Shadowsocks · vpn.example.test',
+    )!;
+    expect(ss.type).toBe('shadowsocks');
+    expect(ss.server).toBe(SHADOWSOCKS_PARAMS.host);
+    expect(ss.server_port).toBe(SHADOWSOCKS_PARAMS.port);
+    expect(ss.method).toBe(SHADOWSOCKS_PARAMS.method);
+    expect(ss.password).toBe('server-key:peer-key');
+
+    const selector = outbounds.find(
+      (outbound) => outbound.tag === 'select',
+    )! as { outbounds: string[] };
+    expect(selector.outbounds).toContain('Shadowsocks · vpn.example.test');
+  });
+
+  it('omits the shadowsocks outbound when the channel is disabled', () => {
+    const config = makeService().buildSingBoxConfig(PEER);
+    const outbounds = config.outbounds as Array<Record<string, unknown>>;
+
+    expect(outbounds.some((outbound) => outbound.type === 'shadowsocks')).toBe(
+      false,
+    );
   });
 });
