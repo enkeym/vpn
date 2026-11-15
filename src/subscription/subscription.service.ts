@@ -269,6 +269,63 @@ export class SubscriptionService implements OnModuleInit {
     ];
     channelTags.push(realityTag);
 
+    const realityTls = {
+      enabled: true,
+      server_name: xray.realitySni,
+      utls: { enabled: true, fingerprint: 'chrome' },
+      reality: {
+        enabled: true,
+        public_key: xray.realityPublicKey,
+        short_id: xray.realityShortId,
+      },
+    };
+    const grpcTag = `Reality gRPC · ${xray.host}`;
+    outbounds.push({
+      type: 'vless',
+      tag: grpcTag,
+      ...(includeDnsReferences
+        ? {
+            domain_resolver: {
+              server: DNS_BOOTSTRAP_TAG,
+              strategy: domainStrategy,
+            },
+          }
+        : {}),
+      server: this.dialHost(xray.host),
+      server_port: xray.grpcPort,
+      uuid: peer.vlessUuid,
+      tls: realityTls,
+      transport: {
+        type: 'grpc',
+        service_name: xray.grpcService,
+      },
+    });
+    channelTags.push(grpcTag);
+
+    const xhttpTag = `Reality XHTTP · ${xray.host}`;
+    outbounds.push({
+      type: 'vless',
+      tag: xhttpTag,
+      ...(includeDnsReferences
+        ? {
+            domain_resolver: {
+              server: DNS_BOOTSTRAP_TAG,
+              strategy: domainStrategy,
+            },
+          }
+        : {}),
+      server: this.dialHost(xray.host),
+      server_port: xray.xhttpPort,
+      uuid: peer.vlessUuid,
+      tls: realityTls,
+      transport: {
+        type: 'xhttp',
+        path: xray.xhttpPath,
+        mode: xray.xhttpMode,
+      },
+    });
+    channelTags.push(xhttpTag);
+
     const hysteria: IHysteriaPublicParams =
       this.hysteriaService.getPublicParams();
     const hysteriaPassword = this.hysteriaService.getPassword(peer.name);

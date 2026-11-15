@@ -119,7 +119,7 @@ describe('XrayService health and proxy recovery', () => {
     process.env = { ...originalEnv };
   });
 
-  it('builds the single Reality link and base64 subscription', () => {
+  it('builds the Reality TCP/gRPC/XHTTP links and base64 subscription', () => {
     const subscription = module.get(SubscriptionService);
     const peer = { name: 'Тест #1', vlessUuid: 'test-client' };
 
@@ -129,7 +129,7 @@ describe('XrayService health and proxy recovery', () => {
       'base64',
     ).toString('utf-8');
 
-    expect(links).toHaveLength(1);
+    expect(links).toHaveLength(3);
     expect(decoded).toBe(links.join('\n'));
 
     const reality = new URL(links[0]);
@@ -147,6 +147,22 @@ describe('XrayService health and proxy recovery', () => {
     expect(decodeURIComponent(reality.hash.slice(1))).toBe(
       `${peer.name} · Reality`,
     );
+
+    const grpc = new URL(links[1]);
+    expect(grpc.port).toBe('27443');
+    expect(grpc.searchParams.get('type')).toBe('grpc');
+    expect(grpc.searchParams.get('serviceName')).toBe('grpc-vk');
+    expect(grpc.searchParams.get('flow')).toBeNull();
+    expect(decodeURIComponent(grpc.hash.slice(1))).toBe(
+      `${peer.name} · Reality gRPC`,
+    );
+
+    const xhttp = new URL(links[2]);
+    expect(xhttp.port).toBe('27444');
+    expect(xhttp.searchParams.get('type')).toBe('xhttp');
+    expect(xhttp.searchParams.get('path')).toBe('/xhttp');
+    expect(xhttp.searchParams.get('mode')).toBe('auto');
+    expect(xhttp.searchParams.get('flow')).toBeNull();
   });
 
   it('keeps Reality client, server and user revocation consistent', async () => {
@@ -428,7 +444,11 @@ describe('XrayService health and proxy recovery', () => {
           }),
           expect.objectContaining({
             tag: 'select',
-            outbounds: ['Reality · direct.example.test'],
+            outbounds: [
+              'Reality · direct.example.test',
+              'Reality gRPC · direct.example.test',
+              'Reality XHTTP · direct.example.test',
+            ],
             default: 'Reality · direct.example.test',
           }),
         ]),
@@ -446,8 +466,10 @@ describe('XrayService health and proxy recovery', () => {
     const vlessOutbounds = (
       config.outbounds as Record<string, unknown>[]
     ).filter((outbound) => outbound.type === 'vless');
-    expect(vlessOutbounds).toHaveLength(1);
-    expect(vlessOutbounds[0]).not.toHaveProperty('domain_resolver');
+    expect(vlessOutbounds).toHaveLength(3);
+    for (const outbound of vlessOutbounds) {
+      expect(outbound).not.toHaveProperty('domain_resolver');
+    }
 
     const withoutDns = { ...config };
     delete withoutDns.dns;
@@ -458,12 +480,15 @@ describe('XrayService health and proxy recovery', () => {
       name: 'Тест',
       vlessUuid: 'test-client',
     });
-    const fullVless = (full.outbounds as Record<string, unknown>[]).find(
+    const fullVless = (full.outbounds as Record<string, unknown>[]).filter(
       (outbound) => outbound.type === 'vless',
     );
-    expect(fullVless).toMatchObject({
-      domain_resolver: { server: 'dns-bootstrap', strategy: 'prefer_ipv4' },
-    });
+    expect(fullVless).toHaveLength(3);
+    for (const outbound of fullVless) {
+      expect(outbound).toMatchObject({
+        domain_resolver: { server: 'dns-bootstrap', strategy: 'prefer_ipv4' },
+      });
+    }
     expect(full.route).toMatchObject({ default_domain_resolver: 'dns-remote' });
   });
 

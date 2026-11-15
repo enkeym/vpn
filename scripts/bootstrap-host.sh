@@ -37,6 +37,10 @@ if [[ ! "$SS_PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$SS_PORT < 1 || 10#$SS_PORT > 6553
   echo "SS_PORT должен быть портом от 1 до 65535" >&2
   exit 1
 fi
+XRAY_GRPC_PORT="$(docker compose -p "$NAME" config --environment | awk -F= '$1 == "XRAY_GRPC_PORT" { print $2 }')"
+XRAY_GRPC_PORT="${XRAY_GRPC_PORT:-27443}"
+XRAY_XHTTP_PORT="$(docker compose -p "$NAME" config --environment | awk -F= '$1 == "XRAY_XHTTP_PORT" { print $2 }')"
+XRAY_XHTTP_PORT="${XRAY_XHTTP_PORT:-27444}"
 [ -e /dev/net/tun ] || warn "нет /dev/net/tun — amneziawg-go не поднимется"
 
 # --- sysctl ---
@@ -54,7 +58,7 @@ echo "sysctl: $SYSCTL_FILE применён (ip_forward=$(cat /proc/sys/net/ipv4
 # --- фаервол ---
 # ufw не включаем сами: на чужом хосте это закрыло бы SSH. Если он выключен,
 # правила не добавляем и говорим об этом.
-open_ports=("443/tcp" "${AWG_PORT}/udp" "${HY2_PORT}/udp" "${SS_PORT}/tcp" "${SS_PORT}/udp")
+open_ports=("443/tcp" "${AWG_PORT}/udp" "${HY2_PORT}/udp" "${SS_PORT}/tcp" "${SS_PORT}/udp" "${XRAY_GRPC_PORT}/tcp" "${XRAY_XHTTP_PORT}/tcp")
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
   for port in "${open_ports[@]}"; do

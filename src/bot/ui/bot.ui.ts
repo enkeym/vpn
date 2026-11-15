@@ -664,7 +664,8 @@ export const BotUi = {
     'Прямое подключение: Happ, Hiddify, NekoBox, v2rayNG, Streisand ' +
     'и другие клиенты.\n\n' +
     `${body}\n\n` +
-    '_VLESS+Reality работает по TCP. Если выдана ссылка Hysteria2, ' +
+    '_VLESS+Reality работает по TCP. Ссылки с пометками gRPC и XHTTP — это ' +
+    'альтернативные транспорты того же VLESS. Если выдана ссылка Hysteria2, ' +
     'это отдельный канал по UDP: для него нужен клиент с поддержкой Hysteria2 ' +
     'и указанных в ссылке параметров обфускации. Ссылка ss:// — это ' +
     'Shadowsocks-2022, отдельный канал по TCP и UDP._\n\n' +

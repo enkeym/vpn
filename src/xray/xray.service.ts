@@ -548,6 +548,35 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
   }
 
   private buildRealityClientLink(name: string, uuid: string): string {
+    return this.buildVlessRealityLink(name, uuid, this.realityPort, {
+      type: 'tcp',
+      flow: XRAY_REALITY_FLOW,
+    });
+  }
+
+  /** gRPC: flow не выставляется — XTLS Vision несовместим с этим транспортом. */
+  private buildGrpcClientLink(name: string, uuid: string): string {
+    return this.buildVlessRealityLink(name, uuid, this.grpcPort, {
+      type: 'grpc',
+      serviceName: this.grpcService,
+    });
+  }
+
+  /** XHTTP: flow не выставляется по той же причине. */
+  private buildXhttpClientLink(name: string, uuid: string): string {
+    return this.buildVlessRealityLink(name, uuid, this.xhttpPort, {
+      type: 'xhttp',
+      path: this.xhttpPath,
+      mode: this.xhttpMode,
+    });
+  }
+
+  private buildVlessRealityLink(
+    name: string,
+    uuid: string,
+    port: number,
+    transport: Record<string, string>,
+  ): string {
     if (!this.realityParams) {
       throw new InternalServerErrorException(
         'Xray не инициализирован — невозможно получить параметры',
@@ -559,17 +588,16 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
     }
 
     const query = new URLSearchParams({
-      type: 'tcp',
       security: 'reality',
       encryption: 'none',
       sni: this.realitySni,
       fp: 'chrome',
       pbk: this.realityParams.publicKey,
       sid: this.realityParams.shortId,
-      flow: XRAY_REALITY_FLOW,
+      ...transport,
     });
 
-    return `vless://${uuid}@${address}:${this.realityPort}?${query.toString()}#${encodeURIComponent(
+    return `vless://${uuid}@${address}:${port}?${query.toString()}#${encodeURIComponent(
       name,
     )}`;
   }
@@ -581,7 +609,11 @@ export class XrayService implements OnModuleInit, OnModuleDestroy {
    * может взять и PeersService без цикла зависимостей.
    */
   buildShareLinks(name: string, uuid: string): string[] {
-    return [this.buildRealityClientLink(`${name} · Reality`, uuid)];
+    return [
+      this.buildRealityClientLink(`${name} · Reality`, uuid),
+      this.buildGrpcClientLink(`${name} · Reality gRPC`, uuid),
+      this.buildXhttpClientLink(`${name} · Reality XHTTP`, uuid),
+    ];
   }
 
   /**
